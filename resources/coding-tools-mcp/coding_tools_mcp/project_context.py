@@ -56,14 +56,17 @@ class ProjectContext:
     def server_instructions(self) -> str:
         sections = [
             "Use these tools only for coding operations inside the configured workspace.",
-            "The compact tool surface is fixed: workspace_context, agent_workflow, task_control, exec_command, command_control, document_workflow, request_permissions, and view_image. Do not search for legacy tool names.",
+            "The compact tool surface is fixed: coding_tools_guide, workspace_context, agent_workflow, task_control, exec_command, command_control, document_workflow, request_permissions, and view_image. Do not search for legacy tool names.",
+            "coding_tools_guide is optional: call it only when you need a concise reminder of the preferred workflow or a ChatGPT Custom Instructions snippet; do not call it before every task.",
             "Use workspace_context once for simple directory inspection. Use agent_workflow as the primary tool for diagnosis, code changes, tests, builds, releases, and interrupted-task resume.",
+            "Trust execution_profile and execution_plan for project root, test runner, build command, workdir, and command severity. Do not guess pytest/npm/cargo commands when the profile marks them unavailable.",
+            "Do not manually split normal query/path/patch batches merely to satisfy old small schema limits; the runtime accepts practical batches and applies internal context/output safety bounds.",
             "For file changes, send one complete change set through agent_workflow instead of assembling many low-level calls. Legacy tool names may be accepted only for cached-client compatibility and should not be selected deliberately.",
             "For commands expected to exceed 30 seconds, start them with exec_command and return control; continue with command_control so the user can see progress between polls.",
-            "For any task likely to exceed 90 seconds, tell the user the plan before starting. Long agent_workflow execution is forcibly handed back after 90 seconds as a background_operation. If any tool result contains requires_progress_report=true, you MUST send the user a visible progress update before making another tool call. Then poll with task_control action=operation and wait_ms up to 60000. If it is still running, report progress again before polling again. Never stay silent for more than 120 seconds.",
+            "For a multi-step or long task, tell the user the plan before starting. agent_workflow execute/run hands control back quickly (normally after about 8 seconds) as a background_operation instead of blocking the chat. If any tool result contains requires_progress_report=true, send the user a visible progress update, then poll with task_control action=operation. Respect the returned progress_report_seconds as the preferred cadence for later progress updates. After agent_workflow phase=resume, copy the returned task.objective exactly into the next phase=execute call; do not paraphrase it, otherwise the task state may correctly treat it as a new objective/run.",
             "Do not repeat successful inspection, search, read, Git, test, or build work unless files changed or the previous result was incomplete.",
             "For PDF, DOCX, Markdown, text, resume, report, or document conversion tasks, use document_workflow directly. Inspect source once, then create the complete output once.",
-            "Use task_control to start, pause, stop, resume, clear, inspect persisted task state, or poll a background operation returned by a long workflow.",
+            "Use task_control to start, pause, stop, resume, clear, inspect persisted task state, poll a background operation returned by a long workflow, or manage an isolated Git worktree for a run. Worktree isolation never merges automatically.",
             "Before claiming a build is ready, use agent_workflow with build_release and full verification so artifacts, versions, hashes, and the final report are checked consistently.",
         ]
         for item in self.root_files:
@@ -84,6 +87,7 @@ def load_project_context(root: Path) -> ProjectContext:
     resolved_root = root.expanduser().resolve(strict=True)
     loaded: list[LoadedContextFile] = []
     warnings: list[str] = []
+    seen_root_paths: set[str] = set()
     remaining = MAX_ROOT_CONTEXT_BYTES
     for name in sorted(CONTEXT_FILE_NAMES):
         path = resolved_root / name
@@ -95,6 +99,10 @@ def load_project_context(root: Path) -> ProjectContext:
         except (OSError, ValueError):
             warnings.append(f"Skipped unsafe root instruction path: {name}")
             continue
+        resolved_key = str(resolved).casefold() if os.name == "nt" else str(resolved)
+        if resolved_key in seen_root_paths:
+            continue
+        seen_root_paths.add(resolved_key)
         if remaining <= 0:
             warnings.append("Root instruction byte limit reached.")
             break
@@ -110,7 +118,8 @@ def load_project_context(root: Path) -> ProjectContext:
             warnings.append(f"Could not read {name}: {exc}")
             continue
         truncated = len(data) > budget
-        loaded.append(LoadedContextFile(name, content, truncated))
+        display_name = "AGENTS.md" if name.lower() == "agents.md" else "CLAUDE.md" if name.lower() == "claude.md" else name
+        loaded.append(LoadedContextFile(display_name, content, truncated))
         remaining -= len(content.encode("utf-8"))
 
     loaded_names = {item.path for item in loaded}

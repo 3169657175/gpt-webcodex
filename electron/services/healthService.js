@@ -1,4 +1,24 @@
 const net = require('node:net');
+const fs = require('node:fs');
+const path = require('node:path');
+const { resourcesRoot } = require('../paths');
+const { LocalMcpClient } = require('./localMcpClient');
+
+function readSchemaContract() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(resourcesRoot(), 'coding-tools-mcp', 'schema-contract.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function schemaMatches(expected, runtime) {
+  if (!expected || !runtime) return false;
+  return String(expected.runtime_version || '') === String(runtime.version || '')
+    && Number(expected.schema_version || 0) === Number(runtime.schemaVersion || 0)
+    && String(expected.schema_hash || '') === String(runtime.schemaHash || '')
+    && Number(expected.tool_count || 0) === Number(runtime.toolCount || 0);
+}
 
 function freePort(start, avoid) {
   return new Promise((resolve, reject) => {
@@ -24,10 +44,27 @@ class HealthService {
     return { runtimeOwned, tunnelOwned };
   }
 
+  async inspectMcpIdentity(current, runtimeOwned) {
+    if (!runtimeOwned) return null;
+    if (typeof this.secrets?.get !== 'function') return { skipped: true, reason: '当前凭据存储不支持直接读取 Token。' };
+    const token = this.secrets.get('mcpAuthToken');
+    if (!token) return { error: '缺少 MCP 本地认证 Token。' };
+    try {
+      const client = new LocalMcpClient({ port: current.mcpPort, token });
+      await client.discoverTools();
+      return client.schemaIdentity();
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   async inspect() {
     const current = this.settings.load();
     const env = await this.environment.inspect(current);
     const owned = await this.ownership(current);
+    const expectedSchema = readSchemaContract();
+    const runtimeSchema = await this.inspectMcpIdentity(current, owned.runtimeOwned);
+    const schemaOk = !owned.runtimeOwned || runtimeSchema?.skipped === true || schemaMatches(expectedSchema, runtimeSchema);
     const secretState = this.secrets.status();
     const mcpConflict = env.ports.mcpListening && !owned.runtimeOwned;
     const tunnelConflict = env.ports.tunnelListening && !owned.tunnelOwned;
@@ -37,12 +74,35 @@ class HealthService {
       { id: 'tunnel-client', label: 'Tunnel 客户端', ok: env.tunnelClient.installed, repair: '', detail: env.tunnelClient.installed ? '文件完整' : '安装文件缺失，需要重新安装助手' },
       { id: 'runtime-key', label: 'Runtime API Key', ok: secretState.runtimeApiKey, repair: 'runtime-key', detail: secretState.runtimeApiKey ? '已安全保存' : '尚未填写' },
       { id: 'tunnel-id', label: 'Tunnel ID', ok: Boolean(current.tunnelId), repair: 'tunnel-id', detail: current.tunnelId || '尚未填写' },
-      { id: 'mcp-port', label: 'MCP 本地端口', ok: !mcpConflict, repair: 'port', detail: mcpConflict ? `${current.mcpPort} 被非本助手进程占用` : `${current.mcpPort} 可用或由本助手管理` },
-      { id: 'tunnel-port', label: 'Tunnel 控制台端口', ok: !tunnelConflict, repair: 'port', detail: tunnelConflict ? `${current.healthPort} 被非本助手进程占用` : `${current.healthPort} 可用或由本助手管理` },
-      { id: 'mcp', label: 'Coding Tools MCP', ok: owned.runtimeOwned, repair: 'restart', detail: owned.runtimeOwned ? '助手实例运行正常' : '尚未启动' },
-      { id: 'tunnel', label: 'OpenAI Tunnel', ok: owned.tunnelOwned, repair: 'restart', detail: owned.tunnelOwned ? '助手实例运行正常' : '尚未启动' }
+      { id: 'mcp-port', label: '本地工具端口（MCP）', ok: !mcpConflict, repair: 'port', detail: mcpConflict ? `${current.mcpPort} 被非本助手进程占用` : `${current.mcpPort} 可用或由本助手管理` },
+      { id: 'mcp', label: '本地工具服务（MCP）', ok: owned.runtimeOwned, repair: 'restart', detail: owned.runtimeOwned ? '助手实例运行正常' : '尚未启动' },
+      {
+        id: 'mcp-schema',
+        label: '本地工具定义版本（MCP）',
+        ok: schemaOk,
+        repair: 'restart',
+        detail: !owned.runtimeOwned
+          ? 'MCP 启动后自动检查'
+          : runtimeSchema?.skipped
+            ? '当前环境未执行工具定义一致性检查'
+            : runtimeSchema?.error
+            ? `无法读取运行版本：${runtimeSchema.error}`
+            : schemaOk
+              ? `已同步 · Runtime ${runtimeSchema.version} · Schema v${runtimeSchema.schemaVersion} · ${String(runtimeSchema.schemaHash || '').slice(0, 12)} · PID ${runtimeSchema.processId || '—'} · \u5b9e\u4f8b ${String(runtimeSchema.runtimeInstanceId || '').slice(0, 8) || '—'}`
+              : `运行中的 MCP 与当前安装包不一致，需要重新部署。当前 Schema v${runtimeSchema?.schemaVersion || 0}，期望 v${expectedSchema?.schema_version || 0}`
+      },
+      { id: 'tunnel-port', label: '连接通道控制端口', ok: !tunnelConflict, repair: 'port', detail: tunnelConflict ? `${current.healthPort} 被非本助手进程占用` : `${current.healthPort} 可用或由本助手管理` },
+      { id: 'tunnel', label: '连接通道（OpenAI Tunnel）', ok: owned.tunnelOwned, repair: 'restart', detail: owned.tunnelOwned ? '助手实例运行正常' : '尚未启动' }
     ];
-    return { healthy: checks.every((item) => item.ok), checks, settings: current, environment: env, ownership: owned, inspectedAt: new Date().toISOString() };
+    return {
+      healthy: checks.every((item) => item.ok),
+      checks,
+      settings: current,
+      environment: env,
+      ownership: owned,
+      schemaIdentity: { expected: expectedSchema, runtime: runtimeSchema, matched: schemaOk },
+      inspectedAt: new Date().toISOString()
+    };
   }
 
   async repair() {
@@ -78,4 +138,4 @@ class HealthService {
   }
 }
 
-module.exports = { HealthService, freePort };
+module.exports = { HealthService, freePort, readSchemaContract, schemaMatches };

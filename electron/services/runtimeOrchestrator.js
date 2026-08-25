@@ -4,6 +4,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { NativeService } = require('./nativeService');
 const { TunnelService } = require('./tunnelService');
+const { LocalMcpClient } = require('./localMcpClient');
 const { validateRuntimeSettings, mergeRecentWorkspaces, workspaceKey } = require('./config');
 const { canConnect } = require('./environmentService');
 const { resolveProxy } = require('./proxyService');
@@ -12,7 +13,7 @@ const { readJson, updateJsonAtomic } = require('./jsonStore');
 
 function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-function probeMcp(port, token, expectedWorkspace = '') {
+function probeMcpIdentity(port, token, expectedWorkspace = '') {
   return new Promise((resolve) => {
     const request = http.request({
       host: '127.0.0.1',
@@ -26,21 +27,47 @@ function probeMcp(port, token, expectedWorkspace = '') {
       response.setEncoding('utf8');
       response.on('data', (chunk) => { if (body.length < 65536) body += chunk; });
       response.on('end', () => {
-        if (response.statusCode !== 200) { resolve(false); return; }
+        if (response.statusCode !== 200) { resolve(null); return; }
         try {
           const payload = JSON.parse(body);
           const workspaceMatches = !expectedWorkspace
             || workspaceKey(payload.workspace) === workspaceKey(expectedWorkspace);
-          resolve(payload.ready === true && workspaceMatches);
+          resolve(payload.ready === true && workspaceMatches ? payload : null);
         } catch {
-          resolve(false);
+          resolve(null);
         }
       });
     });
-    request.on('timeout', () => { request.destroy(); resolve(false); });
-    request.on('error', () => resolve(false));
+    request.on('timeout', () => { request.destroy(); resolve(null); });
+    request.on('error', () => resolve(null));
     request.end();
   });
+}
+
+async function probeMcp(port, token, expectedWorkspace = '') {
+  return Boolean(await probeMcpIdentity(port, token, expectedWorkspace));
+}
+
+async function waitForPortRelease(port, timeoutMs = 5000) {
+  const deadline = Date.now() + Math.max(250, Number(timeoutMs || 5000));
+  while (Date.now() < deadline) {
+    if (!(await canConnect('127.0.0.1', port, 200))) return true;
+    await wait(100);
+  }
+  return !(await canConnect('127.0.0.1', port, 200));
+}
+
+function runtimeIdentityMatches(identity, launch) {
+  if (!identity || !launch) return false;
+  return Number(identity.process_id || 0) === Number(launch.pid || 0)
+    && String(identity.launch_id || '') === String(launch.launchId || '')
+    && String(identity.source_fingerprint || '') === String(launch.sourceFingerprint || '');
+}
+
+function recoveryLayerFor(status = {}) {
+  if (!status.mcpRunning) return 'runtime';
+  if (!status.tunnelRunning) return 'tunnel';
+  return '';
 }
 
 
@@ -216,25 +243,37 @@ class RuntimeOrchestrator {
       this.progress('runtime-stop-old', 18, '正在清理本助手上一次启动的旧运行实例');
       await this.tunnel.stop();
       await this.native.stop().catch(() => false);
-      if (await canConnect('127.0.0.1', settings.mcpPort, 350)) {
+      if (!(await waitForPortRelease(settings.mcpPort, 5000))) {
         throw new Error(`本地端口 ${settings.mcpPort} 正被其他程序占用。助手不会强制结束未知进程，请在“工作目录”页面更换 MCP 端口。`);
       }
-      if (await canConnect('127.0.0.1', settings.healthPort, 350)) {
+      if (!(await waitForPortRelease(settings.healthPort, 5000))) {
         throw new Error(`本地端口 ${settings.healthPort} 正被其他程序占用。助手不会强制结束未知进程，请更换 Tunnel 控制台端口。`);
       }
 
-      await this.native.start(settings, token, this.progress.bind(this));
+      const launch = await this.native.start(settings, token, this.progress.bind(this));
 
       this.progress('mcp-health', 64, '正在验证 Coding Tools MCP');
-      let ready = false;
+      let identity = null;
       for (let index = 0; index < 35; index += 1) {
-        if (await probeMcp(settings.mcpPort, token, settings.workspace)) { ready = true; break; }
+        const candidate = await probeMcpIdentity(settings.mcpPort, token, settings.workspace);
+        if (runtimeIdentityMatches(candidate, launch)) { identity = candidate; break; }
         if (!(await this.native.status(settings))) {
           throw new Error('Coding Tools MCP 进程已提前退出。请查看运行日志中的 mcp.log 获取具体启动错误。');
         }
         await wait(1000);
       }
-      if (!ready) throw new Error('Coding Tools MCP 未能在规定时间内通过健康检查。');
+      if (!identity) throw new Error('Coding Tools MCP 未能以本次启动实例通过身份健康检查，可能仍连接到旧进程。');
+
+      const discoveryClient = new LocalMcpClient({ port: settings.mcpPort, token, log: this.log });
+      await discoveryClient.discoverTools();
+      const discovered = discoveryClient.schemaIdentity();
+      if (discovered.runtimeInstanceId !== String(identity.runtime_instance_id || identity.instance_id || '')
+        || discovered.processId !== Number(identity.process_id || 0)
+        || discovered.sourceFingerprint !== String(identity.source_fingerprint || '')
+        || discovered.schemaVersion !== Number(identity.schema_version || 0)
+        || discovered.schemaHash !== String(identity.schema_hash || '')) {
+        throw new Error('MCP tools discovery 与健康检查身份不一致，已拒绝继续启动 Tunnel。');
+      }
 
       await this.tunnel.start({ ...settings, effectiveProxyUrl: proxy.resolvedUrl }, runtimeApiKey, token, this.progress.bind(this));
       this.setManualStop(false);
@@ -268,7 +307,7 @@ class RuntimeOrchestrator {
     this.busy = true;
     try {
       if (options.manual !== false) this.setManualStop(true);
-      this.progress('stop-tunnel', 25, '正在停止 OpenAI Tunnel');
+      this.progress('stop-connection', 20, '正在停止当前连接通道');
       await this.tunnel.stop();
       this.progress('stop-runtime', 65, '正在停止 Coding Tools MCP');
       await this.native.stop().catch(() => false);
@@ -283,6 +322,36 @@ class RuntimeOrchestrator {
   async restart(options = {}) {
     await this.stop({ manual: false });
     return this.start(options);
+  }
+
+  async restartTunnel(options = {}) {
+    if (this.busy) throw new Error('当前已有部署任务正在运行。');
+    this.busy = true;
+    try {
+      const settings = this.settingsStore.load();
+      this.validate(settings);
+      const runtimeApiKey = this.secrets.get('runtimeApiKey');
+      if (!runtimeApiKey) throw new Error('Runtime API Key 不可用，无法恢复 Tunnel。');
+      if (!settings.tunnelId) throw new Error('Tunnel ID 不可用，无法恢复连接通道。');
+      const token = await this.ensureToken();
+      const identity = await probeMcpIdentity(settings.mcpPort, token, settings.workspace);
+      if (!identity) throw new Error('本地 MCP Runtime 当前不可用，不能执行 Tunnel-only 恢复。');
+
+      const proxy = await resolveProxy(settings);
+      this.progress('tunnel-recovery-stop', 30, '本地 MCP 正常，仅重启 OpenAI Tunnel');
+      await this.tunnel.stop();
+      if (!(await waitForPortRelease(settings.healthPort, 5000))) {
+        throw new Error(`Tunnel 控制端口 ${settings.healthPort} 未能释放。`);
+      }
+      await this.tunnel.start({ ...settings, effectiveProxyUrl: proxy.resolvedUrl }, runtimeApiKey, token, this.progress.bind(this));
+      this.lastStartFailure = '';
+      this.heartbeatFailures = 0;
+      this.invalidateSnapshot();
+      this.progress('tunnel-recovery-complete', 100, 'OpenAI Tunnel 已恢复，本地 MCP Runtime 未重启');
+      return await this.snapshot({ force: true, reason: options.automatic ? 'tunnel-auto-recovered' : 'tunnel-restarted' });
+    } finally {
+      this.busy = false;
+    }
   }
 
   async switchWorkspace(nextWorkspace) {
@@ -326,7 +395,11 @@ class RuntimeOrchestrator {
       this.progress('workspace-health', 80, '正在验证新的工作目录');
       const ready = await probeMcp(next.mcpPort, token, workspace);
       if (!ready) throw new Error('新工作目录与 MCP 实际目录不一致。');
-      this.progress('workspace-complete', 100, '工作目录已切换，MCP 与 Tunnel 均未重启');
+      this.progress(
+        'workspace-complete',
+        100,
+        '工作目录已切换，MCP 与 Tunnel 均未重启'
+      );
       this.invalidateSnapshot();
       return this.snapshot({ force: true, reason: 'workspace-switched' });
     } catch (error) {
@@ -376,13 +449,19 @@ class RuntimeOrchestrator {
       token ? probeMcp(settings.mcpPort, token, settings.workspace) : Promise.resolve(false),
       this.tunnel.status(settings).catch(() => false)
     ]);
+    const failureLayer = recoveryLayerFor({ mcpRunning, tunnelRunning });
     return {
       workspace: settings.workspace,
+      connectionMode: 'official',
       mcpRunning,
       tunnelRunning,
+      connectionRunning: tunnelRunning,
       fullyReady: mcpRunning && tunnelRunning,
+      busy: this.busy,
       recovering: this.recovering,
+      manuallyStopped: this.isManuallyStopped(),
       failures: this.heartbeatFailures,
+      failureLayer,
       recoveryBlocked: this.autoRecoveryBlocked,
       lastStartFailure: this.lastStartFailure
     };
@@ -416,10 +495,16 @@ class RuntimeOrchestrator {
       failures: this.heartbeatFailures,
       attempt: this.recoveryAttempts,
       mcpRunning: status.mcpRunning,
-      tunnelRunning: status.tunnelRunning
+      tunnelRunning: status.tunnelRunning,
+      connectionMode: status.connectionMode,
+      failureLayer: recoveryLayerFor(status)
     });
     try {
-      await this.restart({ automatic: true });
+      if (recoveryLayerFor(status) === 'tunnel') {
+        await this.restartTunnel({ automatic: true });
+      } else {
+        await this.restart({ automatic: true });
+      }
       this.heartbeatFailures = 0;
       this.recoveryAttempts = 0;
       this.nextRecoveryAt = 0;
@@ -456,6 +541,8 @@ class RuntimeOrchestrator {
         busy: this.busy,
         runtimeRunning,
         tunnelRunning,
+        connectionRunning: tunnelRunning,
+        connectionMode: 'official',
         fullyReady: runtimeRunning && tunnelRunning,
         localMcpUrl: `http://127.0.0.1:${settings.mcpPort}/mcp`,
         tunnelUiUrl: `http://127.0.0.1:${settings.healthPort}/ui`,
@@ -465,6 +552,6 @@ class RuntimeOrchestrator {
   }
 }
 
-module.exports = { RuntimeOrchestrator, probeMcp, setMcpAuthorizedRoots };
+module.exports = { RuntimeOrchestrator, probeMcp, probeMcpIdentity, runtimeIdentityMatches, recoveryLayerFor, waitForPortRelease, setMcpAuthorizedRoots };
 
 

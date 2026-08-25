@@ -19,8 +19,8 @@
       <div class="page-state" id="pageState"><i></i><span>正在准备 ChatGPT…</span></div>
       <div class="service-state">
         <span id="downloadState" class="download-state"></span>
-        <span id="mcpState"><i></i>MCP</span>
-        <span id="tunnelState"><i></i>Tunnel</span>
+        <span id="mcpState" title="Coding Tools MCP 本地服务状态"><i></i>本地工具</span>
+        <span id="tunnelState" title="OpenAI Tunnel 连接状态"><i></i><em id="connectionStateLabel">连接通道</em></span>
         <button id="managerButton" class="manager-button">设置</button>
       </div>
     </div>
@@ -40,7 +40,6 @@
         <span class="task-progress" aria-hidden="true"><span id="taskProgressBar"></span></span><span id="taskProgressText" class="task-progress-text"></span>
         <button id="pauseTask">暂停</button><button id="resumeTask">继续</button><button id="stopTask">停止</button>
       </div>
-      <div id="workspaceChips" class="workspace-chips"></div>
       <select id="workspaceSelect" class="workspace-select" aria-label="全部工作区"><option value="">全部工作区</option></select>
       <div id="switchState" class="switch-state"></div>
       <button id="addAuthorizedRootQuick" class="add-workspace secondary-action" title="授权一个额外目录，无需切换主工作区">＋ 授权目录</button>

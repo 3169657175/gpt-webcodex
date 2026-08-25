@@ -80,6 +80,8 @@ body[data-theme="light"] .nav-item.active { color: #fff; }
 .topbar h1 { margin: 0; font-size: 23px; letter-spacing: -.4px; }
 .topbar p:last-child { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
 .top-actions, .inline-actions, .compact-buttons, .page-footer-actions, .deploy-actions { display: flex; align-items: center; gap: 9px; }
+.mode-switch-button { min-width: 150px; border-color: rgba(103,118,255,.45)!important; color: var(--blue)!important; background: rgba(103,118,255,.08)!important; font-weight: 800; }
+.mode-switch-button:hover { background: rgba(103,118,255,.14)!important; }
 .content-viewport { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px 32px; scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
 .page { display: none; width: 100%; max-width: 1440px; margin: 0 auto; animation: page-in .2s ease; }
 .page.active { display: block; }
@@ -115,7 +117,7 @@ body[data-theme="light"] .node { background: rgba(255,255,255,.8); }
 .node span { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; font-size: 11px; font-weight: 900; letter-spacing: .5px; }
 .node b { font-size: 11px; }
 .node.local span { color: var(--blue); background: rgba(108,140,255,.13); }
-.node.bridge span { color: var(--violet); background: rgba(156,124,255,.13); }
+.node.mcp span { color: var(--violet); background: rgba(156,124,255,.13); }
 .node.cloud span { color: var(--cyan); background: rgba(64,215,232,.13); }
 .flow-line { position: relative; width: 38px; height: 1px; background: linear-gradient(90deg,var(--blue),var(--violet)); }
 .flow-line i { position: absolute; top: -2px; width: 5px; height: 5px; border-radius: 50%; background: #b6c1ff; animation: flow 1.8s linear infinite; box-shadow: 0 0 10px #8797ff; }
@@ -200,6 +202,9 @@ body[data-theme="light"] .node { background: rgba(255,255,255,.8); }
 .authorized-root-row { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
 .authorized-root-row code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
 .authorized-root-row button { flex: 0 0 auto; }
+.instruction-details { border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); overflow: hidden; }
+.instruction-details summary { padding: 10px 12px; cursor: pointer; color: var(--text); font-size: 10px; font-weight: 700; }
+.instruction-details pre { max-height: 280px; margin: 0; padding: 12px; overflow: auto; border-top: 1px solid var(--border); background: var(--surface); color: var(--text); font: 10px/1.55 "Cascadia Code",Consolas,monospace; white-space: pre-wrap; word-break: break-word; }
 .choice-stack { display: grid; gap: 8px; }
 .choice { display: flex; align-items: center; gap: 12px; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); cursor: pointer; }
 .choice.selected { border-color: rgba(108,140,255,.5); background: rgba(108,140,255,.08); }

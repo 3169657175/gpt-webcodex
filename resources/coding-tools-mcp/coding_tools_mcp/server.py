@@ -28,6 +28,7 @@ import time
 import urllib.parse
 import zipfile
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -76,9 +77,10 @@ from .protocol import (
     validate_rpc_envelope,
 )
 from .project_context import ProjectContext, load_project_context
-from .build_verify import verify_build as run_build_verification
+from .build_verify import detect_project as detect_build_project, profile_project_execution, verify_build as run_build_verification
 from .document_tools import create_docx, create_text_document, convert_document, extract_document
 from .task_state import TaskStateStore
+from .worktrees import WorktreeManager
 from .performance_trace import PerformanceTraceStore
 from .telemetry import SessionTelemetry
 from .textutils import DEFAULT_MAX_LINES, TextTruncation, truncate_text_head
@@ -91,7 +93,7 @@ SERVER_NAME = "coding-tools-mcp"
 SERVER_TITLE = "Coding Tools MCP"
 TOOL_MODE_ALLOWLISTS = {
     "smart": frozenset({
-        "workspace_context", "agent_workflow", "task_control", "document_workflow",
+        "coding_tools_guide", "workspace_context", "agent_workflow", "task_control", "document_workflow",
         "exec_command", "command_control", "request_permissions", "view_image",
     }),
     "readonly": frozenset({"server_info", "check_exec_environment", "get_default_cwd", "task_state_get", "task_history_list", "read_file", "list_dir", "list_files", "search_text", "read_output", "git_status", "git_diff", "git_log", "git_show", "git_blame", "view_image"}),
@@ -111,14 +113,54 @@ SMART_COMPAT_TOOL_NAMES = frozenset({
 
 try:
     LONG_TOOL_HANDOFF_SECONDS = min(
-        300,
-        max(30, int(os.environ.get(f"{ENV_PREFIX}_LONG_TOOL_HANDOFF_SECONDS", "90"))),
+        30,
+        max(5, int(os.environ.get(f"{ENV_PREFIX}_LONG_TOOL_HANDOFF_SECONDS", "8"))),
     )
 except (TypeError, ValueError):
-    LONG_TOOL_HANDOFF_SECONDS = 90
+    LONG_TOOL_HANDOFF_SECONDS = 8
+try:
+    PROGRESS_REPORT_SECONDS = min(
+        300,
+        max(30, int(os.environ.get(f"{ENV_PREFIX}_PROGRESS_REPORT_SECONDS", "90"))),
+    )
+except (TypeError, ValueError):
+    PROGRESS_REPORT_SECONDS = 90
 BACKGROUND_OPERATION_WAIT_MAX_MS = 60_000
+EXEC_HTTP_SAFE_YIELD_MAX_MS = 25_000
 MAX_BACKGROUND_OPERATIONS = 32
+BACKGROUND_HEARTBEAT_SECONDS = 5
 MCP_ENDPOINT_PATH = "/mcp"
+TOOL_SCHEMA_VERSION = 7
+
+
+def tool_schema_hash(tools: list[dict[str, Any]]) -> str:
+    """Stable public-tool contract hash used to detect stale runtimes/clients."""
+    canonical = sorted(tools, key=lambda item: str(item.get("name") or ""))
+    payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def classify_context_pressure(tool_calls: int, response_bytes: int, files_read: int) -> str:
+    """Estimate model-context pressure from payload volume, not local call count alone."""
+    calls = max(0, int(tool_calls or 0))
+    response = max(0, int(response_bytes or 0))
+    files = max(0, int(files_read or 0))
+    mib = 1024 * 1024
+    if (
+        response >= 8 * mib
+        or files >= 80
+        or (calls >= 120 and response >= 4 * mib)
+        or (calls >= 120 and files >= 50)
+    ):
+        return "high"
+    if (
+        response >= 4 * mib
+        or files >= 40
+        or (calls >= 80 and response >= 2 * mib)
+        or (calls >= 80 and files >= 25)
+    ):
+        return "elevated"
+    return "normal"
 DEFAULT_EXCLUDED_NAMES = {
     ".git",
     ".reference",
@@ -162,6 +204,8 @@ class ModeCapabilities:
     """What a permission mode allows. Gates consult this instead of comparing mode strings."""
 
     network: bool
+    destructive_command: bool
+    system_modify: bool
     shell_expansion: bool
     inline_script: bool
     landlock: bool
@@ -173,6 +217,8 @@ class ModeCapabilities:
 PERMISSION_MODE_CAPABILITIES: dict[str, ModeCapabilities] = {
     "safe": ModeCapabilities(
         network=False,
+        destructive_command=False,
+        system_modify=False,
         shell_expansion=False,
         inline_script=False,
         landlock=True,
@@ -182,6 +228,8 @@ PERMISSION_MODE_CAPABILITIES: dict[str, ModeCapabilities] = {
     ),
     "trusted": ModeCapabilities(
         network=True,
+        destructive_command=True,
+        system_modify=False,
         shell_expansion=True,
         inline_script=True,
         landlock=True,
@@ -191,6 +239,8 @@ PERMISSION_MODE_CAPABILITIES: dict[str, ModeCapabilities] = {
     ),
     "dangerous": ModeCapabilities(
         network=True,
+        destructive_command=True,
+        system_modify=True,
         shell_expansion=True,
         inline_script=True,
         landlock=False,
@@ -221,6 +271,12 @@ SHELL_EXPANSION_RE = re.compile(r"(`|\$\(|\$\{)")
 DESTRUCTIVE_RE = re.compile(
     r"(^|\s)(sudo|su|chmod\s+-R|chown\s+-R|mkfs|mount|umount|find\b[^;&|]*\s-delete\b|git\b[^;&|]*\breset\s+--hard\b|git\b[^;&|]*\bclean\s+-[^\s]*[fx][^\s]*|rm\s+-[^\s]*r[^\s]*f|rm\s+-[^\s]*f[^\s]*r)\b",
     re.I,
+)
+SYSTEM_MODIFY_RE = re.compile(
+    r"(?:\breg(?:\.exe)?\s+(?:add|delete|import)\b|\bsc(?:\.exe)?\s+(?:config|create|delete)\b|"
+    r"\bschtasks(?:\.exe)?\s+/(?:create|delete|change)\b|\bnetsh\b|\bbcdedit\b|"
+    r"\bset-executionpolicy\b|\bshutdown(?:\.exe)?\b|\brestart-computer\b)",
+    re.IGNORECASE,
 )
 MAX_HTTP_REQUEST_BYTES = 1_048_576
 EXEC_PREVIEW_BYTES = 4096
@@ -594,6 +650,12 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     "server_info": ToolSpec(
         title="Server info",
         description="Return server, workspace, project-context, auth, policy, and fixed-tool metadata.",
+        read_only=True,
+        idempotent=True,
+    ),
+    "coding_tools_guide": ToolSpec(
+        title="Coding Tools usage guide",
+        description="Return a compact usage guide for this MCP. Call only when you need to confirm which high-level tool to use or when preparing ChatGPT Custom Instructions; do not call before every task.",
         read_only=True,
         idempotent=True,
     ),
@@ -1454,6 +1516,7 @@ class Runtime:
                 for name in self._exposed_tool_names
             ]
         }
+        self.tool_schema_hash = tool_schema_hash(self._tools_list_payload["tools"])
         self.shell_env_policy = shell_env_policy or ShellEnvPolicy()
         if self.shell_env_policy.inherit not in SHELL_ENV_INHERIT_CHOICES:
             raise ToolFailure(
@@ -1488,11 +1551,26 @@ class Runtime:
         self.request_sessions: dict[str | int, str] = {}
         self.request_sessions_lock = threading.Lock()
         self.request_context = threading.local()
+        self.execution_context = threading.local()
         self.background_operations: dict[str, dict[str, Any]] = {}
         self.background_operations_lock = threading.RLock()
         self.initialized = False
         self.telemetry = SessionTelemetry(permission_mode=self.permission_mode, transport=transport)
         self.task_state = TaskStateStore(self.workspace.root)
+        self.worktrees = WorktreeManager(self.workspace.root)
+        self.worktrees.recover()
+        orphaned_operations = self.task_state.recover_orphaned_operations(self.server_instance_id)
+        if orphaned_operations:
+            current_task = self.task_state.get()
+            matching = next((item for item in reversed(orphaned_operations) if item.get("run_id") == current_task.get("run_id")), None)
+            if matching and str(current_task.get("lifecycle_state") or "") not in {"completed", "failed", "cancelled"}:
+                self.task_state.update({
+                    "lifecycle_state": "failed",
+                    "failure": "MCP 运行时曾重启，上一后台任务已中断。",
+                    "current_step": "后台任务已中断",
+                    "next_step": "使用 agent_workflow resume 根据已保存状态继续任务。",
+                }, event="background_operation_orphaned")
+        self.task_state.recover_completed_waiting_task()
         self.performance_trace = PerformanceTraceStore(self.workspace.root)
         self.workspace_switch_lock = threading.RLock()
         self.workspace_generation = 1
@@ -1566,6 +1644,23 @@ class Runtime:
             self.fallback_runtime_dir = fallback_runtime_dir_for_workspace(self.workspace.root, self.server_instance_id)
             self.project_context = load_project_context(self.workspace.root)
             self.task_state = TaskStateStore(self.workspace.root)
+            self.worktrees = WorktreeManager(self.workspace.root)
+            self.worktrees.recover()
+            orphaned_operations = self.task_state.recover_orphaned_operations(self.server_instance_id)
+            if orphaned_operations:
+                current_task = self.task_state.get()
+                matching = next(
+                    (item for item in reversed(orphaned_operations) if item.get("run_id") == current_task.get("run_id")),
+                    None,
+                )
+                if matching and str(current_task.get("lifecycle_state") or "") not in {"completed", "failed", "cancelled"}:
+                    self.task_state.update({
+                        "lifecycle_state": "failed",
+                        "failure": "MCP workspace switch interrupted a previous background operation.",
+                        "current_step": "Background operation interrupted",
+                        "next_step": "Use agent_workflow resume to continue from the saved state.",
+                    }, event="background_operation_orphaned")
+            self.task_state.recover_completed_waiting_task()
             self.performance_trace = PerformanceTraceStore(self.workspace.root)
             with self.patch_lock:
                 self.patch_baselines.clear()
@@ -1670,13 +1765,68 @@ class Runtime:
         return self.oauth_config is not None
 
     def default_cwd_display(self) -> str:
-        return normalize_rel_display(self.default_cwd, self.workspace.root)
+        workspace = self._active_workspace()
+        return normalize_rel_display(self._active_default_cwd(), workspace.root)
+
+    def _active_workspace(self) -> Workspace:
+        active = getattr(self.execution_context, "workspace", None)
+        return active if isinstance(active, Workspace) else self.workspace
+
+    def _active_default_cwd(self) -> Path:
+        active = getattr(self.execution_context, "default_cwd", None)
+        return active if isinstance(active, Path) else self.default_cwd
+
+    @contextmanager
+    def _scoped_execution_worktree(self, record: dict[str, Any] | None) -> Iterator[None]:
+        if not record:
+            yield
+            return
+        root = Path(str(record.get("path") or "")).resolve(strict=True)
+        previous_workspace = getattr(self.execution_context, "workspace", None)
+        previous_cwd = getattr(self.execution_context, "default_cwd", None)
+        previous_run_id = getattr(self.execution_context, "worktree_run_id", None)
+        self.execution_context.workspace = Workspace(root)
+        self.execution_context.default_cwd = root
+        self.execution_context.worktree_run_id = str(record.get("run_id") or "")
+        try:
+            yield
+        finally:
+            if previous_workspace is None:
+                self.execution_context.__dict__.pop("workspace", None)
+            else:
+                self.execution_context.workspace = previous_workspace
+            if previous_cwd is None:
+                self.execution_context.__dict__.pop("default_cwd", None)
+            else:
+                self.execution_context.default_cwd = previous_cwd
+            if previous_run_id is None:
+                self.execution_context.__dict__.pop("worktree_run_id", None)
+            else:
+                self.execution_context.worktree_run_id = previous_run_id
+
+    def _path_scope(self, path: Path) -> dict[str, str]:
+        workspace = self._active_workspace()
+        resolved = path.expanduser().resolve(strict=True)
+        root = workspace._containing_root(resolved)
+        if root is None:
+            raise ToolFailure("PATH_OUTSIDE_WORKSPACE", "Path is outside the configured workspace and authorized roots.", category="security")
+        kind = "workspace" if root == workspace.root else "authorized"
+        return {
+            "kind": kind,
+            "root": str(root),
+            "path": str(resolved),
+            "relative": resolved.relative_to(root).as_posix() or ".",
+        }
+
+    def _command_workdir_argument(self, path: Path) -> str:
+        scope = self._path_scope(path)
+        return scope["relative"] if scope["kind"] == "workspace" else scope["path"]
 
     def resolve_existing(self, raw_path: str = ".") -> ResolvedPath:
-        return self.workspace.resolve_existing_at(self.default_cwd, raw_path)
+        return self._active_workspace().resolve_existing_at(self._active_default_cwd(), raw_path)
 
     def resolve_for_write(self, raw_path: str) -> ResolvedPath:
-        return self.workspace.resolve_for_write_at(self.default_cwd, raw_path)
+        return self._active_workspace().resolve_for_write_at(self._active_default_cwd(), raw_path)
 
     def git_path_filter(self, raw_path: str) -> str:
         if raw_path == ".":
@@ -1707,6 +1857,12 @@ class Runtime:
             "title": SERVER_TITLE,
             "version": __version__,
             "protocol_version": self.protocol_version,
+            "schema_version": TOOL_SCHEMA_VERSION,
+            "schema_hash": self.tool_schema_hash,
+            "runtime_instance_id": self.server_instance_id,
+            "process_id": os.getpid(),
+            "launch_id": os.environ.get(f"{ENV_PREFIX}_LAUNCH_ID", ""),
+            "source_fingerprint": os.environ.get(f"{ENV_PREFIX}_SOURCE_FINGERPRINT", ""),
             **self._exec_environment_summary(),
             "default_cwd": self.default_cwd_display(),
             "authorized_roots": [str(item) for item in self.workspace.authorized_roots if item != self.workspace.root],
@@ -1720,6 +1876,7 @@ class Runtime:
                 "global_tmp_write": self.global_tmp_write_policy(),
                 "secret_env_filter": self.secret_env_filter_policy(),
             },
+            "permission_policy": self.permission_policy_payload(),
             "shell_env_inherit": self.shell_env_policy.inherit,
             "shell_env_include_only": list(self.shell_env_policy.include_only),
             "shell_env_exclude": list(self.shell_env_policy.exclude),
@@ -1733,15 +1890,49 @@ class Runtime:
             "tool_count": len(tools),
         }
 
+    def permission_policy_payload(self) -> dict[str, Any]:
+        if self.dangerously_skip_all_permissions:
+            level = "unrestricted"
+        elif self.permission_mode == "trusted":
+            level = "trusted"
+        else:
+            level = "standard"
+        return {
+            "level": level,
+            "workspace": str(self.workspace.root),
+            "authorized_roots": [str(item) for item in self.workspace.authorized_roots],
+            "capabilities": {
+                "filesystem.read": "allow",
+                "filesystem.write": "allow",
+                "filesystem.delete": "allow" if self.capabilities.destructive_command else "ask",
+                "shell.execute": "allow",
+                "network.access": "allow" if self.capabilities.network else "ask",
+                "system.modify": "allow" if self.capabilities.system_modify else "ask",
+            },
+            "scope_note": "文件与命令路径仍受当前工作区和额外授权目录限制。",
+        }
+
     def _background_operation_snapshot(self, operation: dict[str, Any], *, include_result: bool = False) -> dict[str, Any]:
         event = operation["event"]
         finished = event.is_set()
+        now_monotonic = time.monotonic()
+        last_report = float(operation.get("last_progress_report_monotonic") or operation["started_monotonic"])
+        report_age = max(0.0, now_monotonic - last_report)
+        report_due = not finished and report_age >= PROGRESS_REPORT_SECONDS
         payload: dict[str, Any] = {
             "operation_id": operation["operation_id"],
             "tool": operation["tool"],
+            "task_id": operation.get("task_id", ""),
+            "run_id": operation.get("run_id", ""),
             "status": "completed" if finished else "running",
-            "elapsed_seconds": max(0, int(time.monotonic() - operation["started_monotonic"])),
-            "requires_progress_report": not finished,
+            "elapsed_seconds": max(0, int(now_monotonic - operation["started_monotonic"])),
+            "requires_progress_report": report_due,
+            "progress_report_seconds": PROGRESS_REPORT_SECONDS,
+            "next_progress_report_in_seconds": 0 if finished else max(0, PROGRESS_REPORT_SECONDS - int(report_age)),
+            "started_at": operation.get("started_at", ""),
+            "heartbeat_at": operation.get("heartbeat_at", ""),
+            "heartbeat_age_seconds": max(0, int(time.time() - float(operation.get("heartbeat_epoch") or time.time()))),
+            "runtime_instance_id": operation.get("runtime_instance_id", ""),
         }
         if finished and operation.get("error"):
             payload["status"] = "failed"
@@ -1756,21 +1947,97 @@ class Runtime:
         arguments: dict[str, Any],
         *,
         request_id: str | int | None,
+        trace_origin: str = "external",
     ) -> tuple[dict[str, Any], threading.Event]:
+        task = self.task_state.get()
+        operation_key_payload = json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        operation_key = hashlib.sha256(f"{name}\0{task.get('run_id','')}\0{operation_key_payload}".encode("utf-8")).hexdigest()
+        with self.background_operations_lock:
+            existing = next((item for item in self.background_operations.values() if item.get("operation_key") == operation_key), None)
+            if existing is not None:
+                return existing, existing["event"]
         operation_id = secrets.token_urlsafe(12)
         done = threading.Event()
+        now = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         operation: dict[str, Any] = {
             "operation_id": operation_id,
+            "operation_key": operation_key,
             "tool": name,
+            "task_id": task.get("task_id", ""),
+            "run_id": task.get("run_id", ""),
             "started_monotonic": time.monotonic(),
+            "started_at": now,
+            "heartbeat_at": now,
+            "heartbeat_epoch": time.time(),
+            "last_progress_report_monotonic": 0.0,
+            "runtime_instance_id": self.server_instance_id,
             "event": done,
             "result": None,
             "error": None,
         }
 
+        def persisted_record(status: str) -> dict[str, Any]:
+            return {
+                "operation_id": operation_id,
+                "operation_key": operation_key,
+                "tool": name,
+                "task_id": operation.get("task_id", ""),
+                "run_id": operation.get("run_id", ""),
+                "runtime_instance_id": self.server_instance_id,
+                "status": status,
+                "started_at": operation.get("started_at", ""),
+                "heartbeat_at": operation.get("heartbeat_at", ""),
+                "finished_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z") if status != "running" else "",
+                "error": copy.deepcopy(operation.get("error")),
+            }
+
+        self.task_state.upsert_operation(persisted_record("running"))
+
+        def heartbeat() -> None:
+            while not done.wait(BACKGROUND_HEARTBEAT_SECONDS):
+                operation["heartbeat_epoch"] = time.time()
+                operation["heartbeat_at"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                self.task_state.upsert_operation(persisted_record("running"))
+
         def worker() -> None:
+            previous_origin = getattr(self.request_context, "trace_origin", None)
+            self.request_context.trace_origin = trace_origin
             try:
                 operation["result"] = self._call_tool_sync(name, arguments, request_id=request_id)
+                result = operation.get("result")
+                structured = result.get("structuredContent") if isinstance(result, dict) and isinstance(result.get("structuredContent"), dict) else {}
+                execution = structured.get("execution") if isinstance(structured.get("execution"), dict) else {}
+                execution_failed = bool(execution) and (
+                    execution.get("ok") is False
+                    or str(execution.get("status") or "").lower() in {"failed", "error"}
+                )
+                if isinstance(result, dict) and (result.get("isError") is True or execution_failed):
+                    structured = result.get("structuredContent") if isinstance(result.get("structuredContent"), dict) else {}
+                    raw_error = structured.get("error") if isinstance(structured.get("error"), dict) else {}
+                    content = result.get("content") if isinstance(result.get("content"), list) else []
+                    text_error = next((str(item.get("text") or "") for item in content if isinstance(item, dict) and item.get("type") == "text" and item.get("text")), "")
+                    build_report = execution.get("build_report") if isinstance(execution.get("build_report"), dict) else {}
+                    message = str(
+                        raw_error.get("message")
+                        or execution.get("failure")
+                        or build_report.get("failure")
+                        or text_error
+                        or "Background operation failed"
+                    )
+                    operation["error"] = {
+                        "code": str(raw_error.get("code") or "BACKGROUND_OPERATION_FAILED"),
+                        "message": message,
+                        "category": str(raw_error.get("category") or "runtime"),
+                        "retryable": bool(raw_error.get("retryable", False)),
+                    }
+                    current = self.task_state.get()
+                    if operation.get("run_id") and current.get("run_id") == operation.get("run_id"):
+                        self.task_state.update({
+                            "lifecycle_state": "failed",
+                            "failure": message,
+                            "current_step": "Background operation failed",
+                            "next_step": "Review the failure and retry or continue with a corrected change set.",
+                        }, event="background_operation_failed")
             except Exception as exc:  # noqa: BLE001 - background errors must become inspectable state
                 operation["error"] = {
                     "code": "BACKGROUND_OPERATION_FAILED",
@@ -1778,7 +2045,25 @@ class Runtime:
                     "category": "runtime",
                     "retryable": False,
                 }
+                current = self.task_state.get()
+                if operation.get("run_id") and current.get("run_id") == operation.get("run_id"):
+                    self.task_state.update({
+                        "lifecycle_state": "failed",
+                        "failure": str(exc),
+                        "current_step": "Background operation failed",
+                        "next_step": "Review the failure and retry or start a new task.",
+                    }, event="background_operation_failed")
             finally:
+                operation["heartbeat_epoch"] = time.time()
+                operation["heartbeat_at"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                self.task_state.upsert_operation(persisted_record("failed" if operation.get("error") else "completed"))
+                if previous_origin is None:
+                    try:
+                        delattr(self.request_context, "trace_origin")
+                    except AttributeError:
+                        pass
+                else:
+                    self.request_context.trace_origin = previous_origin
                 done.set()
 
         with self.background_operations_lock:
@@ -1789,8 +2074,179 @@ class Runtime:
             while len(self.background_operations) >= MAX_BACKGROUND_OPERATIONS and finished_ids:
                 self.background_operations.pop(finished_ids.pop(0), None)
             self.background_operations[operation_id] = operation
+        threading.Thread(target=heartbeat, name=f"mcp-bg-heartbeat-{operation_id[:6]}", daemon=True).start()
         threading.Thread(target=worker, name=f"mcp-bg-{name}-{operation_id[:6]}", daemon=True).start()
         return operation, done
+
+    def _trace_origin(self) -> str:
+        origin = str(getattr(self.request_context, "trace_origin", "external") or "external").strip().lower()
+        return origin if origin in {"external", "desktop", "system", "internal"} else "external"
+
+    @staticmethod
+    def _compact_task_state(state: Any) -> dict[str, Any] | None:
+        if not isinstance(state, dict):
+            return None
+        result = {
+            key: copy.deepcopy(state.get(key))
+            for key in (
+                "version", "task_id", "run_id", "objective", "status", "lifecycle_state", "wait_reason",
+                "current_step", "next_step", "failure", "current_command", "last_command", "created_at", "updated_at",
+            )
+            if key in state
+        }
+        steps = state.get("steps")
+        if isinstance(steps, list):
+            result["steps"] = copy.deepcopy(steps[:80])
+        modified = state.get("modified_files")
+        if isinstance(modified, list):
+            result["modified_files"] = copy.deepcopy(modified[-40:])
+            result["modified_file_count"] = len(modified)
+        tests = state.get("test_results")
+        if isinstance(tests, list) and tests:
+            result["latest_test_result"] = copy.deepcopy(tests[-1])
+            result["test_result_count"] = len(tests)
+        builds = state.get("build_results")
+        if isinstance(builds, list) and builds:
+            result["latest_build_result"] = copy.deepcopy(builds[-1])
+            result["build_result_count"] = len(builds)
+        warnings = state.get("warnings")
+        if isinstance(warnings, list) and warnings:
+            result["warnings"] = copy.deepcopy(warnings[-5:])
+        return result
+
+    @staticmethod
+    def _compact_worktree(record: Any) -> dict[str, Any] | None:
+        if not isinstance(record, dict):
+            return None
+        keys = (
+            "run_id", "objective", "path", "branch", "base_commit", "snapshot_commit", "status", "exists", "clean",
+            "snapshot_dirty", "snapshot_changed_count", "snapshot_untracked_count", "created_at",
+        )
+        return {key: copy.deepcopy(record.get(key)) for key in keys if key in record}
+
+    @staticmethod
+    def _compact_operation_record(operation: Any) -> dict[str, Any] | None:
+        if not isinstance(operation, dict):
+            return None
+        keys = (
+            "operation_id", "task_id", "run_id", "tool", "status", "started_at", "heartbeat_at",
+            "heartbeat_age_seconds", "elapsed_seconds", "runtime_instance_id", "progress_report_seconds",
+            "requires_progress_report", "next_progress_report_in_seconds", "persisted", "message",
+        )
+        return {key: copy.deepcopy(operation.get(key)) for key in keys if key in operation}
+
+    @staticmethod
+    def _compact_build_report(report: Any) -> dict[str, Any] | None:
+        if not isinstance(report, dict):
+            return None
+        result = {
+            key: copy.deepcopy(report.get(key))
+            for key in ("ok", "status", "overall_status", "failure", "project", "project_root", "commands", "test_result", "build_result")
+            if key in report
+        }
+        artifacts = report.get("artifacts")
+        if isinstance(artifacts, list):
+            result["artifacts"] = copy.deepcopy(artifacts[:20])
+            result["artifact_count"] = len(artifacts)
+        return result
+
+    def _compact_agent_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            key: copy.deepcopy(payload.get(key))
+            for key in ("ok", "workflow", "phase", "status", "cache_hit", "cache_ttl_seconds", "recommended_next_action")
+            if key in payload
+        }
+        context_key = "context" if isinstance(payload.get("context"), dict) else "prepared" if isinstance(payload.get("prepared"), dict) else ""
+        context = payload.get(context_key) if context_key else None
+        if isinstance(context, dict):
+            result[context_key] = {
+                key: copy.deepcopy(context.get(key))
+                for key in (
+                    "cache_hit", "cache_ttl_seconds", "context_budget", "instructions", "objective", "read_strategy",
+                    "recommended_next_action", "searches", "selected_paths", "files", "total_content_bytes", "execution_profile",
+                )
+                if key in context
+            }
+        plan = payload.get("execution_plan")
+        if isinstance(plan, dict):
+            result["execution_plan"] = {
+                key: copy.deepcopy(plan.get(key))
+                for key in ("workflow", "workdir", "project_root", "verification", "commands", "test", "build", "warnings", "project")
+                if key in plan
+            }
+        execution = payload.get("execution")
+        if isinstance(execution, dict):
+            compact_execution = {
+                key: copy.deepcopy(execution.get(key))
+                for key in ("ok", "status", "warnings", "affected_files", "check_results", "next_step", "objective")
+                if key in execution
+            }
+            if execution.get("build_report") is not None:
+                compact_execution["build_report"] = self._compact_build_report(execution.get("build_report"))
+            diff = execution.get("git_diff")
+            if isinstance(diff, dict):
+                compact_execution["git_diff"] = {
+                    key: copy.deepcopy(diff.get(key))
+                    for key in ("run_id", "path", "branch", "base_commit", "snapshot_commit", "changed_count", "status", "truncated")
+                    if key in diff
+                }
+            result["execution"] = compact_execution
+        isolation = payload.get("isolation")
+        if isinstance(isolation, dict):
+            compact_isolation = {
+                key: copy.deepcopy(isolation.get(key))
+                for key in ("mode", "reason", "run_id", "message", "scope")
+                if key in isolation
+            }
+            if isolation.get("worktree") is not None:
+                compact_isolation["worktree"] = self._compact_worktree(isolation.get("worktree"))
+            result["isolation"] = compact_isolation
+        if payload.get("task") is not None:
+            result["task"] = self._compact_task_state(payload.get("task"))
+        if payload.get("background_operation") is not None:
+            result["background_operation"] = copy.deepcopy(payload.get("background_operation"))
+        if payload.get("message") is not None:
+            result["message"] = str(payload.get("message") or "")
+        if payload.get("requires_progress_report") is not None:
+            result["requires_progress_report"] = bool(payload.get("requires_progress_report"))
+        return result
+
+    def _project_model_payload(self, name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        if self._trace_origin() != "external":
+            return payload
+        requested_detail = str(args.get("detail", args.get("response_detail", "compact"))).strip().lower()
+        if requested_detail == "full":
+            return payload
+        if name == "agent_workflow":
+            return self._compact_agent_payload(payload)
+        if name != "task_control":
+            return payload
+        result = copy.deepcopy(payload)
+        if "state" in result:
+            result["state"] = self._compact_task_state(result.get("state"))
+        if isinstance(result.get("tasks"), list):
+            result["tasks"] = [item for item in (self._compact_task_state(task) for task in result["tasks"]) if item is not None]
+        if isinstance(result.get("operations"), list):
+            result["operations"] = [item for item in (self._compact_operation_record(operation) for operation in result["operations"]) if item is not None]
+        if isinstance(result.get("worktrees"), list):
+            result["worktrees"] = [item for item in (self._compact_worktree(worktree) for worktree in result["worktrees"]) if item is not None]
+        if result.get("active_worktree") is not None:
+            result["active_worktree"] = self._compact_worktree(result.get("active_worktree"))
+        if result.get("worktree") is not None:
+            result["worktree"] = self._compact_worktree(result.get("worktree"))
+        background = result.get("background_operation")
+        if isinstance(background, dict):
+            background = copy.deepcopy(background)
+            nested = background.get("result")
+            if isinstance(nested, dict):
+                structured = nested.get("structuredContent")
+                if isinstance(structured, dict):
+                    background["result"] = {
+                        "isError": bool(nested.get("isError", False)),
+                        "structuredContent": self._compact_agent_payload(structured),
+                    }
+            result["background_operation"] = background
+        return result
 
     def call_tool(
         self,
@@ -1803,7 +2259,13 @@ class Runtime:
         should_handoff = name == "agent_workflow" and str(args.get("phase", "prepare")).lower() in {"execute", "run"}
         if not should_handoff:
             return self._call_tool_sync(name, args, request_id=request_id)
-        operation, done = self._start_background_tool(name, args, request_id=request_id)
+        self.task_state.ensure_started(
+            str(args.get("objective", "")).strip() or "Complete an end-to-end workspace workflow",
+            current_step=TOOL_REGISTRY[name].title,
+        )
+        operation, done = self._start_background_tool(
+            name, args, request_id=request_id, trace_origin=self._trace_origin()
+        )
         if done.wait(LONG_TOOL_HANDOFF_SECONDS):
             if operation.get("error"):
                 raise ToolFailure(
@@ -1812,15 +2274,19 @@ class Runtime:
                     category="runtime",
                 )
             return operation["result"]
+        operation["last_progress_report_monotonic"] = time.monotonic()
         snapshot = self._background_operation_snapshot(operation)
-        return make_tool_result(name, {
+        snapshot["requires_progress_report"] = True
+        snapshot["next_progress_report_in_seconds"] = PROGRESS_REPORT_SECONDS
+        handoff_payload = {
             "ok": True,
             "status": "running",
             "requires_progress_report": True,
             "message": "The workflow is still running in the background. Report concrete progress to the user before polling it again.",
             "background_operation": snapshot,
             "task": self.task_state.get(),
-        }, is_error=False)
+        }
+        return make_tool_result(name, self._project_model_payload(name, args, handoff_payload), is_error=False)
 
     def _call_tool_sync(
         self,
@@ -1839,8 +2305,23 @@ class Runtime:
         validate_arguments(name, args)
         try:
             current_task = self.task_state.get()
-            control_tools = {"task_control", "task_state_get", "task_state_update", "task_state_pause", "task_state_resume", "task_state_clear", "task_history_list"}
-            if name not in control_tools and spec.read_only is not True:
+            task_action = str(args.get("action", "get")).lower() if name == "task_control" else ""
+            document_action = str(args.get("action", "inspect")).lower() if name == "document_workflow" else ""
+            workflow_phase = str(args.get("phase", "prepare")).lower() if name == "agent_workflow" else ""
+            task_read_only = name == "task_control" and task_action in {
+                "get", "history", "operation", "worktree_list", "worktree_get", "worktree_diff"
+            }
+            call_is_read_only = (
+                spec.read_only is True
+                or task_read_only
+                or (name == "document_workflow" and document_action in {"inspect", "capabilities"})
+                or (name == "agent_workflow" and workflow_phase == "prepare")
+            )
+            control_tools = {
+                "task_control", "task_state_get", "task_state_update", "task_state_pause", "task_state_resume",
+                "task_state_clear", "task_history_list", "command_control", "request_permissions",
+            }
+            if name not in control_tools and not call_is_read_only:
                 if str(current_task.get("status", "")) == "paused":
                     raise ToolFailure(
                         "TASK_PAUSED",
@@ -1855,16 +2336,28 @@ class Runtime:
                         category="runtime",
                         retryable=True,
                     )
+                auto_task_tools = {
+                    "agent_workflow",
+                    "apply_changes_and_verify",
+                    "verify_build",
+                    "document_workflow",
+                    "document_create",
+                    "document_convert",
+                }
                 objective = {
                     "agent_workflow": str(args.get("objective", "")).strip() or "Complete an end-to-end workspace workflow",
                     "apply_changes_and_verify": str(args.get("objective", "")).strip() or "Apply and verify workspace changes",
-                    "apply_patch": "Modify workspace files",
-                    "exec_command": "Run a workspace command",
                     "verify_build": "Build and verify the workspace",
                     "document_create": "Create a Word document in the workspace",
                     "document_convert": "Convert a document into the workspace",
-                }.get(name, "Complete a workspace task")
-                self.task_state.ensure_started(objective, current_step=TOOL_REGISTRY[name].title)
+                    "document_workflow": "Complete a document workflow",
+                }.get(name, "")
+                if name in auto_task_tools:
+                    should_start = True
+                    if call_is_read_only:
+                        should_start = False
+                    if should_start:
+                        self.task_state.ensure_started(objective, current_step=TOOL_REGISTRY[name].title)
             self.request_context.request_id = request_id
             try:
                 payload = handler(args)
@@ -1874,13 +2367,13 @@ class Runtime:
                         self.request_sessions.pop(request_id, None)
                 self.request_context.request_id = None
             payload.setdefault("ok", True)
-            task_read_only = name == "task_control" and str(args.get("action", "get")).lower() in {"get", "history", "operation"}
             if spec.read_only is not True and name not in {"agent_workflow", "document_workflow"} and not task_read_only and not payload.get("deduplicated"):
                 self._invalidate_fast_cache()
             self._record_task_tool_result(name, args, payload)
-            self.emit_tool_trace(name, args, payload, started_at)
+            model_payload = self._project_model_payload(name, args, payload)
+            self.emit_tool_trace(name, args, model_payload, started_at)
             content = spec.content_builder(payload) if spec.content_builder else None
-            return make_tool_result(name, payload, is_error=payload.get("ok") is False, content=content)
+            return make_tool_result(name, model_payload, is_error=payload.get("ok") is False, content=content)
         except ToolFailure as exc:
             payload = {
                 "ok": False,
@@ -1928,6 +2421,17 @@ class Runtime:
             return make_tool_result(name, payload, is_error=True)
 
     def _record_task_tool_result(self, name: str, args: dict[str, Any], payload: dict[str, Any]) -> None:
+        spec = TOOL_REGISTRY.get(name)
+        if spec is not None and spec.read_only is True:
+            return
+        if name == "task_control" and str(args.get("action", "get")).lower() in {
+            "get", "history", "operation", "worktree_list", "worktree_get", "worktree_diff"
+        }:
+            return
+        if name == "agent_workflow" and str(args.get("phase", "prepare")).lower() not in {"execute", "run"}:
+            return
+        if name == "document_workflow" and str(args.get("action", "inspect")).lower() == "inspect":
+            return
         try:
             self.task_state.record_tool_result(name, args, payload)
         except Exception:
@@ -1936,6 +2440,39 @@ class Runtime:
 
     def server_info(self, args: dict[str, Any]) -> dict[str, Any]:
         return self.server_info_payload()
+
+    def coding_tools_guide(self, args: dict[str, Any]) -> dict[str, Any]:
+        include_project_instructions = bool(args.get("include_project_instructions", False))
+        root_instructions = [
+            {
+                "path": item.path,
+                "truncated": item.truncated,
+                **({"content": item.content} if include_project_instructions else {}),
+            }
+            for item in self.project_context.root_files
+        ]
+        return {
+            "summary": "快速了解项目时使用 workspace_context；真正的编码、修改、测试和构建任务优先使用 agent_workflow，避免把一个完整任务拆成大量低级工具调用。",
+            "preferred_flow": [
+                "简单查看工作区或项目概况：workspace_context",
+                "诊断问题或准备上下文：agent_workflow phase=prepare",
+                "完成一组修改并验证：agent_workflow phase=execute/run",
+                "暂停、继续或查看后台长任务：task_control",
+                "PDF、DOCX、Markdown、文本任务：document_workflow",
+                "只有没有合适高层工作流时才使用 exec_command",
+            ],
+            "project_instructions": {
+                "root_files": root_instructions,
+                "nested_files": list(self.project_context.nested_files),
+                "warnings": list(self.project_context.warnings),
+            },
+            "custom_instructions": (
+                "当请求涉及本地代码工作区时，请优先使用 Coding Tools MCP，不要让我手动运行命令或粘贴文件内容。"
+                "如果只是快速了解项目，请先调用一次 workspace_context；如果需要诊断问题、修改代码、运行测试、构建或重构，请优先使用 agent_workflow，让相关搜索、读取、修改和验证尽量在一次工作流中完成。"
+                "请遵守 MCP 返回的 AGENTS.md / CLAUDE.md 项目指令，避免重复已经成功完成的读取或搜索；长任务需要继续时使用 task_control 恢复。"
+            ),
+            "note": "这份指南是可选的。MCP Server Instructions 已包含同类规则，不需要每个任务都先调用本工具。",
+        }
 
     def _workspace_cache_namespace(self) -> str:
         return str(self.workspace.root).casefold()
@@ -2002,47 +2539,73 @@ class Runtime:
             try:
                 self.performance_trace.record(
                     tool="workspace_preheat", started_monotonic=started, finished_monotonic=finished, ok=ok,
+                    origin="system",
                 )
             except Exception:
                 pass
 
         threading.Thread(target=preheat, name="coding-tools-preheat", daemon=True).start()
 
+    def _context_pressure_snapshot(self) -> dict[str, Any]:
+        trace = self.performance_trace.get()
+        session_id = str(trace.get("current_session_id") or "")
+        tool_calls = max(0, int(trace.get("tool_calls", 0) or 0))
+        response_bytes = max(0, int(trace.get("response_bytes", 0) or 0))
+        files_read = max(0, int(trace.get("files_read", 0) or 0))
+        level = classify_context_pressure(tool_calls, response_bytes, files_read)
+        return {
+            "level": level,
+            "tool_calls": tool_calls,
+            "files_read": files_read,
+            "response_bytes": response_bytes,
+            "response_megabytes": round(response_bytes / (1024 * 1024), 2),
+            "session_id": session_id,
+            "session_started_at": trace.get("session_started_at"),
+            "recommend_new_chat": level == "high",
+            "recommendation": (
+                "Consider starting a new ChatGPT conversation and resume from task state to reduce accumulated tool context."
+                if level == "high"
+                else "Current MCP context pressure is acceptable."
+            ),
+        }
+
     def workspace_context(self, args: dict[str, Any]) -> dict[str, Any]:
         detail = str(args.get("detail", "compact")).lower()
-        cache_args = {"path": str(args.get("path", ".")), "max_entries": int(args.get("max_entries", 40)), "detail": detail}
+        requested_path = str(args.get("path", "."))
+        target = self.resolve_existing(requested_path)
+        if not target.path.is_dir():
+            raise ToolFailure("NOT_A_DIRECTORY", "Workspace context path must be a directory.", category="validation")
+        scope = self._path_scope(target.path)
+        cache_args = {"path": requested_path, "max_entries": int(args.get("max_entries", 40)), "detail": detail}
         cache_key = self._fast_cache_key("workspace_context", cache_args)
         cached = self._fast_cache_get(cache_key, 30)
         if cached is not None:
             return cached
         root_entries = self.list_dir({
-            "path": str(args.get("path", ".")),
+            "path": requested_path,
             "max_entries": min(int(args.get("max_entries", 40)), 500),
             "max_depth": 1,
             "recursive": False,
         })
         try:
-            git = self.git_status({"path": str(args.get("path", ".")), "max_entries": 100})
+            git = self.git_status({"path": requested_path, "max_entries": 100})
         except Exception as exc:  # non-Git folders remain valid workspaces
             git = {"is_repo": False, "warnings": [str(exc)]}
-        project = {"type": "unknown", "name": self.workspace.root.name, "version": ""}
-        package = self.workspace.root / "package.json"
+        detected_project = detect_build_project(target.path)
+        execution_profile = profile_project_execution(target.path)
+        project = {
+            "type": str(detected_project.get("type") or "unknown"),
+            "name": str(detected_project.get("name") or target.path.name),
+            "version": str(detected_project.get("version") or ""),
+            "entrypoint": "",
+        }
+        package = target.path / "package.json"
         if package.is_file():
             try:
                 metadata = json.loads(package.read_text(encoding="utf-8"))
-                project = {
-                    "type": "electron" if metadata.get("main") else "node",
-                    "name": str(metadata.get("name") or self.workspace.root.name),
-                    "version": str(metadata.get("version") or ""),
-                }
+                project["entrypoint"] = str(metadata.get("main") or "")
             except (OSError, ValueError):
                 pass
-        elif (self.workspace.root / "pyproject.toml").is_file():
-            project["type"] = "python"
-        elif (self.workspace.root / "Cargo.toml").is_file():
-            project["type"] = "rust"
-        elif (self.workspace.root / "go.mod").is_file():
-            project["type"] = "go"
         task = self.task_state.get()
         if detail != "full":
             task = {key: task.get(key) for key in ("task_id", "objective", "status", "current_step", "next_step", "failure")}
@@ -2052,14 +2615,42 @@ class Runtime:
                 "changed_count": len(git.get("entries", [])) if isinstance(git.get("entries"), list) else int(git.get("changed_count", 0) or 0),
                 "truncated": bool(git.get("truncated", False)),
             }
+        scope_context = self.project_context if target.path == self.workspace.root else load_project_context(target.path)
+        instruction_summary = {
+            "root_files": [
+                {"path": item.path, "truncated": item.truncated}
+                for item in scope_context.root_files
+            ],
+            "nested_files": list(scope_context.nested_files),
+            "nested_count": len(scope_context.nested_files),
+            "warnings": list(scope_context.warnings),
+        }
+        entry_paths = [str(item.get("path", "")) for item in root_entries.get("entries", []) if isinstance(item, dict)]
+        preferred_names = ("src", "app", "electron", "packages", "lib", "package.json", "pyproject.toml", "Cargo.toml", "go.mod")
+        core_entries = [path for name in preferred_names for path in entry_paths if Path(path).name == name][:12]
+        if project.get("entrypoint") and project["entrypoint"] not in core_entries:
+            core_entries.insert(0, project["entrypoint"])
+        task_status = str(task.get("status") or "idle")
+        recommended_next_action = (
+            "Use task_control to inspect/resume the persisted task before starting new work."
+            if task_status in {"active", "waiting", "paused", "stopped"}
+            else "For coding work, call agent_workflow phase=prepare once, then execute one complete verified change set."
+        )
         payload = {
             "workspace": str(self.workspace.root),
+            "scope": scope,
             "default_cwd": self.default_cwd_display(),
             "project": project,
+            "execution_profile": execution_profile,
+            "permission_policy": self.permission_policy_payload(),
             "entries": root_entries.get("entries", []),
             "entries_truncated": root_entries.get("truncated", False),
             "git": git,
             "task": task,
+            "project_instructions": instruction_summary,
+            "core_entries": core_entries,
+            "context_pressure": self._context_pressure_snapshot(),
+            "recommended_next_action": recommended_next_action,
             "tool_mode": self.tool_mode,
             "detail": detail,
             "cache": {"hit": False, "age_ms": 0},
@@ -2079,6 +2670,14 @@ class Runtime:
             for key in stale:
                 _CONTEXT_BUNDLE_CACHE.pop(key, None)
 
+    def _prepare_context_budget(self) -> dict[str, int | str]:
+        level = str(self._context_pressure_snapshot().get("level", "normal"))
+        if level == "high":
+            return {"level": level, "total_bytes": 120 * 1024, "per_file_bytes": 24 * 1024, "max_files": 6, "window_lines": 100}
+        if level == "elevated":
+            return {"level": level, "total_bytes": 200 * 1024, "per_file_bytes": 32 * 1024, "max_files": 8, "window_lines": 120}
+        return {"level": level, "total_bytes": 320 * 1024, "per_file_bytes": 48 * 1024, "max_files": 10, "window_lines": 140}
+
     def prepare_coding_context(self, args: dict[str, Any]) -> dict[str, Any]:
         """Build the context a coding model normally gathers through many round trips."""
         cache_key = self._context_bundle_cache_key(args)
@@ -2096,10 +2695,15 @@ class Runtime:
         objective = str(args.get("objective", "")).strip()
         raw_queries = args.get("queries", [])
         raw_paths = args.get("paths", [])
-        queries = list(dict.fromkeys(str(item).strip() for item in raw_queries if str(item).strip()))[:12]
-        requested_paths = list(dict.fromkeys(str(item).strip() for item in raw_paths if str(item).strip()))[:40]
-        max_files = min(max(int(args.get("max_files", 12)), 1), 30)
-        max_total_bytes = min(max(int(args.get("max_total_bytes", 262144)), 4096), 1048576)
+        queries = list(dict.fromkeys(str(item).strip() for item in raw_queries if str(item).strip()))[:32]
+        requested_paths = list(dict.fromkeys(str(item).strip() for item in raw_paths if str(item).strip()))[:80]
+        context_root = self.resolve_existing(str(args.get("path", "."))).path
+        execution_profile = profile_project_execution(context_root, requested_paths)
+        budget = self._prepare_context_budget()
+        max_files = min(max(int(args.get("max_files", budget["max_files"])), 1), int(budget["max_files"]))
+        max_total_bytes = int(budget["total_bytes"])
+        per_file_bytes = int(budget["per_file_bytes"])
+        window_lines = int(budget["window_lines"])
         max_matches = min(max(int(args.get("max_matches_per_query", 20)), 1), 100)
 
         workspace = self.workspace_context({"path": str(args.get("path", ".")), "max_entries": int(args.get("max_entries", 120))})
@@ -2113,6 +2717,7 @@ class Runtime:
         }
         searches: list[dict[str, Any]] = []
         path_scores: dict[str, int] = {path: 1_000_000 - index for index, path in enumerate(requested_paths)}
+        match_lines: dict[str, list[int]] = {}
 
         def search_once(query: str) -> dict[str, Any]:
             try:
@@ -2146,6 +2751,12 @@ class Runtime:
                 path = str(match.get("path", ""))
                 if path:
                     path_scores[path] = path_scores.get(path, 0) + 1
+                    try:
+                        line_number = int(match.get("line", 0) or 0)
+                    except (TypeError, ValueError):
+                        line_number = 0
+                    if line_number > 0:
+                        match_lines.setdefault(path, []).append(line_number)
 
         ranked_paths = sorted(path_scores, key=lambda item: (-path_scores[item], item))[:max_files]
         files: list[dict[str, Any]] = []
@@ -2154,8 +2765,20 @@ class Runtime:
             remaining = max_total_bytes - total_bytes
             if remaining <= 0:
                 break
+            read_args: dict[str, Any] = {
+                "path": path,
+                "max_bytes": min(remaining, per_file_bytes),
+                "max_lines": window_lines,
+            }
+            lines = sorted(set(match_lines.get(path, [])))
+            if lines and path not in requested_paths:
+                anchor = lines[0]
+                before = max(20, window_lines // 3)
+                window_start = max(1, anchor - before)
+                read_args["start_line"] = window_start
+                read_args["end_line"] = window_start + window_lines - 1
             try:
-                item = self.read_file({"path": path, "max_bytes": min(remaining, 131072), "max_lines": 2000})
+                item = self.read_file(read_args)
             except (ToolFailure, OSError, UnicodeError) as exc:
                 files.append({"path": path, "error": str(exc)})
                 continue
@@ -2165,15 +2788,22 @@ class Runtime:
         payload = {
             "objective": objective,
             "workspace": workspace,
+            "execution_profile": execution_profile,
             "instructions": instructions,
             "searches": searches,
             "files": files,
             "selected_paths": ranked_paths,
             "total_content_bytes": total_bytes,
+            "read_strategy": "search_windows" if match_lines else "explicit_paths",
+            "context_budget": {
+                **budget,
+                "used_bytes": total_bytes,
+                "selected_files": len(files),
+            },
             "task_resume": self.task_state.get(),
             "cache_hit": False,
             "cache_ttl_seconds": CONTEXT_BUNDLE_CACHE_TTL_SECONDS,
-            "recommended_next_action": "Use apply_changes_and_verify with all related patches and required checks in one call.",
+            "recommended_next_action": "Call agent_workflow phase=execute with one complete change set; let the execution profile choose verified test/build commands unless an explicit command is required.",
         }
         with _CONTEXT_BUNDLE_CACHE_LOCK:
             if len(_CONTEXT_BUNDLE_CACHE) >= 64:
@@ -2182,11 +2812,108 @@ class Runtime:
             _CONTEXT_BUNDLE_CACHE[namespaced_key] = (now, payload)
         return payload
 
-    def _run_continuous_check(self, command: str, workdir: str, timeout_ms: int) -> dict[str, Any]:
+    @staticmethod
+    def _infer_workflow_command_role(command: str) -> tuple[str, bool]:
+        lowered = " ".join(str(command or "").strip().lower().split())
+        if not lowered:
+            return "blocking", True
+        if re.search(r"(?:^|\s)(?:pytest|python\s+-m\s+pytest|npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+test|jest|vitest|cargo\s+test|go\s+test|dotnet\s+test)(?:\s|$)", lowered):
+            return "verification", True
+        if re.search(r"(?:^|\s)(?:npm\s+run\s+(?:build|dist)|pnpm\s+(?:run\s+)?build|yarn\s+build|cargo\s+build|go\s+build|dotnet\s+build)(?:\s|$)", lowered):
+            return "verification", True
+        diagnostic_prefixes = (
+            "git status", "git diff", "git log", "git show", "rg ", "grep ", "findstr ",
+            "where ", "which ", "get-childitem", "select-string", "test-path", "dir ", "ls ",
+        )
+        if lowered.startswith(diagnostic_prefixes):
+            return "diagnostic", False
+        return "blocking", True
+
+    def _build_execution_plan(self, args: dict[str, Any], prepared: dict[str, Any] | None = None) -> dict[str, Any]:
+        workflow = str(args.get("workflow", "custom")).lower()
+        profile = prepared.get("execution_profile") if isinstance(prepared, dict) else None
+        if not isinstance(profile, dict):
+            root = self.resolve_existing(str(args.get("path", "."))).path
+            paths = [str(item) for item in args.get("paths", []) if str(item).strip()]
+            profile = profile_project_execution(root, paths)
+        defaults = {
+            "bugfix": "tests", "feature": "tests", "greenfield": "all", "refactor": "tests",
+            "test_failure": "tests", "build_release": "all", "diagnose": "none", "document": "none",
+            "resume": "none", "custom": "tests",
+        }
+        default_verification = defaults.get(workflow, "tests")
+        verification = str(args.get("verification", default_verification)).lower()
+        if verification not in {"none", "tests", "build", "all"}:
+            verification = default_verification
+        project_root = str(profile.get("project_root") or ".")
+        workdir = str(args.get("workdir") or (project_root if project_root != "." else args.get("path", ".")))
+        timeout_ms = min(max(int(args.get("timeout_ms", 600000)), 1000), 600000)
+        commands = args.get("command_steps") or args.get("commands", args.get("checks", []))
+        normalized_commands = self._normalize_workflow_commands(commands, workdir, timeout_ms)
+        test_profile = profile.get("test") if isinstance(profile.get("test"), dict) else {}
+        build_profile = profile.get("build") if isinstance(profile.get("build"), dict) else {}
+        warnings: list[str] = []
+        if verification in {"tests", "all"} and not args.get("test_command") and test_profile.get("status") != "verified":
+            warnings.append(str(test_profile.get("reason") or "当前项目没有经过验证的自动测试入口。"))
+        if verification in {"build", "all"} and not args.get("build_command") and build_profile.get("status") != "verified":
+            warnings.append(str(build_profile.get("reason") or "当前项目没有经过验证的自动构建入口。"))
+        return {
+            "workflow": workflow,
+            "project_root": project_root,
+            "project": profile.get("project", {}),
+            "workdir": workdir,
+            "verification": verification,
+            "test": test_profile,
+            "build": build_profile,
+            "commands": normalized_commands,
+            "explicit_test_command": bool(str(args.get("test_command", "")).strip()),
+            "explicit_build_command": bool(str(args.get("build_command", "")).strip()),
+            "warnings": warnings,
+        }
+
+    def _normalize_workflow_commands(self, raw: Any, default_workdir: str, default_timeout_ms: int) -> list[dict[str, Any]]:
+        if not isinstance(raw, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in raw[:32]:
+            if isinstance(item, str):
+                role, blocking = self._infer_workflow_command_role(item)
+                spec = {"cmd": item, "workdir": default_workdir, "role": role, "blocking": blocking, "timeout_ms": default_timeout_ms}
+            elif isinstance(item, dict):
+                cmd = str(item.get("cmd", item.get("command", ""))).strip()
+                if not cmd:
+                    continue
+                inferred_role, inferred_blocking = self._infer_workflow_command_role(cmd)
+                role = str(item.get("role", inferred_role)).strip().lower()
+                if role not in {"blocking", "verification", "diagnostic", "informational"}:
+                    raise ToolFailure("INVALID_ARGUMENT", f"Unknown command role: {role}", category="validation")
+                spec = {
+                    "cmd": cmd,
+                    "workdir": str(item.get("workdir", default_workdir)),
+                    "role": role,
+                    "blocking": bool(item.get("blocking", inferred_blocking if "role" not in item else role not in {"diagnostic", "informational"})),
+                    "timeout_ms": min(max(int(item.get("timeout_ms", default_timeout_ms)), 1000), 600000),
+                }
+            else:
+                continue
+            key = json.dumps(spec, sort_keys=True, ensure_ascii=False)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(spec)
+        return normalized
+
+    def _run_continuous_check(self, spec: dict[str, Any]) -> dict[str, Any]:
+        command = str(spec["cmd"])
+        workdir = str(spec["workdir"])
+        timeout_ms = int(spec["timeout_ms"])
         started = time.time()
         payload = self.exec_command({
             "cmd": command,
             "workdir": workdir,
+            "role": spec.get("role", "blocking"),
+            "blocking": bool(spec.get("blocking", True)),
             "timeout_ms": timeout_ms,
             "yield_time_ms": 30000,
             "max_output_bytes": 131072,
@@ -2207,6 +2934,9 @@ class Runtime:
             "duration_ms": int((time.time() - started) * 1000),
             "summary": str(payload.get("summary") or payload.get("stderr") or payload.get("stdout") or "")[:8000],
             "session_id": payload.get("session_id"),
+            "workdir": workdir,
+            "role": spec.get("role", "blocking"),
+            "blocking": bool(spec.get("blocking", True)),
         }
 
     def apply_changes_and_verify(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -2217,7 +2947,9 @@ class Runtime:
         single_patch = str(args.get("patch", "")).strip()
         if single_patch:
             patches.insert(0, single_patch)
-        checks = list(dict.fromkeys(str(item).strip() for item in args.get("checks", []) if str(item).strip()))[:8]
+        timeout_ms = min(max(int(args.get("timeout_ms", 600000)), 1000), 600000)
+        default_workdir = str(args.get("workdir", args.get("path", ".")))
+        checks = self._normalize_workflow_commands(args.get("checks", []), default_workdir, timeout_ms)
         verification = str(args.get("verification", "tests")).lower()
         if verification not in {"none", "tests", "build", "all"}:
             raise ToolFailure("INVALID_ARGUMENT", "verification must be none, tests, build, or all.", category="validation")
@@ -2271,33 +3003,50 @@ class Runtime:
             self._clear_context_bundle_cache()
 
         command_results: list[dict[str, Any]] = []
-        timeout_ms = min(max(int(args.get("timeout_ms", 600000)), 1000), 600000)
-        workdir = str(args.get("workdir", args.get("path", ".")))
         if checks:
             set_stage("checks", "Running requested checks")
-        for command in checks:
-            result = self._run_continuous_check(command, workdir, timeout_ms)
+        warning_results: list[dict[str, Any]] = []
+        for spec in checks:
+            result = self._run_continuous_check(spec)
             command_results.append(result)
             if result.get("exit_code") != 0:
-                failure = f"Check failed: {command}"
-                set_stage("checks", "Requested check failed", failed=True)
-                self.task_state.update({"status": "failed", "failure": failure, "next_step": "Fix the failed check and resume this task."})
-                return {
-                    "ok": False,
-                    "status": "failed",
-                    "objective": objective,
-                    "patch_results": patch_results,
-                    "affected_files": affected_files,
-                    "check_results": command_results,
-                    "build_report": None,
-                    "error": {"code": "CHECK_FAILED", "message": failure, "category": "runtime", "retryable": True, "details": {}},
-                }
+                if result.get("blocking", True):
+                    failure = f"Check failed: {result['command']}"
+                    set_stage("checks", "Requested check failed", failed=True)
+                    self.task_state.update({"status": "failed", "failure": failure, "next_step": "Fix the failed check and resume this task."})
+                    return {
+                        "ok": False,
+                        "status": "failed",
+                        "objective": objective,
+                        "patch_results": patch_results,
+                        "affected_files": affected_files,
+                        "check_results": command_results,
+                        "warnings": warning_results,
+                        "build_report": None,
+                        "error": {"code": "CHECK_FAILED", "message": failure, "category": "runtime", "retryable": True, "details": {}},
+                    }
+                warning_results.append(result)
 
         build_report = None
         if verification != "none":
             set_stage("verify", "Testing and building")
+            verification_path = str(args.get("workdir", args.get("path", ".")))
+            verification_root = self.resolve_existing(verification_path).path
+            target_paths: list[str] = []
+            for item in affected_files:
+                raw_path = str(item.get("path", "")) if isinstance(item, dict) else ""
+                if not raw_path:
+                    continue
+                try:
+                    changed_path = self.resolve_existing(raw_path).path
+                    target_paths.append(changed_path.relative_to(verification_root).as_posix())
+                except (ToolFailure, OSError, ValueError):
+                    continue
+            if not target_paths:
+                target_paths = [str(item) for item in args.get("target_paths", []) if str(item).strip()]
             build_report = self.verify_build({
-                "path": str(args.get("path", ".")),
+                "path": verification_path,
+                "target_paths": target_paths,
                 "run_tests": verification in {"tests", "all"},
                 "run_build": verification in {"build", "all"},
                 "test_command": args.get("test_command", ""),
@@ -2322,7 +3071,11 @@ class Runtime:
         diff = None
         if bool(args.get("include_diff", True)):
             try:
-                diff = self.git_diff({"path": str(args.get("path", ".")), "unstaged": True, "max_bytes": int(args.get("max_diff_bytes", 131072))})
+                isolated_run_id = str(getattr(self.execution_context, "worktree_run_id", "") or "")
+                if isolated_run_id:
+                    diff = self.worktrees.diff(isolated_run_id, max_bytes=int(args.get("max_diff_bytes", 131072)))
+                else:
+                    diff = self.git_diff({"path": str(args.get("path", ".")), "unstaged": True, "max_bytes": int(args.get("max_diff_bytes", 131072))})
             except (ToolFailure, OSError, ValueError):
                 diff = None
         set_stage("finalize", "Finalizing result")
@@ -2337,11 +3090,12 @@ class Runtime:
         }, event="continuous_workflow_completed")
         return {
             "ok": True,
-            "status": "passed",
+            "status": "passed_with_warnings" if warning_results else "passed",
             "objective": objective,
             "patch_results": patch_results,
             "affected_files": affected_files,
             "check_results": command_results,
+            "warnings": warning_results,
             "build_report": build_report,
             "git_diff": diff,
             "next_step": "Review the verified changes or continue with the next task.",
@@ -2390,6 +3144,26 @@ class Runtime:
         objective = str(args.get("objective", "")).strip() or str(self.task_state.get().get("objective", "")).strip()
         if workflow == "resume" or phase == "resume":
             state = self.task_state.get()
+            if not state.get("task_id") or not state.get("run_id"):
+                raise ToolFailure("NOT_FOUND", "There is no persisted task to resume.", category="not_found")
+            state = self.task_state.resume(str(args.get("next_step", "") or state.get("next_step", "")))
+            isolation: dict[str, Any] = {"mode": "off", "reason": "no-existing-worktree"}
+            worktree_record = None
+            worktree_diff = None
+            try:
+                worktree_record = self.worktrees.get(str(state.get("run_id") or ""))
+                worktree_diff = self.worktrees.diff(
+                    str(state.get("run_id") or ""),
+                    max_bytes=int(args.get("max_diff_bytes", 131072)),
+                )
+                isolation = {
+                    "mode": "worktree",
+                    "run_id": state.get("run_id", ""),
+                    "worktree": worktree_record,
+                }
+            except ToolFailure as exc:
+                if exc.code != "NOT_FOUND":
+                    raise
             context_args = {
                 "objective": objective,
                 "path": args.get("path", "."),
@@ -2405,7 +3179,9 @@ class Runtime:
                 "phase": "resume",
                 "task": state,
                 "context": context,
-                "recommended_next_action": "Continue from task.next_step. Do not repeat completed searches, reads, commands, tests, or builds.",
+                "isolation": isolation,
+                "worktree_diff": worktree_diff,
+                "recommended_next_action": "Continue the same run with agent_workflow phase=execute. Copy task.objective exactly into the next execute call; do not paraphrase it. Reuse task.next_step and the existing worktree, and do not repeat completed searches, reads, commands, tests, or builds.",
             }
 
         if workflow == "document":
@@ -2417,6 +3193,9 @@ class Runtime:
 
         should_prepare = phase in {"prepare", "run"}
         should_execute = phase in {"execute", "run"}
+        isolation_mode = str(args.get("isolation", "auto")).strip().lower() or "auto"
+        if isolation_mode not in {"auto", "off"}:
+            raise ToolFailure("INVALID_ARGUMENT", "isolation must be auto or off.", category="validation")
         prepared = None
         if should_prepare:
             prepared = self.prepare_coding_context({
@@ -2434,57 +3213,82 @@ class Runtime:
                 "max_total_bytes": args.get("max_total_bytes", 262144),
                 "force_refresh": args.get("force_refresh", False),
             })
+        execution_plan = self._build_execution_plan(args, prepared)
         if not should_execute:
             return {
                 "workflow": workflow,
                 "phase": "prepare",
                 "context": prepared,
-                "recommended_next_action": "Reason once over this bundle, then call agent_workflow phase=execute with the complete change set and verification plan.",
+                "execution_plan": execution_plan,
+                "recommended_next_action": "根据 execution_plan 完成代码修改，再调用 agent_workflow phase=execute；除非用户明确指定，否则不要自行猜测其它测试、构建命令或工作目录。",
             }
+
+        task = self.task_state.ensure_started(objective or f"Complete {workflow} workflow", current_step="Agent workflow")
+        isolation: dict[str, Any] = {"mode": "off", "reason": "disabled" if isolation_mode == "off" else "unavailable"}
+        worktree_record = None
+        if isolation_mode == "auto" and not bool(args.get("dry_run", False)):
+            requested_root = self.resolve_existing(str(args.get("path", "."))).path
+            scope = self._path_scope(requested_root)
+            if scope["kind"] != "workspace":
+                isolation = {"mode": "off", "reason": "authorized-root-not-supported", "scope": scope}
+            else:
+                try:
+                    worktree_record = self.worktrees.create(
+                        str(task.get("run_id") or ""),
+                        objective=objective or f"Complete {workflow} workflow",
+                    )
+                    isolation = {"mode": "worktree", "run_id": task.get("run_id", ""), "worktree": worktree_record}
+                except ToolFailure as exc:
+                    if exc.code in {"NOT_GIT_REPOSITORY", "WORKSPACE_NOT_GIT_ROOT", "GIT_NOT_FOUND"}:
+                        isolation = {"mode": "off", "reason": exc.code.lower(), "message": str(exc)}
+                    else:
+                        raise
+        elif bool(args.get("dry_run", False)):
+            isolation = {"mode": "off", "reason": "dry-run"}
 
         directories = [str(item).strip() for item in args.get("directories", []) if str(item).strip()]
         directory_result = None
-        if directories:
-            directory_result = self.file_batch({
-                "operations": [{"action": "mkdir", "path": path, "parents": True, "exist_ok": True} for path in directories],
-                "dry_run": args.get("dry_run", False),
-            })
         patches = [str(item) for item in args.get("patches", []) if str(item).strip()]
         if str(args.get("patch", "")).strip():
             patches.insert(0, str(args["patch"]))
         new_file_patch = self._new_files_patch(list(args.get("files", [])))
         if new_file_patch:
             patches.insert(0, new_file_patch)
-        default_verification = {
-            "bugfix": "tests", "feature": "tests", "greenfield": "all", "refactor": "tests",
-            "test_failure": "tests", "build_release": "all", "diagnose": "none", "custom": "tests",
-        }[workflow]
-        verification = str(args.get("verification", default_verification)).lower()
-        execution = self.apply_changes_and_verify({
-            "objective": objective or f"Complete {workflow} workflow",
-            "patches": patches,
-            "checks": args.get("commands", args.get("checks", [])),
-            "path": args.get("path", "."),
-            "workdir": args.get("workdir", args.get("path", ".")),
-            "verification": verification,
-            "test_command": args.get("test_command", ""),
-            "build_command": args.get("build_command", ""),
-            "artifact_paths": args.get("artifact_paths", []),
-            "hash_algorithm": args.get("hash_algorithm", "sha256"),
-            "timeout_ms": args.get("timeout_ms", 600000),
-            "timeout_seconds": args.get("timeout_seconds", 600),
-            "include_diff": args.get("include_diff", True),
-            "max_diff_bytes": args.get("max_diff_bytes", 131072),
-            "dry_run": args.get("dry_run", False),
-        })
+        verification = str(execution_plan["verification"])
+        with self._scoped_execution_worktree(worktree_record):
+            if directories:
+                directory_result = self.file_batch({
+                    "operations": [{"action": "mkdir", "path": path, "parents": True, "exist_ok": True} for path in directories],
+                    "dry_run": args.get("dry_run", False),
+                })
+            execution = self.apply_changes_and_verify({
+                "objective": objective or f"Complete {workflow} workflow",
+                "patches": patches,
+                "checks": execution_plan["commands"],
+                "path": args.get("path", "."),
+                "workdir": execution_plan["workdir"],
+                "target_paths": args.get("paths", []),
+                "verification": verification,
+                "test_command": args.get("test_command", ""),
+                "build_command": args.get("build_command", ""),
+                "artifact_paths": args.get("artifact_paths", []),
+                "hash_algorithm": args.get("hash_algorithm", "sha256"),
+                "timeout_ms": args.get("timeout_ms", 600000),
+                "timeout_seconds": args.get("timeout_seconds", 600),
+                "include_diff": args.get("include_diff", True),
+                "max_diff_bytes": args.get("max_diff_bytes", 131072),
+                "dry_run": args.get("dry_run", False),
+            })
         if execution.get("ok"):
             self._invalidate_fast_cache()
         result = {
             "workflow": workflow,
             "phase": "run" if phase == "run" else "execute",
+            "execution_plan": execution_plan,
             "prepared": prepared,
             "directories": directory_result,
             "execution": execution,
+            "isolation": isolation,
             "task": self.task_state.get(),
         }
         if execution.get("ok"):
@@ -2563,10 +3367,81 @@ class Runtime:
 
     def task_control(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action", "get")).lower()
+        if action.startswith("worktree_"):
+            state = self.task_state.get()
+            requested_run_id = str(args.get("run_id") or state.get("run_id") or "").strip()
+            if action == "worktree_list":
+                return {"state": state, "worktrees": self.worktrees.list()}
+            if not requested_run_id:
+                raise ToolFailure("INVALID_ARGUMENT", "run_id is required when there is no current task.", category="validation")
+            if action == "worktree_create":
+                record = self.worktrees.create(
+                    requested_run_id,
+                    objective=str(args.get("objective") or state.get("objective") or ""),
+                    base_ref=str(args.get("base_ref") or "HEAD"),
+                )
+                self.task_state.record_durable_event("worktree.created", {"worktree": record})
+                return {"state": self.task_state.get(), "worktree": record}
+            if action == "worktree_get":
+                return {"state": state, "worktree": self.worktrees.get(requested_run_id)}
+            if action == "worktree_diff":
+                return {"state": state, "worktree_diff": self.worktrees.diff(requested_run_id, max_bytes=int(args.get("max_bytes", 262144)))}
+            if action == "worktree_apply":
+                with self.background_operations_lock:
+                    running = next((
+                        item for item in self.background_operations.values()
+                        if str(item.get("run_id") or "") == requested_run_id and str(item.get("status") or "") == "running"
+                    ), None)
+                if running is not None:
+                    raise ToolFailure(
+                        "WORKTREE_BUSY",
+                        "The isolated task is still running. Wait for it to finish before applying changes to the primary workspace.",
+                        category="validation",
+                        details={"run_id": requested_run_id, "operation_id": running.get("operation_id")},
+                    )
+                task_for_run = state if str(state.get("run_id") or "") == requested_run_id else next((
+                    item for item in self.task_state.history(100)
+                    if str(item.get("run_id") or "") == requested_run_id
+                ), None)
+                if not isinstance(task_for_run, dict) or (
+                    str(task_for_run.get("status") or "") != "completed"
+                    and str(task_for_run.get("lifecycle_state") or "") != "completed"
+                ):
+                    raise ToolFailure(
+                        "WORKTREE_NOT_READY",
+                        "Only a completed isolated task can be applied to the primary workspace.",
+                        category="validation",
+                        details={"run_id": requested_run_id, "status": task_for_run.get("status") if isinstance(task_for_run, dict) else "unknown"},
+                    )
+                applied = self.worktrees.apply_back(requested_run_id)
+                self.task_state.record_durable_event("worktree.applied", {"apply_result": applied})
+                return {"state": self.task_state.get(), "worktree": self.worktrees.get(requested_run_id), "apply_result": applied}
+            if action == "worktree_discard":
+                discarded = self.worktrees.discard(requested_run_id)
+                self.task_state.record_durable_event("worktree.discarded", discarded)
+                return {"state": self.task_state.get(), "worktree": discarded}
+            raise ToolFailure("INVALID_ARGUMENT", f"Unknown worktree action: {action}", category="validation")
         if action == "get":
+            state = self.task_state.get()
             with self.background_operations_lock:
                 operations = [self._background_operation_snapshot(item) for item in self.background_operations.values()]
-            return {"state": self.task_state.get(), "operations": operations[-8:]}
+            live_ids = {str(item.get("operation_id") or "") for item in operations}
+            persisted = [item for item in self.task_state.operation_records(16) if str(item.get("operation_id") or "") not in live_ids]
+            all_operations = persisted + operations
+            if str(args.get("detail", "compact")).lower() == "full":
+                visible_operations = all_operations[-8:]
+            else:
+                running_operations = [item for item in all_operations if str(item.get("status") or "") == "running"]
+                visible_operations = running_operations[-1:] if running_operations else all_operations[-1:]
+            active_worktree = None
+            run_id = str(state.get("run_id") or "").strip()
+            if run_id:
+                try:
+                    active_worktree = self.worktrees.get(run_id)
+                except ToolFailure as exc:
+                    if exc.code != "NOT_FOUND":
+                        raise
+            return {"state": state, "operations": visible_operations, "active_worktree": active_worktree}
         if action == "operation":
             operation_id = str(args.get("operation_id", "")).strip()
             if not operation_id:
@@ -2574,13 +3449,21 @@ class Runtime:
             with self.background_operations_lock:
                 operation = self.background_operations.get(operation_id)
             if operation is None:
-                raise ToolFailure("NOT_FOUND", "Background operation was not found.", category="runtime", retryable=False)
+                persisted = next((item for item in reversed(self.task_state.operation_records(64)) if str(item.get("operation_id") or "") == operation_id), None)
+                if persisted is None:
+                    raise ToolFailure("NOT_FOUND", "Background operation was not found.", category="runtime", retryable=False)
+                return {"state": self.task_state.get(), "background_operation": {**persisted, "persisted": True, "requires_progress_report": False}}
             wait_ms = min(max(int(args.get("wait_ms", 0)), 0), BACKGROUND_OPERATION_WAIT_MAX_MS)
             if wait_ms and not operation["event"].is_set():
                 operation["event"].wait(wait_ms / 1000)
             snapshot = self._background_operation_snapshot(operation, include_result=True)
             if snapshot["status"] == "running":
-                snapshot["message"] = "Operation is still running. Report progress to the user before waiting again."
+                if snapshot.get("requires_progress_report"):
+                    snapshot["message"] = "Operation is still running. Report concrete progress to the user before waiting again."
+                    operation["last_progress_report_monotonic"] = time.monotonic()
+                    snapshot["next_progress_report_in_seconds"] = PROGRESS_REPORT_SECONDS
+                else:
+                    snapshot["message"] = "Operation is still running with a recent heartbeat; no additional user-facing progress report is due yet."
             return {"state": self.task_state.get(), "background_operation": snapshot}
         if action == "history":
             return {"tasks": self.task_state.history(int(args.get("limit", 20)))}
@@ -2615,8 +3498,9 @@ class Runtime:
         if action == "resume":
             return {"state": self.task_state.resume(str(args.get("next_step", "")))}
         if action == "stop":
+            before = self.task_state.get()
+            current = before.get("current_command") if isinstance(before, dict) else None
             state = self.task_state.update({"status": "stopped", "failure": str(args.get("reason", "Stopped by user")), "next_step": str(args.get("next_step", "Resume or start a new task."))}, event="task_stopped")
-            current = state.get("current_command") if isinstance(state, dict) else None
             if isinstance(current, dict) and current.get("session_id"):
                 try:
                     self.kill_session({"session_id": str(current["session_id"]), "signal": "TERM", "wait_ms": 1000})
@@ -2631,7 +3515,7 @@ class Runtime:
             return self.write_stdin({
                 "session_id": args.get("session_id", ""),
                 "chars": str(args.get("chars", "")) if action == "write" else "",
-                "yield_time_ms": args.get("yield_time_ms", 10000),
+                "yield_time_ms": args.get("yield_time_ms", args.get("wait_ms", 10000)),
                 "max_output_bytes": args.get("max_output_bytes", 65536),
                 "verbosity": args.get("verbosity", "summary"),
             })
@@ -2868,6 +3752,18 @@ class Runtime:
         error = raw_error if isinstance(raw_error, dict) else {}
         finished_at = time.monotonic()
         duration_ms = int((finished_at - started_at) * 1000)
+        files_read = 0
+        if bool(payload.get("ok", False)):
+            if name == "read_file":
+                files_read = 1
+            elif name == "read_files":
+                files_read = int(payload.get("count", 0) or 0)
+            elif name == "prepare_coding_context":
+                files_read = len(payload.get("files", [])) if isinstance(payload.get("files"), list) else 0
+            elif name == "agent_workflow":
+                context = payload.get("context") if isinstance(payload.get("context"), dict) else payload.get("prepared")
+                if isinstance(context, dict) and isinstance(context.get("files"), list):
+                    files_read = len(context["files"])
         try:
             self.performance_trace.record(
                 tool=name,
@@ -2875,9 +3771,11 @@ class Runtime:
                 finished_monotonic=finished_at,
                 request_bytes=len(json.dumps(args, ensure_ascii=False, default=str).encode("utf-8")),
                 response_bytes=len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")),
+                files_read=files_read,
                 ok=bool(payload.get("ok", False)),
                 cache_hit=bool(payload.get("cache_hit") or (isinstance(payload.get("cache"), dict) and payload["cache"].get("hit"))),
                 deduplicated=bool(payload.get("deduplicated")),
+                origin=self._trace_origin(),
             )
         except Exception:
             pass
@@ -2971,6 +3869,7 @@ class Runtime:
             "max_bytes": max_bytes,
             "start_line": start_line,
             "end_line": actual_end,
+            "lines_read": truncation.output_lines,
             "total_lines": total_lines,
             "total_bytes": total_bytes,
             "bytes_read": len(selected.encode("utf-8")),
@@ -3288,7 +4187,11 @@ class Runtime:
         return {
             "query": query,
             "matches": matches,
+            "backend": "python",
+            "engine": "python",
+            "match_count": len(matches),
             "total_matches": total,
+            "limit": max_results,
             "truncated": total > len(matches),
             "warnings": ["result limit reached"] if total > len(matches) else [],
         }
@@ -3407,7 +4310,10 @@ class Runtime:
         return {
             "query": query,
             "matches": matches,
+            "backend": "rg",
             "total_matches": total,
+            "match_count": len(matches),
+            "limit": max_results,
             "total_matches_exact": not truncated,
             "truncated": truncated,
             "engine": "rg",
@@ -3417,6 +4323,7 @@ class Runtime:
     def apply_patch(self, args: dict[str, Any]) -> dict[str, Any]:
         patch = str(args.get("patch", ""))
         dry_run = bool(args.get("dry_run", False))
+        workspace = self._active_workspace()
         with self.patch_lock:
             operations = parse_patch(patch)
             staged: dict[str, StagedFile] = {}
@@ -3427,12 +4334,12 @@ class Runtime:
             for op in operations:
                 self._validate_patch_path(op.path, require_existing=op.kind in {"update", "delete"})
                 if op.kind in {"add", "update", "delete"}:
-                    self.workspace.reject_write_symlink(op.path)
+                    workspace.reject_write_symlink(op.path)
                 if op.move_to:
                     self._validate_patch_path(op.move_to, require_existing=False)
-                    self.workspace.reject_write_symlink(op.move_to)
+                    workspace.reject_write_symlink(op.move_to)
                 if op.kind == "add":
-                    target = self.workspace.resolve_for_write(op.path)
+                    target = workspace.resolve_for_write(op.path)
                     if target.existed:
                         raise ToolFailure("PATCH_FAILED", "Cannot add file that already exists.", category="validation")
                     baseline = FileBaseline.capture(target.path)
@@ -3447,7 +4354,7 @@ class Runtime:
                     summaries.append(f"A {target.display}")
                     additions += len((op.add_content or "").splitlines())
                 elif op.kind == "delete":
-                    target = self.workspace.resolve_existing(op.path)
+                    target = workspace.resolve_existing(op.path)
                     if target.path.is_dir():
                         raise ToolFailure("PATCH_FAILED", "Cannot delete a directory.", category="validation")
                     prior = staged.get(target.display)
@@ -3457,7 +4364,7 @@ class Runtime:
                     summaries.append(f"D {target.display}")
                     removals += len((baseline.data or b"").splitlines())
                 elif op.kind == "update":
-                    source = self.workspace.resolve_existing(op.path)
+                    source = workspace.resolve_existing(op.path)
                     if source.path.is_dir():
                         raise ToolFailure("PATCH_FAILED", "Cannot update a directory.", category="validation")
                     prior = staged.get(source.display)
@@ -3468,12 +4375,12 @@ class Runtime:
                     assert content is not None
                     updated = apply_update_hunks(content, op.hunks, op.path)
                     for hunk in op.hunks:
-                        for line in hunk:
+                        for line in hunk.lines:
                             additions += line.startswith("+")
                             removals += line.startswith("-")
                     source_mode = prior.mode if prior is not None else baseline.mode
                     if op.move_to:
-                        dest = self.workspace.resolve_for_write(op.move_to)
+                        dest = workspace.resolve_for_write(op.move_to)
                         if dest.existed and dest.display != source.display:
                             raise ToolFailure("PATCH_FAILED", "Cannot move over an existing file.", category="validation")
                         dest_baseline = baseline if dest.display == source.display else FileBaseline.capture(dest.path)
@@ -3512,19 +4419,28 @@ class Runtime:
             "clean": True,
             "summary": "\n".join(summaries),
             "affected_files": affected,
+            "changed_files": [item.get("path") for item in affected if item.get("path")],
+            "diff_summary": {
+                "files_changed": len(affected),
+                "additions": additions,
+                "removals": removals,
+            },
             "additions": additions,
             "removals": removals,
             "warnings": [],
         }
 
     def _validate_patch_path(self, raw_path: str, *, require_existing: bool) -> None:
+        workspace = self._active_workspace()
         if require_existing:
-            self.workspace.resolve_existing(raw_path)
+            workspace.resolve_existing(raw_path)
         else:
-            self.workspace.resolve_for_write(raw_path)
+            workspace.resolve_for_write(raw_path)
 
     def _commit_staged_files(self, staged: list[StagedFile]) -> None:
         self.patch_committer.commit(staged)
+        if self._active_workspace().root != self.workspace.root:
+            return
         for change in staged:
             if change.display in self.patch_baselines:
                 continue
@@ -3560,7 +4476,7 @@ class Runtime:
         if self.landlock_enabled():
             try:
                 landlock_fd = open_landlock_ruleset(
-                    self.workspace.root,
+                    self._active_workspace().root,
                     guard_allow_roots(),
                     write_roots=self.landlock_write_roots(),
                 )
@@ -3647,7 +4563,7 @@ class Runtime:
         finally:
             if not tty:
                 session.close_stdin()
-        initial_wait = max(0, min(yield_ms, 30000)) / 1000.0
+        initial_wait = max(0, min(yield_ms, 30000, EXEC_HTTP_SAFE_YIELD_MAX_MS)) / 1000.0
 
         def finish() -> dict[str, Any]:
             # snapshot_since_cursor owns the status mapping (running/exited/
@@ -3702,11 +4618,11 @@ class Runtime:
             raise ToolFailure("NOT_A_DIRECTORY", "Build verification path must be a directory.", category="validation")
 
         def runner(command: str, workdir: Path, timeout_seconds: int) -> dict[str, Any]:
-            relative = workdir.relative_to(self.workspace.root).as_posix() or "."
+            workdir_argument = self._command_workdir_argument(workdir)
             started = time.time()
             payload = self.exec_command({
                 "cmd": command,
-                "workdir": relative,
+                "workdir": workdir_argument,
                 "timeout_ms": min(timeout_seconds * 1000, 600000),
                 "yield_time_ms": 30000,
                 "max_output_bytes": 131072,
@@ -3778,26 +4694,33 @@ class Runtime:
                 category="permission",
                 details={"permission": "shell_expansion", "command": compact},
             )
-        if re.search(r"(^|[;&|]\s*)rm\s+(-[^\s]*r[^\s]*f|-?[^\s]*f[^\s]*r)\s+/", compact):
+        if not self.capabilities.destructive_command and re.search(r"(^|[;&|]\s*)rm\s+(-[^\s]*r[^\s]*f|-?[^\s]*f[^\s]*r)\s+/", compact):
             raise ToolFailure(
                 "PERMISSION_REQUIRED",
                 "Destructive commands are blocked without explicit permission.",
                 category="permission",
-                details={"permission": "destructive_command", "command": compact},
+                details={"permission": "destructive_command", "capability": "filesystem.delete", "command": compact},
             )
-        if DESTRUCTIVE_RE.search(cmd):
+        if not self.capabilities.destructive_command and DESTRUCTIVE_RE.search(cmd):
             raise ToolFailure(
                 "PERMISSION_REQUIRED",
                 "Destructive commands are blocked without explicit permission.",
                 category="permission",
-                details={"permission": "destructive_command", "command": compact},
+                details={"permission": "destructive_command", "capability": "filesystem.delete", "command": compact},
+            )
+        if not self.capabilities.system_modify and SYSTEM_MODIFY_RE.search(cmd):
+            raise ToolFailure(
+                "PERMISSION_REQUIRED",
+                "System-level modification requires explicit permission.",
+                category="permission",
+                details={"permission": "system_modify", "capability": "system.modify", "command": compact},
             )
         if not self.allow_network and NETWORK_RE.search(cmd) and not is_literal_network_reference_command(cmd):
             raise ToolFailure(
                 "PERMISSION_REQUIRED",
                 "Network access is denied by default.",
                 category="permission",
-                details={"permission": "network", "command": compact},
+                details={"permission": "network", "capability": "network.access", "command": compact},
             )
 
     def _add_exec_diagnostics(self, payload: dict[str, Any]) -> None:
@@ -4088,15 +5011,15 @@ class Runtime:
             else "stdout"
         )
         output_ref = output_refs[output_stream]
+        if terminal:
+            self._remember_output_session(session)
+        payload["output_ref"] = output_ref
+        payload["output_stream"] = output_stream
+        payload["output_refs"] = output_refs
         truncated = bool(payload.get("truncated"))
         if truncated:
             if not truncated_streams:
                 truncated_streams.append(output_stream)
-            if terminal:
-                self._remember_output_session(session)
-            payload["output_ref"] = output_ref
-            payload["output_stream"] = output_stream
-            payload["output_refs"] = output_refs
             payload["output_truncated"] = True
             payload["truncated_output_streams"] = truncated_streams
             read_actions = [read_output_action(output_refs[stream]) for stream in truncated_streams]
@@ -4112,12 +5035,7 @@ class Runtime:
                 "verbosity must be one of: summary, preview, full.",
                 category="validation",
             )
-        if terminal and not truncated:
-            self._remember_output_session(session)
         payload["summary"] = self._session_output_summary(session, payload)
-        payload["output_ref"] = output_ref
-        payload["output_stream"] = output_stream
-        payload["output_refs"] = output_refs
         if verbosity == "full":
             return payload
         compact = {
@@ -4673,12 +5591,27 @@ class Runtime:
             "status": "unsupported",
             "grant_id": None,
             "expires_at": None,
+            "desktop_fallback": {
+                "available": True,
+                "page": "workspace",
+                "page_title": "工作区与权限",
+                "message": "当前 ChatGPT 客户端不支持 MCP 交互式权限确认，请在网页 MCP 助手中调整授权后重试。",
+                "steps": [
+                    "打开网页 MCP 助手设置。",
+                    "进入“工作区与权限”。",
+                    "只调整本次操作真正需要的授权目录或权限模式，然后重试原操作。",
+                ],
+            },
             "error": {
                 "code": "ELICITATION_UNSUPPORTED",
-                "message": "Permission elicitation is not available for this client.",
+                "message": "当前 ChatGPT 客户端不支持 MCP 交互式权限确认，请在网页 MCP 助手的“工作区与权限”中调整授权后重试。",
                 "category": "permission",
                 "retryable": False,
-                "details": {"requested": args},
+                "details": {
+                    "requested": args,
+                    "desktop_page": "workspace",
+                    "desktop_page_title": "工作区与权限",
+                },
             },
         }
 
@@ -5843,23 +6776,29 @@ def input_schemas() -> dict[str, dict[str, Any]]:
     string_array = {"type": "array", "items": {"type": "string"}}
     return {
         "server_info": object_schema(),
+        "coding_tools_guide": object_schema({
+            "include_project_instructions": {**boolean, "default": False, "description": "Include bounded root AGENTS.md/CLAUDE.md content for a trusted local settings UI. Leave false for normal model use."},
+        }),
         "agent_workflow": object_schema({
             "workflow": {**string, "enum": ["bugfix", "feature", "greenfield", "refactor", "test_failure", "build_release", "diagnose", "document", "resume", "custom"], "default": "custom", "description": "End-to-end task family. Select the closest intent instead of assembling low-level tools."},
             "phase": {**string, "enum": ["prepare", "execute", "run", "resume"], "default": "prepare", "description": "prepare gathers all context; execute applies a complete plan; run does both when changes are already known; resume restores persisted state and only missing context."},
             "objective": {**string, "description": "Concrete task objective, for example 'find and fix the login crash' or 'create a React dashboard from zero'."},
             "path": {**string, "default": ".", "description": "Project path relative to the configured workspace."},
             "workdir": {**string, "description": "Command working directory relative to the workspace; defaults to path."},
-            "queries": {"type": "array", "maxItems": 8, "items": string, "description": "Code symbols, errors, or phrases to search concurrently during prepare."},
-            "paths": {"type": "array", "maxItems": 20, "items": string, "description": "Likely files to prioritize and read during prepare."},
+            "queries": {"type": "array", "maxItems": 32, "items": string, "description": "Code symbols, errors, or phrases to search. The runtime safely bounds context work, so normal tasks should not be manually split just to satisfy a tiny schema limit."},
+            "paths": {"type": "array", "maxItems": 80, "items": string, "description": "Likely or changed files. The planner uses these to select the correct monorepo subproject and verification profile."},
             "directories": {"type": "array", "maxItems": 40, "items": string, "description": "Directories to create for greenfield or feature workflows."},
             "files": {"type": "array", "maxItems": 40, "items": {"type": "object", "properties": {"path": string, "content": string}, "required": ["path", "content"], "additionalProperties": False}, "description": "Complete new files to create, especially for greenfield projects."},
             "patch": {**string, "description": "One complete apply_patch envelope for existing-file changes."},
-            "patches": {"type": "array", "maxItems": 6, "items": string, "description": "Complete related patch envelopes, applied in order."},
-            "commands": {"type": "array", "maxItems": 6, "items": string, "description": "Initialization or focused checks to run in order before automatic verification."},
+            "patches": {"type": "array", "maxItems": 20, "items": string, "description": "Complete related patch envelopes, applied in order. Prefer one coherent change set; the runtime handles normal multi-file batches."},
+            "commands": {"type": "array", "maxItems": 20, "items": string, "description": "Optional explicit checks. Usually omit this and let the Execution Planner choose verified tests/builds. Common read-only diagnostics are automatically non-blocking."},
+            "command_steps": {"type": "array", "maxItems": 20, "items": {"type": "object", "properties": {"cmd": string, "workdir": string, "role": {**string, "enum": ["blocking", "verification", "diagnostic", "informational"]}, "blocking": boolean, "timeout_ms": {**integer, "minimum": 1000, "maximum": 600000}}, "required": ["cmd"], "additionalProperties": False}, "description": "Optional structured checks for exceptional cases. Prefer planner defaults when no special per-command metadata is required."},
             "verification": {**string, "enum": ["none", "tests", "build", "all"], "description": "Automatic validation level. Defaults are selected from the workflow type."},
             "test_command": string,
             "build_command": string,
             "timeout_seconds": {**integer, "minimum": 1, "maximum": 600, "default": 600},
+            "isolation": {**string, "enum": ["auto", "off"], "default": "auto", "description": "auto runs mutating Git workflows in a run-scoped isolated worktree when supported; off edits the configured workspace directly."},
+            "response_detail": {**string, "enum": ["compact", "full"], "default": "compact", "description": "compact minimizes model-facing data; full explicitly returns complete internal context and execution details."},
             "dry_run": {**boolean, "default": False},
             "document": {"type": "object", "additionalProperties": True, "description": "Arguments forwarded to document_workflow when workflow=document."},
         }),
@@ -5887,7 +6826,7 @@ def input_schemas() -> dict[str, dict[str, Any]]:
             "objective": string,
             "patch": string,
             "patches": {"type": "array", "maxItems": 10, "items": string},
-            "checks": {"type": "array", "maxItems": 8, "items": string},
+            "checks": {"type": "array", "maxItems": 8, "items": {"oneOf": [string, {"type": "object", "properties": {"cmd": string, "command": string, "workdir": string, "role": {**string, "enum": ["blocking", "verification", "diagnostic", "informational"]}, "blocking": boolean, "timeout_ms": {**integer, "minimum": 1000, "maximum": 600000}}, "additionalProperties": False}]}},
             "path": {**string, "default": "."},
             "workdir": string,
             "verification": {**string, "enum": ["none", "tests", "build", "all"], "default": "tests"},
@@ -5902,8 +6841,11 @@ def input_schemas() -> dict[str, dict[str, Any]]:
             "dry_run": {**boolean, "default": False},
         }),
         "task_control": object_schema({
-            "action": {**string, "enum": ["get", "operation", "start", "update", "pause", "stop", "resume", "clear", "history"], "default": "get"},
+            "action": {**string, "enum": ["get", "operation", "start", "update", "pause", "stop", "resume", "clear", "history", "worktree_create", "worktree_list", "worktree_get", "worktree_diff", "worktree_apply", "worktree_discard"], "default": "get"},
             "operation_id": {**string, "description": "Background operation id returned by a long agent_workflow."},
+            "run_id": {**string, "description": "Task run id for an isolated Git worktree. Defaults to the current task run_id."},
+            "base_ref": {**string, "default": "HEAD", "description": "Committed Git ref used as the isolated worktree base."},
+            "max_bytes": {**integer, "minimum": 1024, "maximum": 1048576, "default": 262144, "description": "Maximum worktree diff bytes returned."},
             "wait_ms": {**integer, "minimum": 0, "maximum": 60000, "default": 0, "description": "Wait up to this many milliseconds for a background operation before returning control."},
             "objective": string,
             "status": {**string, "enum": ["idle", "active", "waiting", "paused", "stopped", "completed", "failed"]},
@@ -5914,6 +6856,7 @@ def input_schemas() -> dict[str, dict[str, Any]]:
             "failure": {"type": ["string", "null"]},
             "reason": string,
             "limit": {**integer, "minimum": 1, "maximum": 100, "default": 20},
+            "detail": {**string, "enum": ["compact", "full"], "default": "compact", "description": "compact minimizes model context; full explicitly returns complete task state and operation details."},
         }),
         "read_files": object_schema({
             "files": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"oneOf": [string, {"type": "object", "properties": {"path": string, "start_line": integer, "end_line": integer, "max_lines": integer, "max_bytes": integer}, "required": ["path"], "additionalProperties": False}]}},
@@ -6073,6 +7016,8 @@ def input_schemas() -> dict[str, dict[str, Any]]:
                 "stdin": {**string, "default": ""},
                 "tty": {**boolean, "default": False},
                 "env": {"type": "object", "additionalProperties": {"type": "string"}, "default": {}},
+                "role": {**string, "enum": ["blocking", "verification", "diagnostic", "informational"], "default": "blocking"},
+                "blocking": {**boolean, "default": True},
             },
             ["cmd"],
         ),
@@ -6309,6 +7254,8 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             "/.well-known/mcp.json",
             "/.well-known/mcp/server-card.json",
             "/__control/health",
+            "/__control/events",
+            "/__control/task-events",
             "/__control/workspace",
             "/__control/roots",
             "/.well-known/oauth-authorization-server",
@@ -6331,6 +7278,12 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
     def handle_metadata_request(self, *, head_only: bool) -> None:
         request_path = self.path.split("?", 1)[0]
         normalized = posixpath.normpath(request_path)
+        if normalized == "/__control/events":
+            self.handle_events(head_only=head_only)
+            return
+        if normalized == "/__control/task-events":
+            self.handle_task_events(head_only=head_only)
+            return
         if normalized == "/__control/health":
             if not self.is_authorized():
                 self.send_unauthorized(head_only=head_only)
@@ -6343,6 +7296,12 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
                 "ready": not runtime._closed,
                 "version": __version__,
                 "instance_id": runtime.server_instance_id,
+                "runtime_instance_id": runtime.server_instance_id,
+                "process_id": os.getpid(),
+                "launch_id": os.environ.get(f"{ENV_PREFIX}_LAUNCH_ID", ""),
+                "source_fingerprint": os.environ.get(f"{ENV_PREFIX}_SOURCE_FINGERPRINT", ""),
+                "schema_version": TOOL_SCHEMA_VERSION,
+                "schema_hash": runtime.tool_schema_hash,
                 "workspace": str(runtime.workspace.root),
                 "default_cwd": runtime.default_cwd_display(),
                 "authorized_roots": [str(item) for item in runtime.workspace.authorized_roots if item != runtime.workspace.root],
@@ -6352,6 +7311,7 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
                 "workspace_generation": runtime.workspace_generation,
                 "active_commands": active_commands,
                 "retained_outputs": retained_outputs,
+                "latest_task_event_id": runtime.task_state.latest_event_id(),
                 "http_sessions": self.server.sessions.stats(),
             }, head_only=head_only)
             return
@@ -6384,6 +7344,106 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             self.send_json(server_card_payload(self.runtime, oauth_base_url=self.oauth_base_url()), head_only=head_only)
             return
         self.send_json({"error": "Unknown endpoint"}, status=404, head_only=head_only)
+
+    def handle_events(self, *, head_only: bool = False) -> None:
+        """Stream immutable authenticated local runtime events with replay support."""
+        if not self.is_authorized():
+            self.send_unauthorized(head_only=head_only)
+            return
+        try:
+            requested_event_id = max(0, int(self.headers.get("Last-Event-ID", "0") or 0))
+        except ValueError:
+            requested_event_id = 0
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_cors_headers()
+        self.end_headers()
+        if head_only:
+            return
+
+        runtime = self.runtime
+        store: TaskStateStore | None = None
+        last_event_id = requested_event_id
+        try:
+            while not runtime._closed:
+                current_store = runtime.task_state
+                if current_store is not store:
+                    if store is not None:
+                        last_event_id = current_store.latest_event_id()
+                    store = current_store
+                    if last_event_id > store.latest_event_id():
+                        last_event_id = 0
+                events = store.events_since(last_event_id, 200)
+                if not events:
+                    events = store.wait_for_events(last_event_id, timeout=15.0, limit=200)
+                if not events:
+                    self.wfile.write(b": heartbeat\n\n")
+                    self.wfile.flush()
+                    continue
+                for event in events:
+                    event_id = max(0, int(event.get("event_id", 0)))
+                    if event_id <= last_event_id:
+                        continue
+                    payload = {
+                        **event,
+                        "workspace": str(runtime.workspace.root),
+                        "workspace_generation": runtime.workspace_generation,
+                    }
+                    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                    self.wfile.write(f"id: {event_id}\n".encode("ascii"))
+                    self.wfile.write(b"event: task-event\n")
+                    self.wfile.write(b"data: " + encoded + b"\n\n")
+                    self.wfile.flush()
+                    last_event_id = event_id
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def handle_task_events(self, *, head_only: bool = False) -> None:
+        """Stream authenticated local task-state changes without extending /mcp."""
+        if not self.is_authorized():
+            self.send_unauthorized(head_only=head_only)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_cors_headers()
+        self.end_headers()
+        if head_only:
+            return
+
+        runtime = self.runtime
+        store: TaskStateStore | None = None
+        revision = -1
+        try:
+            while not runtime._closed:
+                current_store = runtime.task_state
+                if current_store is not store:
+                    store = current_store
+                    revision = -1
+                snapshot = store.wait_for_revision(revision, timeout=15.0)
+                if snapshot is None:
+                    self.wfile.write(b": heartbeat\n\n")
+                    self.wfile.flush()
+                    continue
+                revision, state = snapshot
+                payload = json.dumps(
+                    {
+                        "revision": revision,
+                        "workspace": str(runtime.workspace.root),
+                        "workspace_generation": runtime.workspace_generation,
+                        "state": state,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                self.wfile.write(b"event: task-state\n")
+                self.wfile.write(b"data: " + payload + b"\n\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
 
     def handle_control_workspace(self) -> None:
         if not self.is_authorized():
@@ -6597,10 +7657,22 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
         self.send_json(response)
 
     def handle_rpc(self, request: dict[str, Any]) -> dict[str, Any] | None:
+        raw_origin = str(self.headers.get("X-Coding-Tools-Origin") or "").strip().lower()
+        trace_origin = "desktop" if raw_origin == "desktop" else "external"
+        previous_origin = getattr(self.runtime.request_context, "trace_origin", None)
+        self.runtime.request_context.trace_origin = trace_origin
         try:
             return dispatch_rpc(self.runtime, request)
         except Exception as exc:  # noqa: BLE001 - HTTP must always answer with JSON-RPC
             return jsonrpc_error(response_id(request), -32603, str(exc))
+        finally:
+            if previous_origin is None:
+                try:
+                    delattr(self.runtime.request_context, "trace_origin")
+                except AttributeError:
+                    pass
+            else:
+                self.runtime.request_context.trace_origin = previous_origin
 
     def is_authorized(self) -> bool:
         if not self.runtime.auth_enabled():

@@ -1,6 +1,6 @@
 {
   "name": "web-mcp-assistant",
-  "version": "0.1.6",
+  "version": "0.2.4",
   "description": "一键部署与管理 Coding Tools MCP、OpenAI Tunnel 和 ChatGPT 接入的 Windows 桌面助手",
   "author": "3169657175",
   "license": "MIT",
@@ -8,7 +8,7 @@
   "scripts": {
     "icon:build": "node scripts/generate-icon.js",
     "start": "electron .",
-    "test": "node --test tests/*.test.js && node scripts/check-source-root-clean.js",
+    "test": "node scripts/run-python-tests.js && node --test tests/*.test.js && node scripts/check-source-root-clean.js",
     "audit:prod": "npm audit --omit=dev",
     "dist": "npm run icon:build && npm test && electron-builder --win nsis",
     "dist:dir": "npm run icon:build && electron-builder --dir"

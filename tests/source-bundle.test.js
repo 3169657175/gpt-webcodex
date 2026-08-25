@@ -37,10 +37,11 @@ test('portable Python does not contain a second stale coding_tools_mcp implement
 });
 
 test('portable Python isolated path loads the single bundled coding_tools_mcp source', () => {
+  const python = path.join(root, 'resources/native-python/python.exe');
+  if (!fs.existsSync(python)) return; // Worktrees/CI intentionally do not contain ignored portable runtime files.
   const pth = fs.readFileSync(path.join(root, 'resources/native-python/python312._pth'), 'utf8');
   assert.match(pth, /\.\.\\coding-tools-mcp\\python_vendor/);
   assert.match(pth, /\.\.\\coding-tools-mcp/);
-  const python = path.join(root, 'resources/native-python/python.exe');
   const result = spawnSync(python, ['-m', 'coding_tools_mcp', '--help'], {
     cwd: root,
     encoding: 'utf8',

@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('browserAssistant', {
     return () => ipcRenderer.removeListener('chat:download', wrapped);
   },
   taskState: () => ipcRenderer.invoke('task-state:read'),
+  taskRuntime: (options = {}) => ipcRenderer.invoke('mcp:task-runtime', options),
+  performanceTrace: () => ipcRenderer.invoke('performance:read'),
   pauseTask: () => ipcRenderer.invoke('task-state:pause'),
   resumeTask: () => ipcRenderer.invoke('task-state:resume'),
   stopTask: () => ipcRenderer.invoke('task-state:stop')

@@ -22,7 +22,7 @@ Electron Main
 ### Docker 安全模式
 
 - 使用固定容器名 `web-mcp-assistant-runtime`。
-- 使用固定镜像名 `web-mcp-assistant-runtime:0.2.1`。
+- 使用固定镜像名 `web-mcp-assistant-runtime:0.2.3`。
 - 只把用户明确选择的目录挂载到 `/workspace`。
 - MCP 与 Tunnel 端口均只绑定 `127.0.0.1`。
 - Docker Desktop 已安装但未运行时，由助手启动并等待引擎就绪。

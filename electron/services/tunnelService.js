@@ -64,8 +64,18 @@ class TunnelService {
 
   async stop() {
     const state = readJson(stateFile(), {});
-    if (!isAlive(state.tunnelPid)) return false;
+    const alive = isAlive(state.tunnelPid);
+    if (!alive) {
+      updateJsonAtomic(stateFile(), (value) => ({ ...value, tunnelPid: null }));
+      return false;
+    }
     await run('taskkill.exe', ['/PID', String(state.tunnelPid), '/T', '/F'], { allowFailure: true });
+    for (let index = 0; index < 25 && isAlive(state.tunnelPid); index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (isAlive(state.tunnelPid)) {
+      throw new Error(`OpenAI Tunnel 进程 ${state.tunnelPid} 未能完全退出，已保留进程状态。`);
+    }
     updateJsonAtomic(stateFile(), (value) => ({ ...value, tunnelPid: null }));
     return true;
   }

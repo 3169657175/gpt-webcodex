@@ -16,6 +16,51 @@ SESSION_BUFFER_BYTES = 524_288
 HARD_KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
+def _windows_taskkill_tree(process: subprocess.Popen[bytes], *, force: bool) -> None:
+    """Terminate a Windows process tree so command sessions cannot leave orphan children."""
+    if process.poll() is not None:
+        return
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    def run_taskkill(hard: bool) -> None:
+        command = ["taskkill.exe", "/PID", str(process.pid), "/T"]
+        if hard:
+            command.append("/F")
+        subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+            creationflags=creationflags,
+        )
+
+    try:
+        run_taskkill(force)
+        try:
+            process.wait(timeout=1.5)
+        except subprocess.TimeoutExpired:
+            if not force:
+                run_taskkill(True)
+                try:
+                    process.wait(timeout=1.5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            else:
+                process.kill()
+    except Exception:
+        try:
+            process.kill() if force else process.terminate()
+            process.wait(timeout=1)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+
+
 def terminate_process_group(
     process: subprocess.Popen[bytes],
     signum: signal.Signals,
@@ -23,15 +68,9 @@ def terminate_process_group(
     force: bool = False,
 ) -> None:
     if not hasattr(os, "killpg"):
-        if os.name == "nt" and not force:
-            event = getattr(signal, "CTRL_BREAK_EVENT", None)
-            if event is not None:
-                try:
-                    process.send_signal(event)
-                    process.wait(timeout=1)
-                    return
-                except Exception:
-                    pass
+        if os.name == "nt":
+            _windows_taskkill_tree(process, force=force)
+            return
         try:
             if force:
                 process.kill()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 import tempfile
 from dataclasses import dataclass, field
@@ -19,8 +20,14 @@ class PatchOperation:
     kind: str
     path: str
     add_content: str | None = None
-    hunks: list[list[str]] = field(default_factory=list)
+    hunks: list[PatchHunk] = field(default_factory=list)
     move_to: str | None = None
+
+
+@dataclass(frozen=True)
+class PatchHunk:
+    lines: list[str]
+    line_hint: int | None = None
 
 
 @dataclass(frozen=True)
@@ -307,25 +314,47 @@ def parse_patch(patch: str) -> list[PatchOperation]:
             if i < len(lines) - 1 and lines[i].startswith("*** Move to: "):
                 move_to = lines[i].removeprefix("*** Move to: ").strip()
                 i += 1
-            hunks: list[list[str]] = []
+            hunks: list[PatchHunk] = []
             current: list[str] = []
+            current_hint: int | None = None
             while i < len(lines) - 1 and not lines[i].startswith("*** "):
                 if lines[i].startswith("@@"):
                     if current:
-                        hunks.append(current)
+                        hunks.append(PatchHunk(current, current_hint))
                     current = []
+                    current_hint = parse_hunk_line_hint(lines[i])
                 else:
                     current.append(lines[i])
                 i += 1
             if current:
-                hunks.append(current)
+                hunks.append(PatchHunk(current, current_hint))
             operations.append(PatchOperation("update", path, hunks=hunks, move_to=move_to))
             continue
         raise ToolFailure("PATCH_FAILED", f"Unrecognized patch line: {line}", category="validation")
     return operations
 
 
-def apply_update_hunks(content: str, hunks: list[list[str]], path: str = "<patch>") -> str:
+def parse_hunk_line_hint(header: str) -> int | None:
+    custom = re.search(r"@@\s*line\s*:\s*(\d+)", header, re.I)
+    if custom:
+        return max(1, int(custom.group(1)))
+    unified = re.search(r"@@\s*-(\d+)(?:,\d+)?\s+\+\d+(?:,\d+)?\s*@@", header)
+    return max(1, int(unified.group(1))) if unified else None
+
+
+def _candidate_locations(lines: list[str], matches: list[int], needle_size: int) -> list[dict[str, object]]:
+    candidates: list[dict[str, object]] = []
+    for start in matches[:12]:
+        preview_start = max(0, start - 2)
+        preview_end = min(len(lines), start + max(needle_size, 1) + 2)
+        candidates.append({
+            "line": start + 1,
+            "preview": "\n".join(lines[preview_start:preview_end])[:1200],
+        })
+    return candidates
+
+
+def apply_update_hunks(content: str, hunks: list[PatchHunk], path: str = "<patch>") -> str:
     if not hunks:
         return content
     bom, text = strip_bom(content)
@@ -333,7 +362,7 @@ def apply_update_hunks(content: str, hunks: list[list[str]], path: str = "<patch
     normalized = normalize_to_lf(text)
     had_trailing_newline = normalized.endswith("\n")
     lines = normalized.splitlines()
-    parsed = [parse_update_hunk(hunk) for hunk in hunks]
+    parsed = [parse_update_hunk(hunk.lines) for hunk in hunks]
     matched: list[MatchedHunk] = []
     for index, hunk in enumerate(parsed):
         matches = [0] if not hunk.old else find_subsequence_all(lines, hunk.old)
@@ -351,6 +380,15 @@ def apply_update_hunks(content: str, hunks: list[list[str]], path: str = "<patch
                 },
             )
         if len(matches) > 1:
+            line_hint = hunks[index].line_hint
+            if line_hint is not None:
+                distances = sorted((abs((match + 1) - line_hint), match) for match in matches)
+                if len(distances) == 1 or distances[0][0] < distances[1][0]:
+                    matches = [distances[0][1]]
+            if len(matches) == 1:
+                start = matches[0]
+                matched.append(MatchedHunk(index, start, start + len(hunk.old), hunk.new))
+                continue
             raise ToolFailure(
                 "PATCH_CONTEXT_AMBIGUOUS",
                 f"Patch context matched {len(matches)} locations in {path}; add more context.",
@@ -360,7 +398,9 @@ def apply_update_hunks(content: str, hunks: list[list[str]], path: str = "<patch
                     "path": path,
                     "hunk_index": index,
                     "match_count": len(matches),
-                    "retry_hint": "Include additional unchanged context lines to make this hunk unique.",
+                    "line_hint": line_hint,
+                    "candidate_locations": _candidate_locations(lines, matches, len(hunk.old)),
+                    "retry_hint": "Use a standard @@ -old,+new @@ header or @@ line:<n> to select the intended nearby match, or include more unchanged context.",
                 },
             )
         start = matches[0]

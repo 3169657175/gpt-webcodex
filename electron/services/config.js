@@ -1,7 +1,9 @@
 ﻿const path = require('node:path');
 
 const DEFAULTS = Object.freeze({
-  configVersion: 5,
+  configVersion: 9,
+  connectionMode: 'official',
+  bridgeRemovedNotice: false,
   workspace: '',
   permissionMode: 'safe',
   toolMode: 'smart',
@@ -15,6 +17,10 @@ const DEFAULTS = Object.freeze({
   autoStartServices: false,
   keepRunningOnClose: true,
   progressReportSeconds: 90,
+  taskNotifications: true,
+  taskNotificationOnlyWhenUnfocused: false,
+  taskNotificationSound: true,
+  taskNotificationMinSeconds: 0,
   theme: 'light',
   firstRunCompleted: false,
   guideProgress: {},
@@ -53,11 +59,18 @@ function mergeRecentWorkspaces(existing, workspace, limit = 50) {
 
 function normalize(input = {}) {
   const sourceVersion = Number(input.configVersion) || 0;
+  const sourceMode = String(input.connectionMode || '').trim();
   const merged = { ...DEFAULTS };
   for (const key of Object.keys(DEFAULTS)) {
     if (Object.hasOwn(input, key)) merged[key] = input[key];
   }
-  merged.configVersion = 5;
+  merged.configVersion = 9;
+  merged.connectionMode = 'official';
+  merged.bridgeRemovedNotice = Boolean(merged.bridgeRemovedNotice);
+  if (sourceVersion > 0 && sourceVersion <= 6 && sourceMode === 'bridge') {
+    merged.autoStartServices = false;
+    merged.bridgeRemovedNotice = true;
+  }
   merged.permissionMode = ['safe', 'trusted'].includes(merged.permissionMode) ? merged.permissionMode : 'safe';
   merged.toolMode = 'smart';
   merged.proxyMode = ['auto', 'system', 'manual', 'direct'].includes(merged.proxyMode) ? merged.proxyMode : 'auto';
@@ -71,6 +84,16 @@ function normalize(input = {}) {
   merged.progressReportSeconds = [60, 90, 120, 180].includes(Number(merged.progressReportSeconds))
     ? Number(merged.progressReportSeconds)
     : 90;
+  merged.taskNotifications = Boolean(merged.taskNotifications);
+  merged.taskNotificationOnlyWhenUnfocused = Boolean(merged.taskNotificationOnlyWhenUnfocused);
+  merged.taskNotificationSound = Boolean(merged.taskNotificationSound);
+  merged.taskNotificationMinSeconds = [0, 15, 30, 60, 120].includes(Number(merged.taskNotificationMinSeconds))
+    ? Number(merged.taskNotificationMinSeconds)
+    : 0;
+  if (sourceVersion > 0 && sourceVersion <= 8) {
+    merged.taskNotificationOnlyWhenUnfocused = false;
+    merged.taskNotificationMinSeconds = 0;
+  }
   merged.firstRunCompleted = Boolean(merged.firstRunCompleted);
   merged.guideProgress = merged.guideProgress && typeof merged.guideProgress === 'object' ? merged.guideProgress : {};
   merged.recentWorkspaces = mergeRecentWorkspaces(merged.recentWorkspaces, merged.workspace, 50);
@@ -84,8 +107,11 @@ function normalize(input = {}) {
 }
 
 function validateRuntimeSettings(settings) {
-  for (const [label, port] of [['MCP 端口', settings.mcpPort], ['Tunnel 健康端口', settings.healthPort]]) {
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`${label}必须在 1024-65535 之间。`);
+  if (!Number.isInteger(settings.mcpPort) || settings.mcpPort < 1024 || settings.mcpPort > 65535) {
+    throw new Error('MCP 端口必须在 1024-65535 之间。');
+  }
+  if (!Number.isInteger(settings.healthPort) || settings.healthPort < 1024 || settings.healthPort > 65535) {
+    throw new Error('Tunnel 健康端口必须在 1024-65535 之间。');
   }
   if (settings.mcpPort === settings.healthPort) throw new Error('MCP 端口和 Tunnel 健康端口不能相同。');
   if (settings.tunnelId && !/^tunnel_[A-Za-z0-9_-]{4,}$/.test(settings.tunnelId)) {

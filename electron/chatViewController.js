@@ -12,6 +12,7 @@ const POPUP_HOSTS = new Set([
   'auth.openai.com', 'login.openai.com', 'accounts.google.com',
   'login.microsoftonline.com', 'appleid.apple.com'
 ]);
+const TRANSIENT_CHAT_LOAD_ERROR = /ERR_(?:CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_TIMED_OUT|TIMED_OUT|NETWORK_CHANGED|INTERNET_DISCONNECTED|HTTP2_PROTOCOL_ERROR|INCOMPLETE_CHUNKED_ENCODING)/i;
 
 function parseUrl(value) {
   try { return new URL(value); } catch { return null; }
@@ -34,6 +35,10 @@ function isChatGptNavigation(value) {
   return host === 'chatgpt.com' || host === 'www.chatgpt.com';
 }
 
+function isTransientChatLoadError(description) {
+  return TRANSIENT_CHAT_LOAD_ERROR.test(String(description || ''));
+}
+
 class ChatViewController {
   constructor({ window, log, settings, toolbarHeight = 64, onState = () => {}, onDownload = () => {} }) {
     this.window = window;
@@ -45,7 +50,41 @@ class ChatViewController {
     this.view = null;
     this.loading = false;
     this.lastError = '';
+    this.errorLayer = '';
+    this.retryTimer = null;
+    this.retryAttempt = 0;
+    this.nextRetryAt = 0;
     this.boundResize = () => this.resize();
+  }
+
+  clearRetryState({ resetAttempt = true } = {}) {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.nextRetryAt = 0;
+    if (resetAttempt) this.retryAttempt = 0;
+  }
+
+  scheduleTransientRetry(url, description) {
+    if (!isTransientChatLoadError(description) || !isAllowedNavigation(url) || this.retryTimer) return false;
+    const delay = Math.min(30000, 1500 * (2 ** Math.min(this.retryAttempt, 5)));
+    this.retryAttempt += 1;
+    this.nextRetryAt = Date.now() + delay;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.nextRetryAt = 0;
+      const contents = this.view?.webContents;
+      if (!contents || contents.isDestroyed()) return;
+      contents.loadURL(url).catch((error) => {
+        this.lastError = error.message;
+        this.errorLayer = 'chat-page';
+        this.emitState();
+      });
+    }, delay);
+    this.retryTimer.unref?.();
+    this.log.warn('ChatGPT 页面网络加载中断，将按退避策略重试页面；不会重启本地 MCP', {
+      url, description, attempt: this.retryAttempt, delayMs: delay
+    });
+    return true;
   }
 
   mount() {
@@ -116,6 +155,13 @@ class ChatViewController {
     contents.on('did-start-loading', () => {
       this.loading = true;
       this.lastError = '';
+      this.errorLayer = '';
+      this.emitState();
+    });
+    contents.on('did-finish-load', () => {
+      this.clearRetryState();
+      this.lastError = '';
+      this.errorLayer = '';
       this.emitState();
     });
     contents.on('dom-ready', () => {
@@ -139,12 +185,15 @@ class ChatViewController {
       if (!isMainFrame || errorCode === -3) return;
       this.loading = false;
       this.lastError = `${errorDescription} (${errorCode})`;
+      this.errorLayer = 'chat-page';
       this.log.warn('ChatGPT 页面加载失败', { url: validatedURL, errorCode, errorDescription });
+      this.scheduleTransientRetry(validatedURL, errorDescription);
       this.emitState();
     });
     contents.on('render-process-gone', (_event, details) => {
       this.loading = false;
       this.lastError = `页面进程已退出：${details.reason}`;
+      this.errorLayer = 'chat-renderer';
       this.log.error(this.lastError, { exitCode: details.exitCode });
       this.emitState();
     });
@@ -348,6 +397,9 @@ class ChatViewController {
     return {
       loading: this.loading,
       error: this.lastError,
+      errorLayer: this.errorLayer,
+      retryAttempt: this.retryAttempt,
+      nextRetryAt: this.nextRetryAt,
       url: contents && !contents.isDestroyed() ? contents.getURL() : '',
       title: contents && !contents.isDestroyed() ? contents.getTitle() : '',
       canGoBack: Boolean(contents && !contents.isDestroyed() && contents.canGoBack()),
@@ -408,18 +460,23 @@ class ChatViewController {
     const chatSession = session.fromPartition(CHAT_PARTITION);
     await chatSession.clearStorageData();
     await chatSession.clearCache();
+    this.clearRetryState();
     this.lastError = '';
+    this.errorLayer = '';
     await this.loadHome();
   }
 
   dispose() {
+    this.clearRetryState();
     if (this.window && !this.window.isDestroyed()) this.window.removeListener('resize', this.boundResize);
     if (this.view && this.window && !this.window.isDestroyed()) {
       try { this.window.contentView.removeChildView(this.view); } catch { /* already detached */ }
     }
-    if (this.view?.webContents && !this.view.webContents.isDestroyed()) this.view.webContents.close();
+    if (this.view?.webContents && !this.view.webContents.isDestroyed()) {
+      this.view.webContents.close();
+    }
     this.view = null;
   }
 }
 
-module.exports = { ChatViewController, CHAT_HOME, CHAT_PARTITION, isAllowedNavigation, isAuthPopup, isChatGptNavigation };
+module.exports = { ChatViewController, CHAT_HOME, CHAT_PARTITION, isAllowedNavigation, isAuthPopup, isChatGptNavigation, isTransientChatLoadError };

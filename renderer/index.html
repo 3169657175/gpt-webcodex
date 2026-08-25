@@ -14,15 +14,18 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark"><span></span><span></span><span></span></div>
-        <div><strong>网页 MCP 助手</strong><small>Coding workspace bridge</small></div>
+        <div><strong>网页 MCP 助手</strong><small>网页模型本地工作台</small></div>
       </div>
 
       <nav class="nav-list" aria-label="主导航">
+        <span class="nav-group-label">连接</span>
         <button class="nav-item active" data-page="overview"><span class="nav-icon">⌂</span><span>总览</span></button>
         <button class="nav-item" data-page="deploy"><span class="nav-icon">◇</span><span>运行与连接</span></button>
         <button class="nav-item" data-page="workspace"><span class="nav-icon">▱</span><span>工作区与权限</span></button>
+        <span class="nav-group-label">任务</span>
         <button class="nav-item" data-page="task"><span class="nav-icon">✓</span><span>任务状态</span></button>
         <button class="nav-item" data-page="build"><span class="nav-icon">▣</span><span>构建验证</span></button>
+        <span class="nav-group-label">支持</span>
         <button class="nav-item" data-page="health"><span class="nav-icon">✚</span><span>诊断与修复</span></button>
         <button class="nav-item" data-page="guide"><span class="nav-icon">?</span><span>接入指南</span></button>
         <button class="nav-item" data-page="logs"><span class="nav-icon">≡</span><span>运行日志</span></button>
@@ -32,18 +35,18 @@
       <div class="sidebar-runtime">
         <div class="runtime-orbit"><i id="sideRuntimeDot"></i><b id="sideRuntimeText">检查中</b></div>
         <p id="sideWorkspace">尚未选择工作目录</p>
-        <div class="mini-stats"><span>MCP <b id="sideMcp">--</b></span><span>Tunnel <b id="sideTunnel">--</b></span></div>
+        <div class="mini-stats"><span>本地工具 <b id="sideMcp">--</b></span><span><span id="sideConnectionLabel">连接通道</span> <b id="sideTunnel">--</b></span></div>
       </div>
 
       <div class="sidebar-footer">
-        <button class="ghost-button full" data-open="coding-tools-source">Coding Tools MCP · 0.4.3</button>
+        <button class="ghost-button full" data-open="coding-tools-source">本地工具引擎 · 0.4.9</button>
         <small>本地状态检查不会调用模型，也不会消耗聊天额度。</small>
       </div>
     </aside>
 
     <main class="main-area">
       <header class="topbar">
-        <div><p class="eyebrow" id="pageEyebrow">CONTROL CENTER</p><h1 id="pageTitle">运行总览</h1><p id="pageSubtitle">集中查看本地 MCP、OpenAI Tunnel 与部署环境。</p></div>
+        <div><p class="eyebrow" id="pageEyebrow">主页</p><h1 id="pageTitle">运行总览</h1><p id="pageSubtitle">集中查看本地工具、连接通道与当前工作区。</p></div>
         <div class="top-actions">
           <button class="icon-button" id="themeToggle" title="切换主题">◐</button>
           <button class="secondary-button" id="refreshButton">重新检测</button>
@@ -57,40 +60,46 @@
             <div class="hero-copy">
               <span class="soft-badge" id="heroBadge">正在检查运行状态</span>
               <h2 id="heroTitle">让网页聊天安全访问你的代码目录</h2>
-              <p id="heroText">选择一个工作目录，配置 OpenAI Tunnel，然后由助手完成 MCP 的启动、鉴权、健康检查和故障诊断。</p>
+              <p id="heroText">选择一个工作目录并配置连接通道，然后由助手完成本地工具的启动、鉴权、健康检查和故障诊断。</p>
               <div class="hero-actions">
                 <button class="primary-button large" id="heroStartButton">开始部署</button>
                 <button class="secondary-button large" data-nav="guide">查看接入步骤</button>
               </div>
             </div>
             <div class="connection-visual" aria-hidden="true">
-              <div class="node local"><span>LOCAL</span><b>工作目录</b></div>
+              <div class="node local"><span>本机</span><b>工作目录</b></div>
               <div class="flow-line"><i></i></div>
-              <div class="node bridge"><span>MCP</span><b>安全桥接</b></div>
+              <div class="node mcp"><span>工具</span><b>本地工具</b></div>
               <div class="flow-line"><i></i></div>
-              <div class="node cloud"><span>WEB</span><b>ChatGPT</b></div>
+              <div class="node cloud"><span>网页</span><b>ChatGPT</b></div>
             </div>
+          </div>
+
+          <div class="notice warning" id="bridgeRemovedNotice" hidden>
+            <b>实验性本地 Bridge 已移除</b>
+            <p>旧 Bridge 会修改 ChatGPT 网页消息，稳定性和工具语义都不可靠。当前版本已恢复为官方 MCP + OpenAI Tunnel 链路；旧 Bridge 用户的自动启动已关闭，请确认 Tunnel 配置后再手动部署。</p>
+            <button class="secondary-button" id="ackBridgeRemoved">知道了</button>
           </div>
 
           <div class="status-grid">
             <article class="status-card"><div class="status-head"><span class="status-symbol blue">N</span><i id="runtimeDot"></i></div><h3>便携运行时</h3><strong id="runtimeStatus">检查中</strong><p id="runtimeMeta">正在检查内置 Python</p></article>
-            <article class="status-card"><div class="status-head"><span class="status-symbol violet">M</span><i id="mcpDot"></i></div><h3>Coding Tools MCP</h3><strong id="mcpStatus">未启动</strong><p id="mcpMeta">127.0.0.1:18765</p></article>
-            <article class="status-card"><div class="status-head"><span class="status-symbol cyan">T</span><i id="tunnelDot"></i></div><h3>OpenAI Tunnel</h3><strong id="tunnelStatus">未连接</strong><p id="tunnelMeta">等待完成配置</p></article>
+            <article class="status-card"><div class="status-head"><span class="status-symbol violet">工</span><i id="mcpDot"></i></div><h3>本地工具服务</h3><strong id="mcpStatus">未启动</strong><p id="mcpMeta">127.0.0.1:18765</p></article>
+            <article class="status-card"><div class="status-head"><span class="status-symbol cyan" id="connectionSymbol">连</span><i id="tunnelDot"></i></div><h3 id="connectionCardTitle">连接通道</h3><strong id="tunnelStatus">未连接</strong><p id="tunnelMeta">等待完成配置</p></article>
             <article class="status-card"><div class="status-head"><span class="status-symbol green">W</span><i id="workspaceDot"></i></div><h3>当前工作目录</h3><strong id="workspaceStatus">未选择</strong><p id="workspaceMeta">仅所选目录可被 MCP 访问</p></article>
           </div>
 
           <div class="two-column overview-bottom">
             <article class="panel quick-panel">
-              <div class="panel-title"><div><span class="section-kicker">QUICK ACTIONS</span><h3>常用操作</h3></div></div>
+              <div class="panel-title"><div><span class="section-kicker">快捷入口</span><h3>常用操作</h3></div></div>
               <div class="action-list">
-                <button id="overviewRestart"><span class="action-icon">↻</span><span><b>重新启动全部服务</b><small>按正确顺序重启 MCP 与 Tunnel</small></span><i>›</i></button>
+                <button id="overviewRestart"><span class="action-icon">↻</span><span><b>重新启动全部服务</b><small>按正确顺序重启本地工具与连接通道</small></span><i>›</i></button>
                 <button data-nav="workspace"><span class="action-icon">▱</span><span><b>切换工作目录</b><small>切换后自动重新创建运行环境</small></span><i>›</i></button>
-                <button data-nav="guide"><span class="action-icon">?</span><span><b>在网页中创建 MCP</b><small>逐步完成 ChatGPT 连接配置</small></span><i>›</i></button>
-                <button data-open="tunnel-ui"><span class="action-icon">↗</span><span><b>打开 Tunnel 控制台</b><small>查看隧道连接和请求状态</small></span><i>›</i></button>
+                <button data-nav="guide"><span class="action-icon">?</span><span><b id="guideQuickTitle">在网页中创建 MCP</b><small id="guideQuickMeta">逐步完成 ChatGPT 连接配置</small></span><i>›</i></button>
+                <button class="official-only" data-open="tunnel-ui"><span class="action-icon">↗</span><span><b>打开 Tunnel 控制台</b><small>查看隧道连接和请求状态</small></span><i>›</i></button>
               </div>
             </article>
             <article class="panel progress-panel">
-              <div class="panel-title"><div><span class="section-kicker">DEPLOYMENT</span><h3>当前任务</h3></div><span class="soft-badge neutral" id="progressBadge">等待操作</span></div>
+              <div class="panel-title"><div><span class="section-kicker">运行进度</span><h3>当前任务</h3></div><span class="soft-badge neutral" id="progressBadge">等待操作</span></div>
               <div class="progress-ring-wrap"><div class="progress-ring" id="progressRing"><span id="progressPercent">0%</span></div><div><b id="progressTitle">尚未开始部署</b><p id="progressMessage">完成部署设置后，点击一键启动。</p></div></div>
               <div class="progress-track"><i id="progressBar"></i></div>
               <div class="compact-buttons"><button class="danger-button" id="overviewStop">停止服务</button><button class="secondary-button" data-nav="logs">查看日志</button></div>
@@ -99,17 +108,17 @@
         </section>
 
         <section class="page" data-page-view="deploy">
-          <div class="section-header"><div><span class="section-kicker">DEPLOYMENT WIZARD</span><h2>一键部署设置</h2><p>只填写一次，之后启动、重启和健康检查全部由助手完成。</p></div><div class="step-pill"><span>1</span>配置 <i></i><span>2</span>检查 <i></i><span>3</span>部署</div></div>
+          <div class="section-header"><div><span class="section-kicker">部署设置</span><h2>一键部署设置</h2><p>只填写一次，之后启动、重启和健康检查全部由助手完成。</p></div><div class="step-pill"><span>1</span>配置 <i></i><span>2</span>检查 <i></i><span>3</span>部署</div></div>
 
           <div class="two-column deploy-grid">
-            <article class="panel">
-              <div class="panel-title"><div><h3>OpenAI Tunnel 身份</h3><p>密钥只在主进程中加密保存，界面与日志不会读取明文。</p></div><span class="security-chip">Windows 加密</span></div>
-              <label class="field"><span>Runtime API Key</span><div class="input-action"><input id="runtimeKeyInput" type="password" autocomplete="off" placeholder="粘贴 Runtime API Key"><button id="saveRuntimeKey">安全保存</button></div><small id="runtimeKeyHint">尚未保存</small></label>
-              <label class="field"><span>Tunnel ID</span><input id="tunnelIdInput" placeholder="例如 tunnel_..."><small>在 OpenAI Platform 的 Tunnels 页面创建或查看。</small></label>
+            <article class="panel official-only">
+              <div class="panel-title"><div><h3>连接通道身份（OpenAI Tunnel）</h3><p>密钥只在主进程中加密保存，界面与日志不会读取明文。</p></div><span class="security-chip">Windows 加密</span></div>
+              <label class="field"><span>运行通道密钥（Runtime API Key）</span><div class="input-action"><input id="runtimeKeyInput" type="password" autocomplete="off" placeholder="粘贴 Runtime API Key"><button id="saveRuntimeKey">安全保存</button></div><small id="runtimeKeyHint">尚未保存</small></label>
+              <label class="field"><span>连接通道 ID（Tunnel ID）</span><input id="tunnelIdInput" placeholder="例如 tunnel_..."><small>在 OpenAI Platform 的 Tunnels 页面创建或查看。</small></label>
               <div class="inline-actions"><button class="secondary-button" data-open="openai-runtime-keys">申请 Runtime Key</button><button class="secondary-button" data-open="openai-tunnels">管理 Tunnels</button></div>
             </article>
 
-            <article class="panel">
+            <article class="panel official-only">
               <div class="panel-title"><div><h3>网络与代理</h3><p>默认自动选择直连、Windows 系统代理或常见本地代理，不再绑定某个代理软件和端口。</p></div></div>
               <label class="field"><span>代理模式</span><select id="proxyModeSelect"><option value="auto">自动检测（推荐）</option><option value="system">跟随 Windows 系统</option><option value="manual">手动代理</option><option value="direct">强制直连</option></select><small>自动模式会实际验证 OpenAI 网络连通性。</small></label>
               <label class="field" id="manualProxyField"><span>手动代理地址</span><input id="proxyUrlInput" placeholder="例如 http://127.0.0.1:7890"><small id="proxyHint">仅手动模式需要填写，支持 HTTP/HTTPS 代理。</small></label>
@@ -121,13 +130,13 @@
           </div>
 
           <article class="deploy-footer panel accent-panel">
-            <div><span class="section-kicker">READY TO DEPLOY</span><h3>保存配置并部署完整服务</h3><p id="deploySummary">请选择工作目录并填写 Tunnel 信息。</p></div>
+            <div><span class="section-kicker">准备完成</span><h3>保存配置并部署完整服务</h3><p id="deploySummary">请选择工作目录并填写连接信息。</p></div>
             <div class="deploy-actions"><button class="secondary-button" id="saveDeploySettings">仅保存配置</button><button class="primary-button large" id="deployNow">保存并开始部署</button></div>
           </article>
         </section>
 
         <section class="page" data-page-view="workspace">
-          <div class="section-header"><div><span class="section-kicker">WORKSPACE BOUNDARY</span><h2>工作目录与权限</h2><p>这是整个 MCP 最重要的安全边界：网页只能看到你明确选择的目录。</p></div></div>
+          <div class="section-header"><div><span class="section-kicker">访问范围</span><h2>工作目录与权限</h2><p>这是本地工具最重要的安全边界：网页只能看到你明确选择的目录。</p></div></div>
           <article class="panel workspace-picker">
             <div class="folder-illustration">▱</div>
             <div class="folder-copy"><span>当前允许访问</span><h3 id="selectedWorkspace">尚未选择目录</h3><p>切换目录后，助手会在后台静默重启本地 MCP 并更新访问边界。</p></div>
@@ -137,6 +146,16 @@
           <article class="panel authorized-roots-panel">
             <div class="panel-title"><div><h3>额外授权目录</h3><p>无需切换主工作区。添加后，ChatGPT 可以直接读取和修改这些目录中的绝对路径；未授权目录仍会被拒绝。</p></div><button class="secondary-button" id="addAuthorizedRoot">添加授权目录</button></div>
             <div class="authorized-root-list" id="authorizedRootsList"><span class="task-muted">尚未添加额外授权目录</span></div>
+          </article>
+
+          <article class="panel project-instructions-panel">
+            <div class="panel-title"><div><h3>项目指令与上下文</h3><p>显示本地工具实际检测到的 AGENTS.md / CLAUDE.md、项目入口和当前上下文压力。</p></div><button class="secondary-button" id="refreshWorkspaceContext">重新读取</button></div>
+            <div class="environment-list">
+              <div><i id="projectInstructionsDot"></i><span><b>项目指令</b><small id="projectInstructionsStatus">启动 MCP 后自动检测</small></span></div>
+              <div><i id="projectEntrypointDot"></i><span><b>项目入口</b><small id="projectEntrypointStatus">等待检测</small></span></div>
+              <div><i id="contextPressureDot"></i><span><b>上下文压力</b><small id="contextPressureStatus">等待统计</small></span></div>
+            </div>
+            <div class="task-files" id="projectInstructionsList"><span class="task-muted">暂无项目指令信息</span></div>
           </article>
 
           <div class="two-column">
@@ -149,16 +168,25 @@
             </article>
             <article class="panel">
               <div class="panel-title"><div><h3>本地端口</h3><p>只有发生端口冲突时才需要修改。</p></div></div>
-              <div class="port-grid"><label class="field"><span>MCP 服务端口</span><input id="mcpPortInput" type="number" min="1024" max="65535" value="18765"></label><label class="field"><span>Tunnel 控制台端口</span><input id="healthPortInput" type="number" min="1024" max="65535" value="18081"></label></div>
-              <div class="notice blue-notice"><b>仅监听本机</b><p>两个端口均绑定到 127.0.0.1，不会直接暴露给局域网。</p></div>
+              <div class="port-grid"><label class="field"><span>MCP 服务端口</span><input id="mcpPortInput" type="number" min="1024" max="65535" value="18765"></label><label class="field official-only"><span>Tunnel 控制台端口</span><input id="healthPortInput" type="number" min="1024" max="65535" value="18081"></label></div>
+              <div class="notice blue-notice"><b>仅监听本机</b><p id="localPortNotice">本地端口绑定到 127.0.0.1，不会直接暴露给局域网。</p></div>
             </article>
           </div>
           <div class="page-footer-actions"><button class="secondary-button" id="saveWorkspace">保存工作区设置</button><button class="primary-button" id="saveWorkspaceRestart">保存并重新部署</button></div>
         </section>
 
         <section class="page" data-page-view="guide">
-          <div class="section-header"><div><span class="section-kicker">CHATGPT SETUP GUIDE</span><h2>在网页中创建 MCP</h2><p>按照顺序完成。不同套餐或工作空间的入口名称可能略有区别。</p></div><button class="primary-button" data-open="chatgpt-connectors">打开 ChatGPT 连接器设置</button></div>
-          <div class="guide-layout">
+          <div class="section-header"><div><span class="section-kicker">接入帮助</span><h2 id="guidePageTitle">在网页中创建 MCP</h2><p id="guidePageSubtitle">按照顺序完成。不同套餐或工作空间的入口名称可能略有区别。</p></div><button class="primary-button official-only" data-open="chatgpt-connectors">打开 ChatGPT 连接器设置</button></div>
+          <article class="panel guide-recommendation">
+            <div class="panel-title"><div><h3>推荐的 ChatGPT 自定义指令</h3><p>这是 Coding Tools MCP 的使用建议，不会注入聊天消息。需要时复制一次到 ChatGPT 自定义指令即可。</p></div><div class="inline-actions"><button class="secondary-button" id="copyCustomInstructions">复制指令</button><button class="secondary-button" id="refreshCodingToolsGuide">从 MCP 刷新</button></div></div>
+            <div class="guide-rule-summary"><span>推荐</span><div><b>让 ChatGPT 优先使用高层 MCP 工作流</b><small>快速查看用 workspace_context；诊断、修改、测试和构建优先用 agent_workflow，减少重复读取和零散工具调用。</small></div></div>
+            <details class="custom-instructions-details">
+              <summary>展开查看完整自定义指令</summary>
+              <div class="prompt-box compact"><span>ChatGPT 自定义指令</span><p id="customInstructionsText">当请求涉及本地代码工作区时，请优先使用 Coding Tools MCP，不要让我手动运行命令或粘贴文件内容。如果只是快速了解项目，请先调用一次 workspace_context；如果需要诊断问题、修改代码、运行测试、构建或重构，请优先使用 agent_workflow，让相关搜索、读取、修改和验证尽量在一次工作流中完成。请遵守 MCP 返回的 AGENTS.md / CLAUDE.md 项目指令，避免重复已经成功完成的读取或搜索；长任务需要继续时使用 task_control 恢复。</p></div>
+            </details>
+            <small class="task-muted guide-rule-status" id="codingToolsGuideStatus">MCP 运行后可从 coding_tools_guide 校验最新规则。</small>
+          </article>
+          <div class="guide-layout official-only">
             <div class="guide-steps">
               <article class="guide-step" data-guide-step="tunnel"><div class="step-number">1</div><div class="step-content"><div class="step-heading"><h3>在 OpenAI Platform 创建 Tunnel</h3><label><input type="checkbox" data-guide-check="tunnel">已完成</label></div><p>打开 Tunnels 管理页面，创建专用于 Coding Tools MCP 的 Tunnel，然后复制它的 <code>tunnel_...</code> 标识。</p><div class="mock-browser"><div class="mock-bar"><i></i><i></i><i></i><span>platform.openai.com / Tunnels</span></div><div class="mock-content"><span class="mock-label">Tunnel name</span><div class="mock-row"><b>Coding Tools MCP</b><em>Active</em></div><span class="mock-label">Tunnel ID</span><code>tunnel_••••••••••••</code></div></div><button class="secondary-button" data-open="openai-tunnels">打开 Tunnels 页面</button></div></article>
               <article class="guide-step" data-guide-step="key"><div class="step-number">2</div><div class="step-content"><div class="step-heading"><h3>创建 Runtime API Key</h3><label><input type="checkbox" data-guide-check="key">已完成</label></div><p>为运行时创建独立 API Key。不要使用管理员密钥，也不要把密钥发送给任何人。</p><div class="notice"><b>正确做法</b><p>在本助手“一键部署”页面中粘贴，保存后由 Windows 加密，日志中不会出现明文。</p></div><button class="secondary-button" data-open="openai-runtime-keys">打开 Runtime Keys 页面</button></div></article>
@@ -166,15 +194,15 @@
               <article class="guide-step" data-guide-step="connector"><div class="step-number">4</div><div class="step-content"><div class="step-heading"><h3>在 ChatGPT 创建自定义连接器</h3><label><input type="checkbox" data-guide-check="connector">已完成</label></div><p>进入“设置 → 连接器/Apps”，启用开发者模式并创建自定义 MCP。选择刚才建立的 Tunnel，并完成账户确认。</p><div class="connector-fields"><div><span>名称</span><b>Coding Tools MCP</b><button data-copy="Coding Tools MCP">复制</button></div><div><span>本地服务</span><b id="guideLocalUrl">http://127.0.0.1:18765/mcp</b><button id="copyLocalUrl">复制</button></div><div><span>Tunnel ID</span><b id="guideTunnelId">尚未填写</b><button id="copyTunnelId">复制</button></div></div><button class="primary-button" data-open="chatgpt-connectors">打开 ChatGPT 设置</button></div></article>
               <article class="guide-step" data-guide-step="test"><div class="step-number">5</div><div class="step-content"><div class="step-heading"><h3>进行第一次工具测试</h3><label><input type="checkbox" data-guide-check="test">已完成</label></div><p>在网页聊天中选择该 MCP，然后发送下面这句话。第一次写入或执行命令时，请认真检查授权提示。</p><div class="prompt-box"><span>建议测试语句</span><p>请列出当前工作目录的第一层文件，并告诉我这是一个什么项目。不要修改任何文件。</p><button data-copy="请列出当前工作目录的第一层文件，并告诉我这是一个什么项目。不要修改任何文件。">复制测试语句</button></div></div></article>
             </div>
-            <aside class="guide-aside panel"><span class="section-kicker">CHECKLIST</span><h3>接入进度</h3><div class="guide-progress-number"><b id="guideProgressPercent">0%</b><span>已完成</span></div><div class="progress-track"><i id="guideProgressBar"></i></div><ul id="guideChecklist"><li>创建 Tunnel</li><li>准备 Runtime Key</li><li>部署本地服务</li><li>创建 ChatGPT MCP</li><li>完成只读测试</li></ul><div class="notice warning"><b>注意</b><p>ChatGPT 中创建连接器属于用户账户操作，助手不会模拟点击或读取你的网页登录信息。</p></div></aside>
+            <aside class="guide-aside panel"><span class="section-kicker">接入清单</span><h3>接入进度</h3><div class="guide-progress-number"><b id="guideProgressPercent">0%</b><span>已完成</span></div><div class="progress-track"><i id="guideProgressBar"></i></div><ul id="guideChecklist"><li>创建连接通道</li><li>准备运行密钥</li><li>部署本地服务</li><li>创建 ChatGPT MCP</li><li>完成只读测试</li></ul><div class="notice warning"><b>注意</b><p>ChatGPT 中创建连接器属于用户账户操作，助手不会模拟点击或读取你的网页登录信息。</p></div></aside>
           </div>
         </section>
 
         <section class="page" data-page-view="task">
-          <div class="section-header"><div><span class="section-kicker">RESUMABLE TASK</span><h2>任务执行状态</h2><p>状态保存在当前工作区，刷新网页、切换聊天或 MCP 重启后仍可继续。</p></div><div class="inline-actions"><button class="danger-button" id="clearTaskState">清除状态</button><button class="primary-button" id="refreshTaskState">刷新状态</button></div></div>
-          <div id="taskStateEmpty" class="panel task-empty"><b>当前没有任务状态</b><span>网页模型开始编码任务并调用 task_state_update 后，这里会自动显示。</span></div>
+          <div class="section-header"><div><span class="section-kicker">可恢复任务</span><h2>任务执行状态</h2><p>状态保存在当前工作区，刷新网页、切换聊天或本地工具重启后仍可继续。</p></div><div class="inline-actions"><button class="danger-button" id="clearTaskState">清除状态</button><button class="primary-button" id="refreshTaskState">刷新状态</button></div></div>
+          <div id="taskStateEmpty" class="panel task-empty"><b>当前没有任务</b><span>开始执行代码任务后，这里会自动显示进度。</span></div>
           <div id="taskStateContent" class="task-dashboard" hidden>
-            <article class="panel task-objective"><span class="section-kicker">CURRENT OBJECTIVE</span><div class="task-title-row"><h3 id="taskObjective">—</h3><span class="soft-badge" id="taskStatus">idle</span></div><p><b>任务 ID：</b><code id="taskId">—</code></p><p><b>当前步骤：</b><span id="taskCurrentStep">—</span></p><p><b>下一步：</b><span id="taskNextStep">—</span></p><p class="task-failure" id="taskFailureRow" hidden><b>失败原因：</b><span id="taskFailure">—</span></p></article>
+            <article class="panel task-objective"><span class="section-kicker">当前目标</span><div class="task-title-row"><h3 id="taskObjective">—</h3><span class="inline-actions"><span class="soft-badge positive" id="taskIsolationBadge" hidden>安全隔离中</span><span class="soft-badge" id="taskStatus">暂无任务</span></span></div><p><b>任务 ID：</b><code id="taskId">—</code></p><p><b>当前步骤：</b><span id="taskCurrentStep">—</span></p><p><b>下一步：</b><span id="taskNextStep">—</span></p><p class="task-failure" id="taskFailureRow" hidden><b>失败原因：</b><span id="taskFailure">—</span></p></article>
             <div class="task-grid">
               <article class="panel"><div class="panel-title"><h3>执行步骤</h3><span id="taskStepCount">0 / 0</span></div><div class="inline-actions task-controls"><button class="secondary-button" id="pauseTask">暂停</button><button class="secondary-button" id="resumeTask">继续</button><button class="danger-button" id="stopTask">停止</button></div><div class="task-steps" id="taskSteps"></div></article>
               <article class="panel"><div class="panel-title"><h3>正在执行的命令</h3></div><div class="task-command" id="taskCommand">当前没有运行中的命令</div><div class="panel-title task-subtitle"><h3>最近测试结果</h3></div><div class="task-results" id="taskTests"></div></article>
@@ -184,34 +212,63 @@
               <article class="panel"><div class="panel-title"><h3>最近构建报告</h3></div><div class="task-build" id="taskBuild"></div></article>
             </div>
           </div>
+          <article class="panel task-worktrees-panel"><div class="panel-title"><div><h3>安全隔离区</h3><span class="task-muted">代码任务先在独立 Git Worktree 中修改和验证。完成的任务可安全应用到主工作区；系统不会改变 Git 暂存区，同一文件若在任务快照后又被你修改会直接拒绝覆盖。</span></div><button class="secondary-button" id="refreshTaskWorktrees">刷新隔离区</button></div><div class="task-worktrees" id="taskWorktrees"><span class="task-muted">当前没有隔离任务</span></div></article>
+          <article class="panel task-operations-panel"><div class="panel-title"><div><h3>后台任务</h3><span class="task-muted">长任务转入后台后会显示真实运行心跳；MCP 重启造成的中断也会明确标记为可恢复。</span></div></div><div class="task-history" id="taskOperations"><span class="task-muted">当前没有后台任务</span></div></article>
           <article class="panel task-history-panel"><div class="panel-title"><h3>任务历史</h3><button class="secondary-button" id="refreshTaskHistory">刷新历史</button></div><div class="task-history" id="taskHistory"><span class="task-muted">暂无历史任务</span></div></article>
-          <article class="panel performance-panel"><div class="panel-title"><div><h3>性能分析</h3><span class="task-muted">区分本机执行耗时和模型 / Tunnel 等待时间</span></div><div class="inline-actions"><button class="secondary-button" id="refreshPerformance">刷新</button><button class="danger-button" id="clearPerformance">清空</button></div></div><div class="performance-metrics" id="performanceMetrics"><span class="task-muted">暂无性能记录</span></div><div class="performance-timeline" id="performanceTimeline"></div></article>
+          <article class="panel performance-panel"><div class="panel-title"><div><h3>性能分析</h3><span class="task-muted">区分本机执行耗时和模型 / 连接通道等待时间</span></div><div class="inline-actions"><button class="secondary-button" id="refreshPerformance">刷新</button><button class="danger-button" id="clearPerformance">清空</button></div></div><div class="performance-metrics" id="performanceMetrics"><span class="task-muted">暂无性能记录</span></div><div class="performance-timeline" id="performanceTimeline"></div></article>
         </section>
 
         <section class="page" data-page-view="build">
-          <div class="section-header"><div><span class="section-kicker">BUILD & VERIFY</span><h2>构建与验证</h2><p>识别项目、运行测试和构建、检查产物并计算 SHA256。</p></div><div class="inline-actions"><button class="secondary-button" id="inspectBuild">识别项目</button><button class="primary-button" id="runBuild">开始验证</button></div></div>
-          <div class="two-column"><article class="panel"><div class="panel-title"><h3>项目与命令</h3><span class="soft-badge" id="buildProjectType">未识别</span></div><label class="field"><span>测试命令</span><input id="buildTestCommand" placeholder="自动检测"></label><label class="field"><span>构建命令</span><input id="buildCommand" placeholder="自动检测"></label><label class="field"><span>产物目录（逗号分隔）</span><input id="buildArtifacts" placeholder="dist, build"></label><div class="choice-stack"><label class="choice"><input id="buildRunTests" type="checkbox" checked><span><b>执行测试</b><small>测试失败时阻止构建。</small></span></label><label class="choice"><input id="buildRunBuild" type="checkbox" checked><span><b>执行构建</b><small>构建成功后验证产物。</small></span></label></div></article><article class="panel"><div class="panel-title"><h3>实时进度</h3><span id="buildStatus">等待开始</span></div><pre class="build-console" id="buildConsole">尚未执行构建验证。</pre></article></div>
+          <div class="section-header"><div><span class="section-kicker">自动验证</span><h2>构建与验证</h2><p>助手先识别项目，再自动选择可用的测试、构建方式和产物目录；一般不需要你填写命令。</p></div><div class="inline-actions"><button class="secondary-button" id="inspectBuild">重新识别</button><button class="primary-button" id="runBuild">开始验证</button></div></div>
+          <div class="two-column"><article class="panel"><div class="panel-title"><div><h3>自动验证方案</h3><p>根据当前项目自动生成；不可用的测试不会盲目尝试。</p></div><span class="soft-badge" id="buildProjectType">未识别</span></div><div class="build-plan-list"><div><span>当前项目</span><strong id="buildPlanProject">等待识别</strong></div><div><span>测试方案</span><strong id="buildPlanTest">自动选择</strong></div><div><span>构建方案</span><strong id="buildPlanBuild">自动选择</strong></div><div><span>产物检查</span><strong id="buildPlanArtifacts">自动检测</strong></div></div><details class="advanced-settings"><summary>高级：手动覆盖验证方案</summary><div class="advanced-settings-body"><label class="field"><span>测试命令</span><input id="buildTestCommand" placeholder="留空则自动检测"></label><label class="field"><span>构建命令</span><input id="buildCommand" placeholder="留空则自动检测"></label><label class="field"><span>产物目录（逗号分隔）</span><input id="buildArtifacts" placeholder="例如 dist, build"></label><div class="choice-stack"><label class="choice"><input id="buildRunTests" type="checkbox" checked><span><b>执行测试</b><small>测试失败时阻止后续构建。</small></span></label><label class="choice"><input id="buildRunBuild" type="checkbox" checked><span><b>执行构建</b><small>构建成功后验证产物。</small></span></label></div></div></details></article><article class="panel"><div class="panel-title"><h3>实时进度</h3><span id="buildStatus">等待开始</span></div><pre class="build-console" id="buildConsole">尚未执行构建验证。</pre></article></div>
           <article class="panel"><div class="panel-title"><h3>构建报告</h3><span id="buildReportStatus">—</span></div><div class="build-report-grid" id="buildReport"><span class="task-muted">完成验证后显示测试、构建、版本、产物和 SHA256。</span></div></article>
         </section>
 
         <section class="page" data-page-view="health">
-          <div class="section-header"><div><span class="section-kicker">FIRST RUN DOCTOR</span><h2>系统体检与修复</h2><p>检查工作区、运行环境、密钥、端口、MCP 和 Tunnel。</p></div><div class="inline-actions"><button class="secondary-button" id="inspectHealth">重新体检</button><button class="primary-button" id="repairHealth">一键修复</button></div></div>
+          <div class="section-header"><div><span class="section-kicker">系统体检</span><h2>系统体检与修复</h2><p>检查工作区、运行环境、本地工具和连接通道。</p></div><div class="inline-actions"><button class="secondary-button" id="inspectHealth">重新体检</button><button class="primary-button" id="repairHealth">一键修复</button></div></div>
           <article class="panel"><div class="panel-title"><h3>检查结果</h3><span class="soft-badge" id="healthSummary">尚未检查</span></div><div class="health-list" id="healthList"><span class="task-muted">进入本页后自动开始体检。</span></div></article>
           <div class="notice warning"><b>安全边界</b><p>一键修复只会调整助手自身配置、认证 Token 并重启助手管理的服务；不会结束未知进程，也不会替你填写 Runtime Key 或 Tunnel ID。</p></div>
         </section>
 
         <section class="page" data-page-view="logs">
-          <div class="section-header"><div><span class="section-kicker">DIAGNOSTICS</span><h2>运行日志</h2><p>密钥和认证 Token 会自动隐藏；可以安全地复制普通诊断信息。</p></div><div class="inline-actions"><button class="secondary-button" id="clearLogs">清空日志</button><button class="primary-button" id="refreshLogs">刷新日志</button></div></div>
+          <div class="section-header"><div><span class="section-kicker">诊断记录</span><h2>运行日志</h2><p>密钥和认证令牌会自动隐藏；可以安全地复制普通诊断信息。</p></div><div class="inline-actions"><button class="secondary-button" id="clearLogs">清空日志</button><button class="primary-button" id="refreshLogs">刷新日志</button></div></div>
           <article class="panel log-panel"><div class="log-toolbar"><span><i class="dot green"></i>助手日志</span><div><button class="log-filter active" data-log-filter="all">全部</button><button class="log-filter" data-log-filter="error">错误</button><button class="log-filter" data-log-filter="info">信息</button></div></div><div class="log-output" id="logOutput"><div class="empty-state"><b>暂无日志</b><span>启动或检测服务后，日志会显示在这里。</span></div></div></article>
         </section>
 
         <section class="page" data-page-view="settings">
-          <div class="section-header"><div><span class="section-kicker">PREFERENCES</span><h2>助手设置</h2><p>控制外观、启动行为与凭据维护。</p></div></div>
-          <div class="two-column">
-            <article class="panel settings-list"><div class="panel-title"><h3>外观与运行行为</h3></div><label class="setting-row"><span><b>界面主题</b><small>管理中心默认使用与聊天主界面更协调的浅色风格。</small></span><select id="themeSelect"><option value="light">浅色</option><option value="dark">深色</option></select></label><div class="setting-row"><span><b>智能工具模式</b><small>固定使用精简后的 8 个聚合工具，旧工具仅保留隐藏兼容。</small></span><span class="security-chip">自动</span></div><label class="setting-row"><span><b>开机启动网页 MCP 助手</b><small>登录 Windows 后自动启动应用。</small></span><input id="startWithWindowsToggle" class="toggle" type="checkbox"></label><label class="setting-row"><span><b>打开助手时自动启动服务</b><small>配置完整时自动启动 MCP 与 Tunnel。</small></span><input id="autoStartToggle" class="toggle" type="checkbox"></label><label class="setting-row"><span><b>关闭窗口后保持服务运行</b><small>关闭主界面只隐藏到后台，不停止 MCP 与 Tunnel。</small></span><input id="keepRunningToggle" class="toggle" type="checkbox" checked></label><label class="setting-row"><span><b>长任务主动汇报间隔</b><small>超过该时间仍未完成时，工具会把控制权交还给 ChatGPT 先汇报进度。</small></span><select id="progressReportSelect"><option value="60">60 秒</option><option value="90">90 秒</option><option value="120">2 分钟</option><option value="180">3 分钟</option></select></label></article>
-            <article class="panel settings-list"><div class="panel-title"><h3>安全与维护</h3></div><div class="setting-row"><span><b>Runtime API Key</b><small id="settingsKeyState">尚未保存</small></span><button class="danger-button" id="removeRuntimeKey">删除密钥</button></div><div class="setting-row"><span><b>MCP 本地认证 Token</b><small>重新生成后需要重新启动服务。</small></span><button class="secondary-button" id="regenerateToken">重新生成</button></div><div class="setting-row"><span><b>ChatGPT 登录数据</b><small>清除内联网页的 Cookie、缓存和登录状态。</small></span><button class="danger-button" id="clearChatSession">清除并重新登录</button></div><div class="setting-row"><span><b>匿名遥测</b><small>Coding Tools MCP 已由本助手设置为关闭。</small></span><span class="security-chip">已关闭</span></div></article>
+          <div class="section-header settings-page-heading"><div><span class="section-kicker">偏好设置</span><h2>偏好设置</h2><p>这里只保留日常使用中真正需要调整的选项；技术维护项收在页面底部。</p></div></div>
+
+          <div class="settings-stack">
+            <section class="settings-section">
+              <div class="settings-section-heading"><div><h3>外观与界面</h3><p>调整管理中心的显示方式，不影响 ChatGPT 网页内容。</p></div></div>
+              <label class="setting-row"><span><b>界面主题</b><small>选择管理中心使用浅色或深色外观。</small></span><select id="themeSelect"><option value="light">浅色</option><option value="dark">深色</option></select></label>
+            </section>
+
+            <section class="settings-section">
+              <div class="settings-section-heading"><div><h3>启动与运行</h3><p>决定应用和本地 MCP 服务何时启动、何时继续在后台运行。</p></div></div>
+              <label class="setting-row"><span><b>开机启动网页 MCP 助手</b><small>登录 Windows 后自动启动应用。</small></span><input id="startWithWindowsToggle" class="toggle" type="checkbox"></label>
+              <label class="setting-row"><span><b>打开助手时自动启动服务</b><small>配置完整时自动启动本地工具与连接通道。</small></span><input id="autoStartToggle" class="toggle" type="checkbox"></label>
+              <label class="setting-row"><span><b>关闭窗口后保持服务运行</b><small>关闭主界面时仅隐藏窗口，让本地工具与连接通道继续在后台运行。</small></span><input id="keepRunningToggle" class="toggle" type="checkbox" checked></label>
+            </section>
+
+            <section class="settings-section">
+              <div class="settings-section-heading"><div><h3>任务反馈</h3><p>控制长任务进度汇报，以及任务在后台完成或需要你处理时的 Windows 桌面提醒。</p></div></div>
+              <label class="setting-row"><span><b>长任务主动汇报间隔</b><small>任务超过该时间仍未完成时，先让 ChatGPT 汇报当前进度，再继续后台工作。</small></span><select id="progressReportSelect"><option value="60">60 秒</option><option value="90">90 秒</option><option value="120">2 分钟</option><option value="180">3 分钟</option></select></label>
+              <label class="setting-row"><span><b>Windows 桌面任务提醒</b><small>任务完成、失败、中断或明确等待你的确认/输入时，在系统右下角弹出提醒；点击通知可回到 ChatGPT。</small></span><span class="inline-actions"><button class="secondary-button" type="button" id="testTaskNotification">测试通知</button><input id="taskNotificationsToggle" class="toggle" type="checkbox" checked></span></label>
+              <label class="setting-row"><span><b>通知声音</b><small>允许 Windows 在弹出任务通知时播放系统提示音。</small></span><input id="taskNotificationSoundToggle" class="toggle" type="checkbox" checked></label>
+            </section>
+
+            <details class="settings-section advanced-settings danger-section">
+              <summary class="settings-section-heading"><div><h3>高级设置与维护</h3><p>日常使用不需要打开。这里包含连接凭据、认证令牌和登录数据维护。</p></div><span>展开</span></summary>
+              <div class="advanced-settings-body no-padding">
+                <div class="setting-row official-only"><span><b>运行通道密钥（Runtime API Key）</b><small id="settingsKeyState">尚未保存</small></span><button class="danger-button" id="removeRuntimeKey">删除密钥</button></div>
+                <div class="setting-row"><span><b>本地工具认证令牌（Token）</b><small>重新生成后需要重新部署服务，新令牌才会生效。</small></span><button class="secondary-button" id="regenerateToken">重新生成</button></div>
+                <div class="setting-row"><span><b>ChatGPT 登录数据</b><small>清除内嵌 ChatGPT 的 Cookie、缓存和登录状态。</small></span><button class="danger-button" id="clearChatSession">清除并重新登录</button></div>
+                <div class="setting-row"><span><b>匿名使用统计</b><small>本地工具的匿名遥测已关闭，不上传聊天内容。</small></span><span class="status-pill positive">已关闭</span></div>
+              </div>
+            </details>
           </div>
-          <article class="panel about-panel"><div class="brand-mark large"><span></span><span></span><span></span></div><div><h3>网页 MCP 助手 <span>v0.1.6</span></h3><p>用于管理 Coding Tools MCP 与 OpenAI Tunnel。底层 Coding Tools MCP 遵循 Apache License 2.0。</p></div><button class="secondary-button" data-open="coding-tools-source">查看上游项目</button></article>
+          <article class="panel about-panel"><div class="brand-mark large"><span></span><span></span><span></span></div><div><h3>网页 MCP 助手 <span>v0.2.4</span></h3><p>通过官方 MCP + OpenAI Tunnel 连接 ChatGPT。底层 Coding Tools MCP 遵循 Apache License 2.0。</p></div><button class="secondary-button" data-open="coding-tools-source">查看上游项目</button></article>
         </section>
       </div>
     </main>

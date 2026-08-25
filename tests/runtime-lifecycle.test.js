@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { runtimeFingerprint, currentRuntimeState } = require('../electron/services/nativeService');
+const { runtimeFingerprint, runtimeSourceFingerprint, currentRuntimeState } = require('../electron/services/nativeService');
 const { normalizeProxyValue } = require('../electron/services/proxyService');
 
 test('native runtime identity changes with workspace and port while tool mode stays smart', () => {
@@ -36,5 +36,18 @@ test('background runtime processes are hidden and never detached on Windows', ()
 });
 
 test('runtime state migration keeps only current native and tunnel fields', () => {
-  assert.deepEqual(currentRuntimeState({ nativePid: 1, tunnelPid: 2, obsoletePid: 3 }), { nativePid: 1, tunnelPid: 2 });
+  assert.deepEqual(
+    currentRuntimeState({ nativePid: 1, tunnelPid: 2, nativeInstanceId: 'launch', nativeSourceFingerprint: 'source', obsoletePid: 3 }),
+    { nativePid: 1, tunnelPid: 2, nativeInstanceId: 'launch', nativeSourceFingerprint: 'source' }
+  );
+});
+
+test('runtime source fingerprint covers the complete Python runtime tree and schema contract', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const native = fs.readFileSync(path.resolve(__dirname, '../electron/services/nativeService.js'), 'utf8');
+  assert.match(native, /entry\.name\.endsWith\('\.py'\)/);
+  assert.match(native, /schema-contract\.json/);
+  assert.match(native, /CODING_TOOLS_MCP_SOURCE_FINGERPRINT/);
+  assert.match(runtimeSourceFingerprint(), /^[a-f0-9]{64}$/);
 });

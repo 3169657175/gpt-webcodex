@@ -72,6 +72,86 @@ def _render_server_info(payload: dict[str, Any]) -> str:
     )
 
 
+def _render_coding_tools_guide(payload: dict[str, Any]) -> str:
+    flow = payload.get("preferred_flow") if isinstance(payload.get("preferred_flow"), list) else []
+    lines = [str(payload.get("summary") or "Coding Tools MCP usage guide.")]
+    if flow:
+        lines.append("Preferred flow:")
+        lines.extend(f"- {item}" for item in flow)
+    custom = payload.get("custom_instructions")
+    if isinstance(custom, str) and custom:
+        lines.append(f"Custom Instructions:\n{custom}")
+    note = payload.get("note")
+    if isinstance(note, str) and note:
+        lines.append(note)
+    return "\n".join(lines)
+
+
+def _render_workspace_context(payload: dict[str, Any]) -> str:
+    raw_project = payload.get("project")
+    project: dict[str, Any] = raw_project if isinstance(raw_project, dict) else {}
+    parts = [str(project.get("type") or "unknown")]
+    if project.get("name"):
+        parts.append(str(project["name"]))
+    if project.get("version"):
+        parts.append(f"v{project['version']}")
+    lines = [f"Workspace: {payload.get('workspace', '.')}", f"Project: {' · '.join(parts)}"]
+    if project.get("entrypoint"):
+        lines.append(f"Entrypoint: {project['entrypoint']}")
+    core_entries = payload.get("core_entries")
+    if isinstance(core_entries, list) and core_entries:
+        lines.append("Core entries: " + ", ".join(str(item) for item in core_entries[:12]))
+    entries = payload.get("entries")
+    if isinstance(entries, list) and entries:
+        rendered = []
+        for item in entries[:24]:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("path") or item.get("name")
+            kind = item.get("type")
+            if name:
+                rendered.append(f"{name}{' [' + str(kind) + ']' if kind else ''}")
+        if rendered:
+            lines.append("Root entries:\n" + "\n".join(f"- {item}" for item in rendered))
+        if payload.get("entries_truncated"):
+            lines.append("Root entries truncated.")
+    raw_git = payload.get("git")
+    git: dict[str, Any] = raw_git if isinstance(raw_git, dict) else {}
+    if git.get("is_repo"):
+        lines.append(f"Git: {git.get('branch') or 'detached'} · {int(git.get('changed_count', 0) or 0)} changed")
+    else:
+        lines.append("Git: not a repository")
+    raw_instructions = payload.get("project_instructions")
+    instructions: dict[str, Any] = raw_instructions if isinstance(raw_instructions, dict) else {}
+    roots = instructions.get("root_files") if isinstance(instructions.get("root_files"), list) else []
+    nested_count = int(instructions.get("nested_count", 0) or 0)
+    if roots or nested_count:
+        root_names = [str(item.get("path")) for item in roots if isinstance(item, dict) and item.get("path")]
+        suffix = f"; {nested_count} nested" if nested_count else ""
+        lines.append(f"Project instructions: {', '.join(root_names) if root_names else 'nested only'}{suffix}")
+    else:
+        lines.append("Project instructions: none detected")
+    raw_task = payload.get("task")
+    task: dict[str, Any] = raw_task if isinstance(raw_task, dict) else {}
+    if task.get("status") and task.get("status") != "idle":
+        objective = f" · {task.get('objective')}" if task.get("objective") else ""
+        lines.append(f"Task: {task.get('status')}{objective}")
+    raw_pressure = payload.get("context_pressure")
+    pressure: dict[str, Any] = raw_pressure if isinstance(raw_pressure, dict) else {}
+    if pressure:
+        lines.append(
+            "Context pressure: "
+            f"{pressure.get('level', 'normal')} · {pressure.get('tool_calls', 0)} tool calls · "
+            f"{pressure.get('files_read', 0)} files read · {pressure.get('response_megabytes', 0)} MB results"
+        )
+        if pressure.get("recommend_new_chat"):
+            lines.append("Recommendation: start a new ChatGPT conversation and resume from persisted task state.")
+    next_action = payload.get("recommended_next_action")
+    if isinstance(next_action, str) and next_action:
+        lines.append(f"Next: {next_action}")
+    return "\n".join(lines)
+
+
 def _render_exec_environment(payload: dict[str, Any]) -> str:
     raw_landlock = payload.get("landlock")
     landlock: dict[str, Any] = raw_landlock if isinstance(raw_landlock, dict) else {}
@@ -128,8 +208,12 @@ def _render_list(payload: dict[str, Any]) -> str:
 def _render_search(payload: dict[str, Any]) -> str:
     matches = payload.get("matches")
     if not isinstance(matches, list) or not matches:
-        return "No matches found."
-    lines: list[str] = []
+        return f"Search ({payload.get('backend') or payload.get('engine') or 'unknown'}): no matches found."
+    backend = payload.get("backend") or payload.get("engine") or "unknown"
+    shown = int(payload.get("match_count", len(matches)) or 0)
+    total = payload.get("total_matches")
+    total_text = str(total) if isinstance(total, int) else "?"
+    lines: list[str] = [f"Search ({backend}): {shown}/{total_text} matches shown."]
     for match in matches:
         if not isinstance(match, dict):
             continue
@@ -387,6 +471,8 @@ def _render_image(payload: dict[str, Any]) -> str:
 
 _RENDERERS = {
     "server_info": _render_server_info,
+    "coding_tools_guide": _render_coding_tools_guide,
+    "workspace_context": _render_workspace_context,
     "check_exec_environment": _render_exec_environment,
     "get_default_cwd": _render_cwd,
     "set_default_cwd": _render_cwd,
@@ -404,6 +490,10 @@ _RENDERERS = {
     "git_log": _render_git_log,
     "git_show": _render_git_show,
     "git_blame": _render_git_blame,
-    "request_permissions": lambda payload: f"Permission request: {payload.get('status', 'completed')}.",
+    "request_permissions": lambda payload: (
+        "权限请求：当前客户端不支持交互式授权，请在网页 MCP 助手的“工作区与权限”中调整后重试。"
+        if payload.get("status") == "unsupported"
+        else f"权限请求：{payload.get('status', 'completed')}。"
+    ),
     "view_image": _render_image,
 }

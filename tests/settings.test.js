@@ -14,6 +14,18 @@ test('legacy tool modes migrate to smart mode', () => {
   for (const toolMode of ['readonly', 'coding', 'build', 'full', 'smart']) assert.equal(normalize({ toolMode }).toolMode, 'smart');
 });
 
+test('all installations use official mode and old Bridge users are migrated safely', () => {
+  const legacy = normalize({ configVersion: 5, tunnelId: 'tunnel_demo' });
+  assert.equal(legacy.connectionMode, 'official');
+  assert.equal(legacy.tunnelId, 'tunnel_demo');
+  assert.equal(normalize({}).connectionMode, 'official');
+  const migrated = normalize({ configVersion: 6, connectionMode: 'bridge', autoStartServices: true, tunnelId: 'tunnel_demo' });
+  assert.equal(migrated.connectionMode, 'official');
+  assert.equal(migrated.autoStartServices, false);
+  assert.equal(migrated.bridgeRemovedNotice, true);
+  assert.equal(migrated.tunnelId, 'tunnel_demo');
+});
+
 test('unknown legacy settings are removed from normalized settings', () => {
   assert.deepEqual(Object.keys(normalize({ obsoleteRuntimeChoice: 'legacy' })).sort(), Object.keys(normalize()).sort());
 });
@@ -25,21 +37,20 @@ test('trusted values are preserved', () => {
 });
 
 test('runtime ports cannot overlap', () => {
-  assert.throws(() => validateRuntimeSettings(normalize({ mcpPort: 9000, healthPort: 9000 })), /不能相同/);
+  assert.throws(() => validateRuntimeSettings(normalize({ connectionMode: 'official', mcpPort: 9000, healthPort: 9000 })), /不能相同/);
 });
 
 test('proxy credentials are rejected', () => {
-  assert.throws(() => validateRuntimeSettings(normalize({ proxyUrl: 'http://user:pass@127.0.0.1:1080' })), /不要在代理地址/);
+  assert.throws(() => validateRuntimeSettings(normalize({ connectionMode: 'official', proxyUrl: 'http://user:pass@127.0.0.1:1080' })), /不要在代理地址/);
 });
 
 test('manual proxy mode requires an address', () => {
-  assert.throws(() => validateRuntimeSettings(normalize({ proxyMode: 'manual', proxyUrl: '' })), /手动代理/);
+  assert.throws(() => validateRuntimeSettings(normalize({ connectionMode: 'official', proxyMode: 'manual', proxyUrl: '' })), /手动代理/);
 });
 
 test('tunnel id must use the official prefix', () => {
-  assert.throws(() => validateRuntimeSettings(normalize({ tunnelId: 'wrong-id' })), /tunnel_/);
+  assert.throws(() => validateRuntimeSettings(normalize({ connectionMode: 'official', tunnelId: 'wrong-id' })), /tunnel_/);
 });
-
 
 test('recent workspaces use a 50-item MRU list', () => {
   let recent = [];

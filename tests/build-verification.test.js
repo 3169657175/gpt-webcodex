@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { detectProject, collectArtifacts, requireWorkspace } = require('../electron/services/buildVerificationService');
+const { detectProject, inferProjectRoot, collectArtifacts, requireWorkspace } = require('../electron/services/buildVerificationService');
 
 test('build verification detects Electron package scripts', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'web-mcp-build-'));
@@ -31,4 +31,14 @@ test('artifact collection rejects paths outside workspace and hashes files', asy
 
 test('workspace is required before build verification', () => {
   assert.throws(() => requireWorkspace(''), /选择工作目录/);
+});
+
+test('monorepo npm --prefix resolves the child project', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'web-mcp-monorepo-'));
+  try {
+    const child = path.join(root, 'canvas-web');
+    fs.mkdirSync(child);
+    fs.writeFileSync(path.join(child, 'package.json'), JSON.stringify({ name: 'canvas-web', scripts: { build: 'vite build' } }));
+    assert.equal(inferProjectRoot(root, 'npm --prefix canvas-web run build'), child);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

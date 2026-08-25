@@ -35,6 +35,25 @@ function isWithin(root, target) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function inferProjectRoot(root, ...commands) {
+  root = requireWorkspace(root);
+  const patterns = [
+    /(?:npm|pnpm)\s+(?:--prefix|-C)\s+["']?([^"'\s;&]+)/i,
+    /yarn\s+--cwd\s+["']?([^"'\s;&]+)/i,
+    /(?:^|&&|;)\s*cd\s+["']?([^"';&]+?)["']?\s*(?:&&|;)/i
+  ];
+  for (const command of commands) {
+    for (const pattern of patterns) {
+      const match = String(command || '').match(pattern);
+      if (!match) continue;
+      const candidate = path.resolve(root, match[1].trim());
+      if (!isWithin(root, candidate) || !fs.existsSync(candidate) || !fs.statSync(candidate).isDirectory()) continue;
+      if (['package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod'].some((name) => fs.existsSync(path.join(candidate, name)))) return candidate;
+    }
+  }
+  return root;
+}
+
 function normalizeArtifactEntries(root, entries) {
   return [...new Set((entries || []).map((entry) => String(entry || '').trim()).filter(Boolean))].map((entry) => {
     const target = path.resolve(root, entry);
@@ -78,7 +97,11 @@ class BuildVerificationService {
     if (this.running) throw new Error('已有构建验证正在运行。');
     this.running = true;
     root = requireWorkspace(root);
-    const project = detectProject(root);
+    const initialProject = detectProject(root);
+    const requestedTest = String(options.testCommand ?? initialProject.testCommand).trim();
+    const requestedBuild = String(options.buildCommand ?? initialProject.buildCommand).trim();
+    const projectRoot = inferProjectRoot(root, requestedBuild, requestedTest);
+    const project = detectProject(projectRoot);
     const testCommand = String(options.testCommand ?? project.testCommand).trim();
     const buildCommand = String(options.buildCommand ?? project.buildCommand).trim();
     const runCommand = async (stage, command) => {
@@ -86,16 +109,17 @@ class BuildVerificationService {
       if (command.length > 1000 || /[\r\n\0]/.test(command)) throw new Error('构建命令格式不安全。');
       this.emit({ stage, status: 'running', command });
       const started = Date.now();
-      const result = await run('cmd.exe', ['/d', '/s', '/c', command], { cwd: root, allowFailure: true, timeoutMs: 600000, onOutput: (stream, text) => this.emit({ stage, status: 'output', stream, text }) });
+      const explicitRootCommand = projectRoot !== root && ((stage === 'test' && options.testCommand) || (stage === 'build' && options.buildCommand));
+      const result = await run('cmd.exe', ['/d', '/s', '/c', command], { cwd: explicitRootCommand ? root : projectRoot, allowFailure: true, timeoutMs: 600000, onOutput: (stream, text) => this.emit({ stage, status: 'output', stream, text }) });
       return { status: result.code === 0 ? 'passed' : 'failed', command, exitCode: result.code, durationMs: Date.now() - started, summary: `${result.stdout}\n${result.stderr}`.trim().slice(-4000) };
     };
     try {
       const testResult = options.runTests === false ? { status: 'skipped' } : await runCommand('test', testCommand);
       const buildResult = testResult.status === 'failed' || options.runBuild === false ? { status: options.runBuild === false ? 'skipped' : 'blocked' } : await runCommand('build', buildCommand);
       const artifactEntries = options.artifacts?.length ? options.artifacts : project.artifacts;
-      const artifacts = buildResult.status === 'passed' ? await collectArtifacts(root, artifactEntries) : [];
+      const artifacts = buildResult.status === 'passed' ? await collectArtifacts(projectRoot, artifactEntries) : [];
       const passed = testResult.status !== 'failed' && buildResult.status !== 'failed' && buildResult.status !== 'blocked' && (options.runBuild === false || artifacts.length > 0);
-      this.lastReport = { project, testResult, buildResult, artifacts, overallStatus: passed ? 'passed' : 'failed', generatedAt: new Date().toISOString() };
+      this.lastReport = { project, projectRoot: path.relative(root, projectRoot) || '.', testResult, buildResult, artifacts, overallStatus: passed ? 'passed' : 'failed', generatedAt: new Date().toISOString() };
       this.emit({ stage: 'complete', status: this.lastReport.overallStatus, report: this.lastReport });
       this.log?.info?.('构建验证完成', { project: project.name, status: this.lastReport.overallStatus, artifacts: artifacts.length });
       return this.lastReport;
@@ -103,4 +127,4 @@ class BuildVerificationService {
   }
 }
 
-module.exports = { BuildVerificationService, detectProject, collectArtifacts, requireWorkspace };
+module.exports = { BuildVerificationService, detectProject, inferProjectRoot, collectArtifacts, requireWorkspace };

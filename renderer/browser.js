@@ -23,13 +23,42 @@ function formatDuration(milliseconds) {
   return `${Math.floor(minutes / 60)}小时${minutes % 60}分`;
 }
 
+function backgroundOperationStatus(operation) {
+  const status = String(operation?.status || '');
+  if (status === 'interrupted') return '后台任务已中断，可恢复';
+  if (status === 'failed') return '后台任务执行失败';
+  if (status === 'completed') return '后台任务已完成';
+  if (status !== 'running') return '';
+  const heartbeatAge = Number(operation?.heartbeat_age_seconds ?? 0);
+  if (heartbeatAge >= 15) return `后台任务心跳异常（${heartbeatAge}秒未更新）`;
+  return '后台任务运行正常';
+}
+
+function humanizeTaskText(value) {
+  const raw = String(value || '').trim();
+  const key = raw.toLowerCase();
+  const labels = {
+    'waiting for model': '等待模型继续处理',
+    'waiting for user': '等待你处理',
+    completed: '已完成',
+    'verification failed': '验证失败',
+    'requested check failed': '检查失败',
+    'running requested checks': '正在执行检查',
+    'run complete agent workflow': '正在执行完整任务',
+    'apply workspace changes': '正在修改项目',
+    'run requested checks': '正在验证修改',
+    'finalize verified result': '正在整理结果'
+  };
+  return labels[key] || raw;
+}
+
 function progressForTask(task, status) {
   if (status === 'completed') return 100;
   const steps = Array.isArray(task?.steps) ? task.steps : [];
   if (steps.length) {
     const completed = steps.filter((step) => String(step?.status || '') === 'completed').length;
     const active = steps.filter((step) => ['in_progress', 'active', 'running'].includes(String(step?.status || ''))).length;
-    return Math.max(status === 'active' ? 5 : 0, Math.min(99, Math.round(((completed + active * 0.5) / steps.length) * 100)));
+    return Math.max(status === 'active' ? 5 : 0, Math.min(95, Math.round(((completed + active * 0.5) / steps.length) * 100)));
   }
   const kind = String(task?.current_command?.kind || '');
   if (kind === 'build') return 85;
@@ -44,6 +73,21 @@ function progressForTask(task, status) {
   if (status === 'paused') return 50;
   if (status === 'failed' || status === 'stopped') return 100;
   return status === 'active' ? 18 : 0;
+}
+
+function progressLabelForTask(task, status, runningOperation, command) {
+  if (runningOperation || (command && String(command.status || '') === 'running')) return '运行中';
+  if (status === 'completed') return '100%';
+  if (status === 'failed') return '失败';
+  if (status === 'stopped') return '已停止';
+  if (status === 'paused') return '已暂停';
+  if (status === 'waiting') return '等待';
+  const steps = Array.isArray(task?.steps) ? task.steps : [];
+  if (steps.length) {
+    const completed = steps.filter((step) => String(step?.status || '') === 'completed').length;
+    return `${completed}/${steps.length}`;
+  }
+  return status === 'active' ? '进行中' : '';
 }
 
 function renderChatState(state) {
@@ -62,7 +106,10 @@ function renderChatState(state) {
 function renderServiceState(state) {
   lastRuntimeState = state || null;
   lastRuntimeCheckAt = Date.now();
-  [['#mcpState', state?.mcpRunning], ['#tunnelState', state?.tunnelRunning]].forEach(([selector, value]) => {
+  const connectionRunning = state?.tunnelRunning;
+  const label = $('#connectionStateLabel');
+  if (label) label.textContent = '连接通道';
+  [['#mcpState', state?.mcpRunning], ['#tunnelState', connectionRunning]].forEach(([selector, value]) => {
     const element = $(selector);
     element.classList.toggle('ready', Boolean(value));
     element.classList.toggle('error', !value);
@@ -90,38 +137,68 @@ async function refreshStatus() {
 
 async function refreshTask() {
   try {
-    const payload = unwrap(await api.taskState());
-    const task = payload?.state;
-    const status = String(task?.status || 'idle');
+    let runtime = null;
+    if (api.taskRuntime) {
+      try { runtime = unwrap(await api.taskRuntime()); } catch { runtime = null; }
+    }
+    let fallbackPayload = null;
+    if (!runtime?.state) {
+      try { fallbackPayload = unwrap(await api.taskState()); } catch { fallbackPayload = null; }
+    }
+    let task = runtime?.state || fallbackPayload?.state || null;
+    const activeWorktree = runtime?.active_worktree && runtime.active_worktree.exists !== false ? runtime.active_worktree : null;
+    const runningOperation = Array.isArray(runtime?.operations)
+      ? runtime.operations.filter((item) => item?.status === 'running').slice(-1)[0]
+      : null;
+    const now = Date.now();
+    let status = String(task?.status || (runningOperation ? 'active' : 'idle'));
+    if (task && ['completed', 'failed', 'stopped'].includes(status) && !runningOperation && !activeWorktree) {
+      const terminalUpdatedAt = Date.parse(task.updated_at || task.created_at || '') || now;
+      const keepVisibleMs = status === 'completed' ? 30000 : 120000;
+      if (now - terminalUpdatedAt > keepVisibleMs) {
+        task = null;
+        status = 'idle';
+      }
+    }
     const strip = $('#taskStrip');
     strip.className = `task-strip ${status}`;
-    $('#taskTitle').textContent = task?.objective || '暂无任务';
-    if (!task || status === 'idle') {
+    strip.classList.toggle('isolated', Boolean(activeWorktree));
+    $('#taskTitle').textContent = task?.objective || (runningOperation ? '后台任务运行中' : '暂无任务');
+    if ((!task || status === 'idle') && !runningOperation) {
       $('#taskStep').textContent = '';
       $('#taskProgressBar').style.width = '0%';
       $('#taskProgressText').textContent = '';
       strip.title = '';
       return;
     }
-    const now = Date.now();
     const createdAt = Date.parse(task.created_at || task.updated_at || '') || now;
     const updatedAt = Date.parse(task.updated_at || task.created_at || '') || createdAt;
     const elapsed = formatDuration(now - createdAt);
     const idleFor = now - updatedAt;
     const progress = progressForTask(task, status);
-    const parts = [task.current_step || task.next_step || '任务处理中'];
-    const command = task.current_command && typeof task.current_command === 'object' ? task.current_command : null;
+    const parts = [humanizeTaskText(task?.current_step || task?.next_step) || '任务处理中'];
+    if (activeWorktree) parts.unshift('安全隔离中');
+    if (runningOperation) {
+      const operationStartedAt = Date.parse(runningOperation.started_at || '') || (now - Number(runningOperation.elapsed_seconds || 0) * 1000);
+      const heartbeatAt = Date.parse(runningOperation.heartbeat_at || '');
+      const heartbeatAge = Number.isFinite(heartbeatAt)
+        ? Math.max(0, Math.floor((now - heartbeatAt) / 1000))
+        : Number(runningOperation.heartbeat_age_seconds || 0);
+      const heartbeatText = heartbeatAge >= 15 ? `心跳偏慢 ${heartbeatAge}秒前` : `心跳 ${heartbeatAge}秒前`;
+      parts.unshift(`${backgroundOperationStatus({ ...runningOperation, heartbeat_age_seconds: heartbeatAge })} · 已运行 ${formatDuration(now - operationStartedAt)} · ${heartbeatText}`);
+    }
+    const command = task?.current_command && typeof task.current_command === 'object' ? task.current_command : null;
     if (command && String(command.status || '') === 'running') {
       const commandStartedAt = Date.parse(command.started_at || '') || now;
       const kind = { build: '构建', test: '测试', command: '命令' }[String(command.kind || '')] || '命令';
       parts.unshift(`${kind} ${formatDuration(now - commandStartedAt)}`);
     }
     if (['active', 'paused'].includes(status)) parts.push(`已运行 ${elapsed}`);
-    if (status === 'active' && idleFor >= 30000) parts.push(`最近活动 ${formatDuration(idleFor)}前`);
-    if (status === 'active' && idleFor >= 120000) parts.push('仍在执行，并非卡死');
+    if (status === 'active' && idleFor >= 30000 && !runningOperation) parts.push(`最近活动 ${formatDuration(idleFor)}前`);
+    if (status === 'active' && idleFor >= 120000 && !runningOperation) parts.push('较长时间没有新的任务状态，正在等待下一次更新');
     $('#taskStep').textContent = parts.filter(Boolean).join(' · ');
     $('#taskProgressBar').style.width = `${progress}%`;
-    $('#taskProgressText').textContent = `${progress}%`;
+    $('#taskProgressText').textContent = progressLabelForTask(task, status, runningOperation, command);
     strip.title = `状态：${status}；阶段进度：${progress}%；最后更新：${new Date(updatedAt).toLocaleString('zh-CN')}`;
   } catch { /* no active workspace/task yet */ }
 }
@@ -131,8 +208,6 @@ function renderWorkspace(hub) {
   $('#activeWorkspace').textContent = activeWorkspace || '未选择';
   $('#activeWorkspace').title = activeWorkspace;
   renderWorkspaceHealth();
-  const chips = $('#workspaceChips');
-  chips.replaceChildren();
   const select = $('#workspaceSelect');
   select.replaceChildren();
   const placeholder = document.createElement('option');
@@ -147,14 +222,6 @@ function renderWorkspace(hub) {
     select.appendChild(option);
   });
   select.value = '';
-  (hub.recentWorkspaces || []).filter((item) => item && item !== activeWorkspace).slice(0, 4).forEach((workspace) => {
-    const button = document.createElement('button');
-    button.className = 'workspace-chip';
-    button.textContent = baseName(workspace);
-    button.title = workspace;
-    button.onclick = () => switchWorkspace(workspace, true);
-    chips.appendChild(button);
-  });
 }
 
 async function refreshWorkspace() {
@@ -253,4 +320,4 @@ refreshStatus();
 refreshWorkspace();
 refreshTask();
 setInterval(refreshWorkspace, 15000);
-setInterval(refreshTask, 1200);
+setInterval(refreshTask, 3000);

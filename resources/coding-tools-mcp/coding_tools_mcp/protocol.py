@@ -108,10 +108,23 @@ def dispatch_rpc(runtime: Any, request: dict[str, Any]) -> dict[str, Any] | None
         elif method == "ping":
             result = {}
         elif method == "server/discover":
+            server_info = runtime.server_info_payload()
             result = {
                 "protocolVersion": runtime.protocol_version,
-                "serverInfo": {"name": "coding-tools-mcp", "title": "Coding Tools MCP", "version": runtime.server_info_payload().get("version", "")},
-                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {
+                    "name": "coding-tools-mcp",
+                    "title": "Coding Tools MCP",
+                    "version": server_info.get("version", ""),
+                    "schemaVersion": server_info.get("schema_version", 0),
+                    "schemaHash": server_info.get("schema_hash", ""),
+                    "toolCount": server_info.get("tool_count", 0),
+                    "runtimeInstanceId": server_info.get("runtime_instance_id", ""),
+                    "processId": server_info.get("process_id", 0),
+                    "launchId": server_info.get("launch_id", ""),
+                    "sourceFingerprint": server_info.get("source_fingerprint", ""),
+                    "workspace": str(runtime.workspace.root),
+                },
+                "capabilities": {"tools": {"listChanged": True}},
                 "tools": runtime.list_tools().get("tools", []),
             }
         elif method == "tools/list":

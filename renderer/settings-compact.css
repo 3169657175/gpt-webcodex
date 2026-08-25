@@ -11,36 +11,133 @@ body[data-theme="dark"]{
 html,body{background:var(--manager-bg)!important}
 .manager-window-bar{top:0!important;left:0!important;right:0!important;height:42px!important;padding:0 10px 0 14px!important;border:0!important;border-bottom:1px solid #e7e7e7!important;border-radius:0!important;background:var(--manager-main)!important;box-shadow:none!important}
 body[data-theme="dark"] .manager-window-bar{border-color:#303030!important}
-.app-shell{inset:42px 0 0!important;border:0!important;border-radius:0!important;box-shadow:none!important;grid-template-columns:200px minmax(0,1fr)!important;background:var(--manager-main)!important}
-.sidebar{padding:15px 10px 12px!important;background:var(--manager-sidebar)!important}
+.app-shell{inset:42px 0 0!important;border:0!important;border-radius:0!important;box-shadow:none!important;grid-template-columns:220px minmax(0,1fr)!important;background:var(--manager-main)!important}
+.sidebar{padding:18px 12px 14px!important;background:var(--manager-sidebar)!important}
 .main-area{background:var(--manager-main)!important}
-.brand{gap:10px!important;padding:2px 8px 14px!important}
+.brand{gap:11px!important;padding:2px 8px 18px!important}
 .brand-mark{width:34px!important;height:34px!important;border-radius:10px!important;box-shadow:none!important}
 .brand small{font-size:9px!important;letter-spacing:1px!important}
-.nav-list{gap:3px!important}
-.nav-item{height:38px!important;padding:0 10px!important;border-radius:9px!important}
+.nav-list{gap:4px!important}
+.nav-item{height:40px!important;padding:0 11px!important;border-radius:9px!important;font-size:12px!important}
+.nav-group-label{display:block;margin:8px 10px 1px;color:var(--muted-2);font-size:8px;font-weight:800;letter-spacing:1.25px}
+.nav-group-label:first-child{margin-top:0}
 .nav-item.active{color:#202123!important;background:#ececec!important;box-shadow:none!important}
 body[data-theme="dark"] .nav-item.active{color:#fff!important;background:#303030!important}
-.sidebar-runtime{padding:11px!important;border-radius:11px!important;background:var(--surface)!important}
+.sidebar-runtime{padding:13px!important;border-radius:12px!important;background:var(--surface)!important}
 .sidebar-runtime p{height:28px!important;margin:7px 0!important;font-size:10px!important}
-.topbar{height:72px!important;flex-basis:72px!important;padding:12px 20px!important}
-.topbar h1{font-size:20px!important}
+.topbar{height:80px!important;flex-basis:80px!important;padding:14px 30px!important}
+.topbar h1{font-size:21px!important;letter-spacing:-.25px!important}
 .topbar p:last-child{font-size:11px!important}
-.content-viewport{padding:18px 20px 24px!important}
+.content-viewport{padding:24px 30px 34px!important}
 .hero-card{min-height:168px!important;padding:22px 24px!important;border-radius:14px!important;box-shadow:none!important;background:var(--surface)!important}
 .hero-card::after{display:none!important}
 .hero-copy h2{margin:9px 0 6px!important;font-size:23px!important}
 .hero-copy p{font-size:12px!important;line-height:1.6!important}
 .hero-actions{margin-top:15px!important}
 .connection-visual{transform:scale(.82)!important;transform-origin:right center!important;margin-left:-25px!important}
-.panel,.status-card{border-radius:13px!important;box-shadow:none!important}
+.panel,.status-card{border-radius:14px!important;box-shadow:none!important}
+.panel{padding:22px!important}
 .status-card{padding:17px!important}
-.section-header{margin-bottom:14px!important}
-.section-header h2{font-size:20px!important}
+.section-header{margin-bottom:20px!important}
+.section-header h2{font-size:21px!important;letter-spacing:-.2px!important}
+.section-header p{max-width:760px!important;line-height:1.6!important}
 .two-column{gap:14px!important}
-.settings-list .setting-row{min-height:58px!important;padding:11px 0!important}
 .about-panel{margin-top:14px!important}
 .busy-overlay{background:rgba(247,247,248,.72)!important}
 body[data-theme="dark"] .busy-overlay{background:rgba(20,20,20,.72)!important}
 .boot-screen{display:none!important}
-@media (max-width:900px){.app-shell{grid-template-columns:176px minmax(0,1fr)!important}.connection-visual{display:none!important}}
+@media (max-width:900px){.app-shell{grid-template-columns:186px minmax(0,1fr)!important}.connection-visual{display:none!important}}
+
+/* Shared manager visual system. */
+.page{max-width:1220px!important}
+.top-actions{gap:8px!important}
+.primary-button,.secondary-button,.danger-button,.ghost-button,.icon-button{border-radius:9px!important;font-weight:650!important}
+.primary-button,.secondary-button,.danger-button{min-height:38px!important}
+.panel-title{margin-bottom:18px!important}
+.panel-title h3{font-size:14px!important;line-height:1.35!important}
+.panel-title p{font-size:10px!important;line-height:1.55!important}
+.field{margin-bottom:17px!important}
+.field>span{margin-bottom:8px!important;font-size:10px!important}
+.field input,.field select,.setting-row select{height:40px!important;border-radius:9px!important}
+.environment-list>div{min-height:52px!important;padding:10px 12px!important}
+.notice{padding:14px 15px!important;border-radius:11px!important}
+.notice p{font-size:10px!important;line-height:1.6!important}
+.guide-step{padding:20px!important;border-radius:14px!important}
+.guide-step .step-content>p{font-size:10px!important;line-height:1.7!important}
+.guide-aside{padding:20px!important}
+.status-card{padding:19px!important}
+.action-list button{min-height:70px!important;padding:12px 14px!important}
+.workspace-picker{padding:22px!important}
+.about-panel{background:color-mix(in srgb,var(--surface) 97%,var(--surface-2))!important}
+.content-viewport::-webkit-scrollbar{width:10px}
+.content-viewport::-webkit-scrollbar-thumb{border:3px solid transparent;border-radius:999px;background:color-mix(in srgb,var(--muted-2) 45%,transparent);background-clip:padding-box}
+
+/* Professional settings layout: calm, flat, and aligned like mature desktop tools. */
+.page[data-page-view="settings"]{max-width:980px!important}
+.settings-page-heading{margin-bottom:22px!important}
+.settings-page-heading h2{font-size:24px!important;letter-spacing:-.3px}
+.settings-page-heading p{max-width:720px!important;line-height:1.6!important}
+.settings-stack{display:grid;gap:18px}
+.settings-section{overflow:hidden;border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+.settings-section-heading{padding:18px 22px 14px;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 96%,var(--surface-2))}
+.settings-section-heading h3{margin:0;font-size:14px;letter-spacing:.05px}
+.settings-section-heading p{margin:5px 0 0;color:var(--muted);font-size:10px;line-height:1.55}
+.settings-section .setting-row{display:flex;min-height:74px;align-items:center;justify-content:space-between;gap:24px;padding:15px 22px;border-bottom:1px solid var(--border);background:transparent}
+.settings-section .setting-row:last-child{border-bottom:0}
+.settings-section .setting-row>span:first-child{min-width:0;flex:1}
+.settings-section .setting-row b,.settings-section .setting-row small{display:block}
+.settings-section .setting-row b{font-size:12px;font-weight:650;line-height:1.4}
+.settings-section .setting-row small{max-width:620px;margin-top:5px;color:var(--muted);font-size:10px;line-height:1.55}
+.settings-section .setting-row select{width:132px;height:38px;padding:0 32px 0 11px;border:1px solid var(--border-strong);border-radius:9px;color:var(--text);background:var(--surface-2)}
+.settings-section .secondary-button,.settings-section .danger-button{min-width:92px}
+.status-pill{display:inline-flex;min-height:26px;align-items:center;padding:0 9px;border:1px solid var(--border);border-radius:999px;color:var(--muted);background:var(--surface-2);font-size:9px;font-weight:750;white-space:nowrap}
+.status-pill.positive{color:var(--green);border-color:color-mix(in srgb,var(--green) 26%,transparent);background:color-mix(in srgb,var(--green) 9%,transparent)}
+.danger-section{border-color:color-mix(in srgb,var(--red) 14%,var(--border))}
+.about-panel{max-width:980px!important;padding:17px 20px!important;border-radius:14px!important}
+.about-panel .brand-mark.large{width:44px!important;height:44px!important;border-radius:12px!important}
+@media(max-width:760px){.settings-section .setting-row{align-items:flex-start;flex-direction:column;gap:12px}.settings-section .setting-row select{width:100%}.settings-section .secondary-button,.settings-section .danger-button{align-self:flex-end}}
+
+/* Guide recommendation: useful but visually secondary to the actual setup steps. */
+.guide-recommendation{margin-bottom:16px!important;padding:20px!important}
+.guide-recommendation .panel-title{margin-bottom:14px!important}
+.guide-rule-summary{display:flex;align-items:center;gap:12px;padding:13px 15px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2)}
+.guide-rule-summary>span{display:inline-flex;min-height:24px;align-items:center;padding:0 8px;border-radius:999px;color:var(--blue);background:color-mix(in srgb,var(--blue) 11%,transparent);font-size:9px;font-weight:800}
+.guide-rule-summary>div{min-width:0;flex:1}
+.guide-rule-summary b,.guide-rule-summary small{display:block}
+.guide-rule-summary b{font-size:11px}
+.guide-rule-summary small{margin-top:4px;color:var(--muted);font-size:9px;line-height:1.55}
+.custom-instructions-details{margin-top:10px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--surface-2) 70%,transparent);overflow:hidden}
+.custom-instructions-details summary{padding:11px 14px;color:var(--muted);cursor:pointer;font-size:10px;font-weight:650;list-style-position:inside}
+.custom-instructions-details[open] summary{color:var(--text);border-bottom:1px solid var(--border)}
+.custom-instructions-details .prompt-box{margin:12px;border-style:solid!important;background:var(--surface)!important}
+.custom-instructions-details .prompt-box p{font-size:10px!important;line-height:1.7!important}
+.guide-rule-status{display:block;margin-top:9px}
+
+/* 日常界面保持简洁，高级验证和维护选项按需展开。 */
+.advanced-settings{margin-top:16px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);overflow:hidden}
+.advanced-settings>summary{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 15px;color:var(--muted);cursor:pointer;font-size:10px;font-weight:700;list-style:none}
+.advanced-settings>summary::-webkit-details-marker{display:none}
+.advanced-settings[open]>summary{color:var(--text);border-bottom:1px solid var(--border)}
+.advanced-settings-body{padding:15px}
+.advanced-settings-body.no-padding{padding:0}
+.settings-section.advanced-settings{margin-top:0;background:var(--surface)}
+.settings-section.advanced-settings>.settings-section-heading{padding:17px 22px;border:0}
+.settings-section.advanced-settings[open]>.settings-section-heading{border-bottom:1px solid var(--border)}
+.build-plan-list{display:grid;gap:0;margin-top:4px;border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--surface-2)}
+.build-plan-list>div{display:grid;grid-template-columns:92px minmax(0,1fr);align-items:center;gap:14px;min-height:50px;padding:9px 13px;border-bottom:1px solid var(--border)}
+.build-plan-list>div:last-child{border-bottom:0}
+.build-plan-list span{color:var(--muted);font-size:10px}
+.build-plan-list strong{overflow:hidden;color:var(--text);font-size:10px;font-weight:650;text-overflow:ellipsis;white-space:nowrap}
+.task-worktrees-panel{margin-top:14px!important}
+.task-worktrees{display:grid;gap:10px}
+.task-worktree-item{padding:14px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2)}
+.task-worktree-item.current{border-color:color-mix(in srgb,var(--green) 35%,var(--border));background:color-mix(in srgb,var(--green) 5%,var(--surface-2))}
+.task-worktree-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.task-worktree-head b,.task-worktree-head small{display:block}
+.task-worktree-head b{font-size:11px}
+.task-worktree-head small,.task-worktree-meta{margin-top:4px;color:var(--muted);font-size:9px;line-height:1.55}
+.task-worktree-actions{margin-top:11px}
+.task-worktree-actions .primary-button,.task-worktree-actions .secondary-button,.task-worktree-actions .danger-button{min-height:32px!important;padding:0 10px;font-size:9px}
+.task-worktree-diff{margin-top:10px;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--surface)}
+.task-worktree-diff summary{padding:9px 11px;color:var(--muted);cursor:pointer;font-size:9px;font-weight:700}
+.task-worktree-diff pre{max-height:300px;margin:0;padding:12px;overflow:auto;border-top:1px solid var(--border);white-space:pre-wrap;word-break:break-word;font:9px/1.55 Consolas,monospace}
