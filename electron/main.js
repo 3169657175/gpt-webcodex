@@ -267,6 +267,7 @@ function registerIpc() {
   secureHandle('app:snapshot', (_event, options) => invokeSafely(() => orchestrator.snapshot(options || {})));
   secureHandle('app:lightweight-snapshot', () => invokeSafely(() => orchestrator.lightweightSnapshot()));
   secureHandle('workspace:hub', () => invokeSafely(async () => { const current = settings.load(); return { activeWorkspace: current.workspace, recentWorkspaces: current.recentWorkspaces || [] }; }));
+  secureHandle('workspace:remove-recent', (_event, targets) => invokeSafely(() => orchestrator.removeRecentWorkspaces(targets)));
   secureHandle('workspace:switch', (_event, workspace) => invokeSafely(async () => {
     const result = await orchestrator.switchWorkspace(workspace);
     invalidateLocalMcpDiscovery();

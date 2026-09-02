@@ -42,6 +42,23 @@ button{font:inherit}
 .add-workspace{height:32px;padding:0 12px;border:1px solid #d9d9d9;background:#fff;font-size:11px;font-weight:700}
 .add-workspace.secondary-action{color:#087f65;border-color:#cfe8df;background:#f3fbf8}
 .add-workspace.secondary-action:hover{background:#e7f6f1}
+.workspace-clean-wrap{position:relative;display:flex;align-items:center}
+.workspace-clean-button{height:32px;padding:0 12px;border:1px solid #d9d9d9;border-radius:9px;background:#fff;color:#6f7378;font-size:11px;font-weight:700;cursor:pointer}
+.workspace-clean-button:hover{background:#f0f1f2;color:#34363a}
+.workspace-clean-popover{position:absolute;top:38px;right:0;z-index:80;width:min(460px,72vw);max-height:280px;overflow:auto;padding:12px 13px;border:1px solid #dedfe2;border-radius:12px;background:#fff;box-shadow:0 12px 35px rgba(0,0,0,.14);font-size:11px}
+.workspace-clean-popover[hidden]{display:none}
+.workspace-clean-popover b{display:block;margin-bottom:4px;color:#25272a;font-size:12px}
+.workspace-clean-popover p{margin:0 0 9px;color:#7b7f84;line-height:1.5}
+.workspace-clean-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #f0f1f2;color:#45484c}
+.workspace-clean-row:first-child{border-top:0}
+.workspace-clean-row code{flex:1;overflow:hidden;color:#45484c;font-family:"Cascadia Code",Consolas,monospace;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.workspace-clean-row .workspace-clean-current{flex:0 0 auto;color:#087f65;font-weight:700}
+.workspace-clean-row button{flex:0 0 auto;width:22px;height:22px;padding:0;border:0;border-radius:7px;background:transparent;color:#b3362f;font-size:13px;line-height:1;cursor:pointer}
+.workspace-clean-row button:hover{background:#fbeeec}
+.workspace-clean-row button:disabled{color:#c2c5c9;cursor:default;background:transparent}
+.workspace-clean-footer{margin-top:9px;display:flex;justify-content:flex-end}
+.workspace-clean-footer button{padding:5px 11px;border:1px solid #ecd2d0;border-radius:8px;background:#fff;color:#b3362f;font-size:11px;font-weight:700;cursor:pointer}
+.workspace-clean-footer button:hover{background:#fbeeec}
 .task-strip{display:flex;min-width:0;max-width:590px;align-items:center;gap:7px;padding:5px 8px;border-radius:9px;background:#f5f5f5;color:#74777c;font-size:10px}
 .task-strip i{width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:#b8bcc2}
 .task-strip b,.task-strip small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

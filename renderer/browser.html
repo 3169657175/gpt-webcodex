@@ -41,6 +41,17 @@
         <button id="pauseTask">暂停</button><button id="resumeTask">继续</button><button id="stopTask">停止</button>
       </div>
       <select id="workspaceSelect" class="workspace-select" aria-label="全部工作区"><option value="">全部工作区</option></select>
+      <div class="workspace-clean-wrap">
+        <button id="workspaceCleanButton" class="workspace-clean-button" type="button" title="清理最近工作区记录" aria-label="清理最近工作区记录" aria-expanded="false">清理</button>
+        <div id="workspaceCleanPopover" class="workspace-clean-popover" hidden>
+          <b>清理最近工作区</b>
+          <p>点击 ✕ 移除单条记录；也可以一键清理全部记录。当前工作区不可删除，删除后可通过“添加工作区”重新加入。</p>
+          <div id="workspaceCleanList"></div>
+          <div class="workspace-clean-footer">
+            <button id="workspaceCleanAll" type="button">清理全部记录（保留当前）</button>
+          </div>
+        </div>
+      </div>
       <div id="switchState" class="switch-state"></div>
       <button id="addAuthorizedRootQuick" class="add-workspace secondary-action" title="授权一个额外目录，无需切换主工作区">＋ 授权目录</button>
       <button id="addWorkspace" class="add-workspace">＋ 添加工作区</button>

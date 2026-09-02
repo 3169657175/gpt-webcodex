@@ -2,6 +2,7 @@ const api = window.browserAssistant;
 const $ = (selector) => document.querySelector(selector);
 let switching = false;
 let activeWorkspace = '';
+let recentWorkspaceHub = null;
 let lastRuntimeState = null;
 let lastRuntimeCheckAt = 0;
 
@@ -205,9 +206,11 @@ async function refreshTask() {
 
 function renderWorkspace(hub) {
   activeWorkspace = hub.activeWorkspace || '';
+  recentWorkspaceHub = hub;
   $('#activeWorkspace').textContent = activeWorkspace || '未选择';
   $('#activeWorkspace').title = activeWorkspace;
   renderWorkspaceHealth();
+  renderWorkspaceClean(hub);
   const select = $('#workspaceSelect');
   select.replaceChildren();
   const placeholder = document.createElement('option');
@@ -222,6 +225,66 @@ function renderWorkspace(hub) {
     select.appendChild(option);
   });
   select.value = '';
+}
+
+function renderWorkspaceClean(hub) {
+  const list = $('#workspaceCleanList');
+  list.replaceChildren();
+  const entries = (hub.recentWorkspaces || []).filter(Boolean);
+  if (!entries.length) {
+    const empty = document.createElement('p');
+    empty.textContent = '暂无最近工作区记录。';
+    list.appendChild(empty);
+    $('#workspaceCleanAll').disabled = true;
+    return;
+  }
+  $('#workspaceCleanAll').disabled = false;
+  entries.forEach((workspace) => {
+    const row = document.createElement('div');
+    row.className = 'workspace-clean-row';
+    const isCurrent = workspaceKeyEquals(workspace, activeWorkspace);
+    const name = document.createElement('code');
+    name.textContent = baseName(workspace);
+    name.title = workspace;
+    row.appendChild(name);
+    if (isCurrent) {
+      const tag = document.createElement('span');
+      tag.className = 'workspace-clean-current';
+      tag.textContent = '当前';
+      row.appendChild(tag);
+    } else {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '✕';
+      remove.title = `移除记录：${workspace}`;
+      remove.onclick = () => removeRecentWorkspaces([workspace]);
+      row.appendChild(remove);
+    }
+    list.appendChild(row);
+  });
+}
+
+function workspaceKeyEquals(left, right) {
+  const key = (value) => String(value || '').trim().replace(/[\\/]+$/, '').toLowerCase();
+  return Boolean(left && right) && key(left) === key(right);
+}
+
+function toggleWorkspaceCleanPopover(show) {
+  const popover = $('#workspaceCleanPopover');
+  const nextHidden = typeof show === 'boolean' ? !show : !popover.hidden;
+  popover.hidden = nextHidden;
+  $('#workspaceCleanButton').setAttribute('aria-expanded', String(!nextHidden));
+}
+
+async function removeRecentWorkspaces(targets) {
+  try {
+    const result = unwrap(await api.removeRecentWorkspaces(targets));
+    renderWorkspace({ activeWorkspace: result.activeWorkspace, recentWorkspaces: result.recentWorkspaces });
+    $('#switchState').textContent = '最近工作区记录已更新';
+    setTimeout(() => { $('#switchState').textContent = ''; }, 1800);
+  } catch (error) {
+    $('#switchState').textContent = error.message;
+  }
 }
 
 async function refreshWorkspace() {
@@ -272,6 +335,21 @@ document.addEventListener('click', (event) => {
 });
 $('#managerButton').onclick = () => api.openManager();
 $('#workspaceSelect').onchange = () => { const workspace = $('#workspaceSelect').value; $('#workspaceSelect').value = ''; if (workspace) switchWorkspace(workspace, true); };
+$('#workspaceCleanButton').onclick = (event) => { event.stopPropagation(); toggleWorkspaceCleanPopover(); };
+document.addEventListener('click', (event) => {
+  const wrap = $('.workspace-clean-wrap');
+  if (wrap?.contains(event.target)) return;
+  const popover = $('#workspaceCleanPopover');
+  if (popover && !popover.hidden) toggleWorkspaceCleanPopover(false);
+});
+$('#workspaceCleanAll').onclick = async () => {
+  const entries = ((recentWorkspaceHub?.recentWorkspaces) || [])
+    .filter((item) => item && !workspaceKeyEquals(item, activeWorkspace));
+  if (!entries.length) return;
+  if (!window.confirm(`确定清理 ${entries.length} 条最近工作区记录吗？当前工作区会保留。`)) return;
+  await removeRecentWorkspaces(entries);
+  toggleWorkspaceCleanPopover(false);
+};
 $('#pauseTask').onclick = async () => { try { unwrap(await api.pauseTask()); await refreshTask(); } catch (error) { $('#switchState').textContent = error.message; } };
 $('#resumeTask').onclick = async () => { try { unwrap(await api.resumeTask()); await refreshTask(); } catch (error) { $('#switchState').textContent = error.message; } };
 $('#stopTask').onclick = async () => { try { unwrap(await api.stopTask()); await refreshTask(); } catch (error) { $('#switchState').textContent = error.message; } };

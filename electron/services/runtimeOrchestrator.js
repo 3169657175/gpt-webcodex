@@ -354,6 +354,20 @@ class RuntimeOrchestrator {
     }
   }
 
+  removeRecentWorkspaces(targets = []) {
+    const removeKeys = new Set((Array.isArray(targets) ? targets : [])
+      .map((item) => workspaceKey(item))
+      .filter(Boolean));
+    const previous = this.settingsStore.load();
+    const kept = (previous.recentWorkspaces || [])
+      .filter((item) => item && !removeKeys.has(workspaceKey(item)));
+    // save() 会经过 config.normalize：当前工作区始终回到列表首位且自动去重，
+    // 因此即使误传当前工作区也不会被真正删除。
+    const saved = this.settingsStore.save({ recentWorkspaces: kept });
+    this.invalidateSnapshot();
+    return { activeWorkspace: saved.workspace, recentWorkspaces: saved.recentWorkspaces || [] };
+  }
+
   async switchWorkspace(nextWorkspace) {
     if (this.busy) throw new Error('当前已有任务正在运行。');
     const previous = this.settingsStore.load();

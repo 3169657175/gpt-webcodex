@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('browserAssistant', {
   chatStatus: () => ipcRenderer.invoke('chat:status'),
   lightweightStatus: () => ipcRenderer.invoke('app:lightweight-snapshot'),
   workspaceHub: () => ipcRenderer.invoke('workspace:hub'),
+  removeRecentWorkspaces: (targets) => ipcRenderer.invoke('workspace:remove-recent', targets),
   switchWorkspace: (workspace) => ipcRenderer.invoke('workspace:switch', workspace),
   chooseAndSwitchWorkspace: () => ipcRenderer.invoke('workspace:choose-and-switch'),
   chooseAuthorizedRoot: () => ipcRenderer.invoke('workspace:choose-authorized-root'),
