@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -42,11 +42,11 @@ test('workspace manager exposes extra authorized roots without changing the chat
   assert.match(app, /updateAuthorizedRoots/);
 });
 
-test('package and manager identify the 0.2.4 release', () => {
+test('package and manager identify the 0.4.4 release', () => {
   const pkg = JSON.parse(read('package.json'));
   const manager = read('renderer/index.html');
-  assert.equal(pkg.version, '0.2.4');
-  assert.match(manager, /网页 MCP 助手 <span>v0\.2\.4<\/span>/);
+  assert.equal(pkg.version, '0.4.4');
+  assert.match(manager, /网页 MCP 助手 <span>v0\.4\.4<\/span>/);
   assert.match(manager, /本地工具引擎 · 0\.4\.9/);
 });
 

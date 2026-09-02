@@ -2,7 +2,7 @@
 
 让网页版 ChatGPT 直接连接 Windows 本地开发环境，把网页聊天变成一个可以读取项目、修改代码、执行命令、跑测试和构建安装包的桌面开发助手。
 
-当前桌面版本：**v0.2.4**  
+当前桌面版本：**v0.4.4**  
 内置 Coding Tools MCP Runtime：**v0.4.9**  
 平台：**Windows**
 
@@ -270,7 +270,7 @@ v0.2.4 内置 Runtime 对 ChatGPT 暴露的核心工具包括：
 普通使用不需要配置开发环境：
 
 1. 打开 GitHub 页面右侧 **[Releases](../../releases)**。
-2. 下载最新安装包：`web-mcp-assistant-setup-0.2.4.exe`。
+2. 下载最新安装包：`web-mcp-assistant-setup-0.4.4.exe`。
 3. 双击安装。
 4. 打开助手，选择工作目录。
 5. 按“接入指南”配置 OpenAI Tunnel 和 ChatGPT MCP。
@@ -328,7 +328,7 @@ Git Worktree 隔离能降低复杂任务直接修改主工作区的风险，但�
 
 ## 📌 版本信息
 
-- 网页 MCP 助手：**0.2.4**
+- 网页 MCP 助手：**0.4.4**
 - Coding Tools MCP Runtime：**0.4.9**
 - Electron：**43.2.0**
-- Windows 安装包：`web-mcp-assistant-setup-0.2.4.exe`
+- Windows 安装包：`web-mcp-assistant-setup-0.4.4.exe`
