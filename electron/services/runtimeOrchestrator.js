@@ -262,7 +262,7 @@ class RuntimeOrchestrator {
         }
         await wait(1000);
       }
-      if (!identity) throw new Error('Coding Tools MCP 未能以本次启动实例通过身份健康检查，可能仍连接到旧进程。');
+      if (!identity) throw new Error('Coding Tools MCP 未能以本次启动实例通过身份健康检查：健康接口未就绪，或返回的工作区/鉴权/源码指纹与本次启动不一致（也可能是旧进程占用端口）。请查看运行日志 mcp.log 排查。');
 
       const discoveryClient = new LocalMcpClient({ port: settings.mcpPort, token, log: this.log });
       await discoveryClient.discoverTools();
