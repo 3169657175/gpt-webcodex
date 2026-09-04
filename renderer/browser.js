@@ -91,12 +91,14 @@ function renderModifiedFilesList(files = []) {
     container.appendChild(empty);
     return;
   }
-  for (const filePath of files) {
-    const item = document.createElement('div');
-    item.className = 'console-file-item';
-    item.dataset.path = filePath;
-    if (activeDiffFile === filePath) item.classList.add('active');
-    item.title = `点击查看 Diff 差异，右侧定位：${filePath}`;
+  for (const item of files) {
+    const filePath = typeof item === 'string' ? item : (item?.path || String(item));
+    if (!filePath) continue;
+    const itemEl = document.createElement('div');
+    itemEl.className = 'console-file-item';
+    itemEl.dataset.path = filePath;
+    if (activeDiffFile === filePath) itemEl.classList.add('active');
+    itemEl.title = `点击查看 Diff 差异，右侧定位：${filePath}`;
     
     const nameSpan = document.createElement('span');
     nameSpan.className = 'console-file-name';
@@ -113,16 +115,62 @@ function renderModifiedFilesList(files = []) {
       }
     };
 
-    item.appendChild(nameSpan);
-    item.appendChild(actionSpan);
+    itemEl.appendChild(nameSpan);
+    itemEl.appendChild(actionSpan);
 
-    item.onclick = (e) => {
+    itemEl.onclick = (e) => {
       e.stopPropagation();
       showFileDiff(filePath);
     };
-    container.appendChild(item);
+    container.appendChild(itemEl);
   }
 }
+
+async function handleCreateCheckpoint() {
+  const btn = $('#createCapsuleBtn');
+  if (btn) btn.disabled = true;
+  try {
+    if (!api.createCheckpoint) return;
+    const res = unwrap(await api.createCheckpoint({ manual: true }));
+    $('#switchState').textContent = '✅ 已成功创建时间胶囊检查点！';
+    setTimeout(() => { $('#switchState').textContent = ''; }, 3000);
+    await updateTaskUi();
+  } catch (err) {
+    alert(`创建检查点失败: ${err.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function handleRollbackCheckpoint() {
+  const rollbackBtn = $('#rollbackCapsuleBtn');
+  const confirmed = window.confirm(
+    '⚠️ 确定要回滚到时间胶囊吗？\n\n' +
+    '此操作将安全撤销本次任务产生的所有文件修改，将代码精准恢复到任务执行前的纯净状态。\n\n' +
+    '此操作不可逆，请确认是否立即回滚？'
+  );
+  if (!confirmed) return;
+
+  if (rollbackBtn) rollbackBtn.disabled = true;
+  try {
+    if (!api.rollbackCheckpoint) return;
+    const res = unwrap(await api.rollbackCheckpoint());
+    const diffCol = $('#consoleDiffColumn');
+    if (diffCol) diffCol.hidden = true;
+    activeDiffFile = null;
+
+    $('#switchState').textContent = `✅ ${res?.message || '代码已成功回滚到时间胶囊！'}`;
+    setTimeout(() => { $('#switchState').textContent = ''; }, 4000);
+    await updateTaskUi();
+  } catch (err) {
+    alert(`回滚失败: ${err.message}`);
+  } finally {
+    if (rollbackBtn) rollbackBtn.disabled = false;
+  }
+}
+
+$('#createCapsuleBtn').onclick = () => handleCreateCheckpoint();
+$('#rollbackCapsuleBtn').onclick = () => handleRollbackCheckpoint();
 
 async function handleGitCommit(push = false) {
   const input = $('#gitCommitInput');
@@ -435,6 +483,31 @@ async function refreshTask() {
     }
     $('#consoleFilesCount').textContent = String(modifiedFiles.length);
     renderModifiedFilesList(modifiedFiles);
+
+    const rollbackBtn = $('#rollbackCapsuleBtn');
+    const capsuleBadge = $('#capsuleStatusBadge');
+    if (rollbackBtn) {
+      const count = modifiedFiles.length;
+      rollbackBtn.disabled = count === 0;
+      rollbackBtn.textContent = count > 0 ? `⏪ 回滚 (${count} 文件)` : '⏪ 一键时间胶囊回滚';
+      rollbackBtn.title = count > 0 ? `一键撤销本次任务对 ${count} 个文件的所有修改，恢复到时间胶囊状态` : '暂无可回滚的修改文件';
+    }
+    if (api.getCheckpointStatus) {
+      api.getCheckpointStatus().then((res) => {
+        if (res?.ok && res.data && capsuleBadge) {
+          if (res.data.hasCapsule) {
+            const time = res.data.capsule?.createdAt ? new Date(res.data.capsule.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+            capsuleBadge.textContent = time ? `💾 胶囊已就绪 (${time})` : '💾 胶囊已就绪';
+            capsuleBadge.classList.add('ready');
+            capsuleBadge.title = `时间胶囊基线已建立：${res.data.capsule?.description || ''}`;
+          } else {
+            capsuleBadge.textContent = '胶囊未创建';
+            capsuleBadge.classList.remove('ready');
+            capsuleBadge.title = '尚未为当前工作区创建时间胶囊快照';
+          }
+        }
+      }).catch(() => {});
+    }
 
     // 任务状态转换音效提醒
     if (lastTaskStatus && lastTaskStatus !== status) {

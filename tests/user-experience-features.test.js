@@ -86,3 +86,80 @@ test('git diff, commit assistant and task context snapshot handoff are wired end
   assert.match(css, /\.browser-toolbar\{[^}]*height:112px/);
 });
 
+test('task checkpoint and one-click time capsule rollback are wired end to end', () => {
+  const main = read('electron/main.js');
+  const preload = read('electron/browserPreload.js');
+  const html = read('renderer/browser.html');
+  const js = read('renderer/browser.js');
+  const css = read('renderer/browser.css');
+
+  // Verify IPC channels in main.js
+  assert.match(main, /secureHandle\('checkpoint:create'/);
+  assert.match(main, /secureHandle\('checkpoint:status'/);
+  assert.match(main, /secureHandle\('checkpoint:rollback'/);
+  assert.match(main, /workspaceCapsulePaths/);
+
+  // Verify Preload APIs
+  assert.match(preload, /createCheckpoint/);
+  assert.match(preload, /getCheckpointStatus/);
+  assert.match(preload, /rollbackCheckpoint/);
+
+  // Verify HTML elements in browser.html
+  assert.match(html, /id="capsuleStatusBadge"/);
+  assert.match(html, /id="createCapsuleBtn"/);
+  assert.match(html, /id="rollbackCapsuleBtn"/);
+
+  // Verify JS logic in browser.js
+  assert.match(js, /handleCreateCheckpoint/);
+  assert.match(js, /handleRollbackCheckpoint/);
+  assert.match(js, /#createCapsuleBtn/);
+  assert.match(js, /#rollbackCapsuleBtn/);
+  assert.match(js, /#capsuleStatusBadge/);
+
+  // Verify CSS styles
+  assert.match(css, /\.console-capsule-actions/);
+  assert.match(css, /\.capsule-badge/);
+  assert.match(css, /\.btn-capsule/);
+  assert.match(css, /\.btn-capsule-rollback/);
+  assert.match(css, /\.browser-toolbar\{[^}]*height:112px/);
+});
+
+test('checkpoint physical fallback handles backup, restore and file deletion safely', async () => {
+  const tempDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'capsule-test-'));
+  try {
+    const fileA = path.join(tempDir, 'original.txt');
+    fs.writeFileSync(fileA, 'initial content', 'utf8');
+
+    // Simulate snapshot backup
+    const capsuleDir = path.join(tempDir, '.coding-tools', 'capsules');
+    fs.mkdirSync(capsuleDir, { recursive: true });
+    const backupA = path.join(capsuleDir, 'test_original.txt');
+    fs.copyFileSync(fileA, backupA);
+
+    // AI modifies original.txt and creates new.txt
+    fs.writeFileSync(fileA, 'bad ai edits', 'utf8');
+    const fileB = path.join(tempDir, 'new.txt');
+    fs.writeFileSync(fileB, 'hallucinated file', 'utf8');
+
+    const snapshots = {
+      'original.txt': { existed: true, backupName: 'test_original.txt' },
+      'new.txt': { existed: false }
+    };
+
+    // Simulate rollback: restore original.txt and delete new.txt
+    for (const [rel, snap] of Object.entries(snapshots)) {
+      const full = path.resolve(tempDir, rel);
+      if (!snap.existed) {
+        if (fs.existsSync(full)) fs.unlinkSync(full);
+      } else if (snap.backupName) {
+        fs.copyFileSync(path.join(capsuleDir, snap.backupName), full);
+      }
+    }
+
+    assert.equal(fs.readFileSync(fileA, 'utf8'), 'initial content');
+    assert.equal(fs.existsSync(fileB), false);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+

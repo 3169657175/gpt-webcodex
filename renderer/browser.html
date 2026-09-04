@@ -118,7 +118,12 @@
       <div class="console-files-layout">
         <div class="console-files-column">
           <div class="console-files-header">
-            <span>任务影响文件（点击查看代码 Diff）：</span>
+            <span class="console-files-header-title">任务影响文件（点击查看代码 Diff）：</span>
+            <div class="console-capsule-actions">
+              <span id="capsuleStatusBadge" class="capsule-badge" title="当前时间胶囊快照基线">💾 胶囊未就绪</span>
+              <button type="button" id="createCapsuleBtn" class="btn-capsule" title="为当前代码创建安全时间胶囊快照">💾 创建检查点</button>
+              <button type="button" id="rollbackCapsuleBtn" class="btn-capsule-rollback danger" title="一键撤销本次任务的所有修改，恢复到时间胶囊状态" disabled>⏪ 一键时间胶囊回滚</button>
+            </div>
           </div>
           <div id="consoleFilesList" class="console-files-list"></div>
           <div class="console-git-commit-bar">

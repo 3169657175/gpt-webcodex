@@ -46,5 +46,8 @@ contextBridge.exposeInMainWorld('browserAssistant', {
   gitFileDiff: (relativePath) => ipcRenderer.invoke('git:file-diff', relativePath),
   gitCommitAndPush: (options) => ipcRenderer.invoke('git:commit-and-push', options),
   generateTaskSnapshot: () => ipcRenderer.invoke('task:generate-snapshot'),
-  injectPrompt: (text, autoSend) => ipcRenderer.invoke('chat:inject-prompt', text, autoSend)
+  injectPrompt: (text, autoSend) => ipcRenderer.invoke('chat:inject-prompt', text, autoSend),
+  createCheckpoint: (options) => ipcRenderer.invoke('checkpoint:create', options),
+  getCheckpointStatus: () => ipcRenderer.invoke('checkpoint:status'),
+  rollbackCheckpoint: () => ipcRenderer.invoke('checkpoint:rollback')
 });

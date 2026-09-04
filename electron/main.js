@@ -92,6 +92,13 @@ function workspaceStatePaths() {
   };
 }
 
+function workspaceCapsulePaths() {
+  const { root, statePath } = workspaceStatePaths();
+  const capsuleDir = path.join(root, '.coding-tools', 'capsules');
+  const capsuleMetaPath = path.join(root, '.coding-tools', 'capsule-state.json');
+  return { root, statePath, capsuleDir, capsuleMetaPath };
+}
+
 function archiveTask(state, historyPath, reason) {
   if (!state || typeof state !== 'object' || (!state.task_id && !state.objective)) return;
   const history = readJson(historyPath, []);
@@ -573,6 +580,180 @@ function registerIpc() {
       snapshot: snapshotMarkdown,
       objective,
       modifiedFiles: taskState?.modified_files || []
+    };
+  }));
+  secureHandle('checkpoint:create', (_event, options = {}) => invokeSafely(async () => {
+    const { root, statePath, capsuleDir, capsuleMetaPath } = workspaceCapsulePaths();
+    await fs.mkdir(capsuleDir, { recursive: true });
+
+    const taskState = readJson(statePath, null);
+    const taskId = taskState?.task_id || `capsule_${Date.now()}`;
+    const now = new Date().toISOString();
+
+    let isGit = false;
+    let gitHead = '';
+    let stashSha = '';
+    try {
+      const rev = await run('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root, timeoutMs: 3000 });
+      isGit = rev.stdout.trim() === 'true';
+      if (isGit) {
+        const headRes = await run('git', ['rev-parse', 'HEAD'], { cwd: root, timeoutMs: 3000 });
+        gitHead = headRes.stdout.trim();
+        try {
+          const stashRes = await run('git', ['stash', 'create', `time-capsule:${taskId}`], { cwd: root, timeoutMs: 5000 });
+          stashSha = stashRes.stdout.trim();
+        } catch { /* ignore stash error */ }
+      }
+    } catch {
+      isGit = false;
+    }
+
+    const fileSnapshots = {};
+    const currentModified = Array.isArray(taskState?.modified_files) ? taskState.modified_files : [];
+    for (const item of currentModified) {
+      const rel = typeof item === 'string' ? item : item?.path;
+      if (!rel) continue;
+      const full = path.resolve(root, rel);
+      if (!full.startsWith(root) || rel.startsWith('.coding-tools')) continue;
+      try {
+        const content = await fs.readFile(full);
+        const backupName = `${taskId}_${rel.replace(/[\\/]/g, '_')}`;
+        const backupFull = path.join(capsuleDir, backupName);
+        await fs.writeFile(backupFull, content);
+        fileSnapshots[rel] = { existed: true, backupName };
+      } catch (e) {
+        if (e.code === 'ENOENT') {
+          fileSnapshots[rel] = { existed: false };
+        }
+      }
+    }
+
+    const capsuleMeta = {
+      capsuleId: taskId,
+      createdAt: now,
+      manual: Boolean(options.manual),
+      isGit,
+      gitHead,
+      stashSha,
+      fileSnapshots,
+      description: options.description || (options.manual ? '用户手动创建的安全检查点' : '时间胶囊安全基线')
+    };
+
+    writeJsonAtomic(capsuleMetaPath, capsuleMeta);
+    return capsuleMeta;
+  }));
+  secureHandle('checkpoint:status', () => invokeSafely(async () => {
+    try {
+      const { statePath, capsuleMetaPath } = workspaceCapsulePaths();
+      const meta = readJson(capsuleMetaPath, null);
+      const taskState = readJson(statePath, null);
+      const modifiedFiles = Array.isArray(taskState?.modified_files) ? taskState.modified_files : [];
+      return {
+        hasCapsule: Boolean(meta),
+        capsule: meta,
+        modifiedCount: modifiedFiles.length,
+        modifiedFiles: modifiedFiles.map((f) => typeof f === 'string' ? f : f?.path).filter(Boolean),
+        canRollback: Boolean(meta) || modifiedFiles.length > 0
+      };
+    } catch {
+      return {
+        hasCapsule: false,
+        capsule: null,
+        modifiedCount: 0,
+        modifiedFiles: [],
+        canRollback: false
+      };
+    }
+  }));
+  secureHandle('checkpoint:rollback', () => invokeSafely(async () => {
+    const { root, statePath, capsuleDir, capsuleMetaPath } = workspaceCapsulePaths();
+    const meta = readJson(capsuleMetaPath, null);
+    const taskState = readJson(statePath, null);
+    const modifiedFiles = Array.isArray(taskState?.modified_files) ? taskState.modified_files : [];
+
+    const targetFiles = new Set();
+    for (const item of modifiedFiles) {
+      const p = typeof item === 'string' ? item : item?.path;
+      if (p) targetFiles.add(p);
+    }
+    if (meta?.fileSnapshots) {
+      for (const p of Object.keys(meta.fileSnapshots)) {
+        if (p) targetFiles.add(p);
+      }
+    }
+
+    const restoredFiles = [];
+    const removedFiles = [];
+    const errors = [];
+
+    // 1. Try Git checkout / clean if Git repo
+    try {
+      const isInside = (await run('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root, timeoutMs: 3000 })).stdout.trim() === 'true';
+      if (isInside) {
+        for (const rel of targetFiles) {
+          const full = path.resolve(root, rel);
+          if (!full.startsWith(root) || rel.startsWith('.coding-tools')) continue;
+          try {
+            const statusRes = await run('git', ['status', '--porcelain', '--', rel], { cwd: root, timeoutMs: 3000 });
+            const status = statusRes.stdout.trim();
+            if (status.startsWith('??')) {
+              await fs.unlink(full).catch(() => {});
+              removedFiles.push(rel);
+            } else if (status) {
+              await run('git', ['checkout', 'HEAD', '--', rel], { cwd: root, timeoutMs: 5000 });
+              restoredFiles.push(rel);
+            }
+          } catch (gitErr) {
+            errors.push(`${rel}: ${gitErr.message}`);
+          }
+        }
+      }
+    } catch { /* not git or git error */ }
+
+    // 2. Physical snapshot restore fallback
+    if (meta?.fileSnapshots) {
+      for (const [rel, snap] of Object.entries(meta.fileSnapshots)) {
+        const full = path.resolve(root, rel);
+        if (!full.startsWith(root) || rel.startsWith('.coding-tools')) continue;
+        try {
+          if (!snap.existed) {
+            await fs.unlink(full).catch(() => {});
+            if (!removedFiles.includes(rel)) removedFiles.push(rel);
+          } else if (snap.backupName) {
+            const backupFull = path.join(capsuleDir, snap.backupName);
+            const content = await fs.readFile(backupFull);
+            await fs.mkdir(path.dirname(full), { recursive: true });
+            await fs.writeFile(full, content);
+            if (!restoredFiles.includes(rel)) restoredFiles.push(rel);
+          }
+        } catch (err) {
+          errors.push(`${rel}: ${err.message}`);
+        }
+      }
+    }
+
+    // 3. Clear task-state modified_files and record event
+    if (taskState) {
+      taskState.modified_files = [];
+      taskState.events = Array.isArray(taskState.events) ? taskState.events : [];
+      taskState.events.push({
+        time: new Date().toISOString(),
+        event: 'capsule_rollback',
+        details: {
+          restored: restoredFiles,
+          removed: removedFiles,
+          capsuleId: meta?.capsuleId || null
+        }
+      });
+      taskState.updated_at = new Date().toISOString();
+      writeJsonAtomic(statePath, taskState);
+    }
+
+    return {
+      restoredFiles,
+      removedFiles,
+      errors,
+      message: `时间胶囊回滚完成：已还原 ${restoredFiles.length} 个文件，清理 ${removedFiles.length} 个新增文件。`
     };
   }));
   secureHandle('dialog:workspace', () => invokeSafely(async () => {
