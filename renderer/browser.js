@@ -27,6 +27,58 @@ function playTaskCompletionSound() {
   } catch { /* audio not allowed or failed */ }
 }
 
+let activeDiffFile = null;
+
+async function showFileDiff(filePath) {
+  const diffCol = $('#consoleDiffColumn');
+  const title = $('#diffViewTitle');
+  const content = $('#diffViewContent');
+  if (!diffCol || !content) return;
+  activeDiffFile = filePath;
+  diffCol.hidden = false;
+  title.textContent = `差异对比：${baseName(filePath)}`;
+  content.textContent = '正在加载差异…';
+
+  // Highlight active row
+  document.querySelectorAll('.console-file-item').forEach((el) => {
+    el.classList.toggle('active', el.dataset.path === filePath);
+  });
+
+  try {
+    if (!api.gitFileDiff) {
+      content.textContent = '当前环境不支持 Git 对比接口。';
+      return;
+    }
+    const result = unwrap(await api.gitFileDiff(filePath));
+    const rawDiff = result?.diff || '无变更内容。';
+    content.replaceChildren();
+    const lines = rawDiff.split(/\r?\n/);
+    for (const line of lines) {
+      const span = document.createElement('span');
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        span.className = 'diff-line-add';
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        span.className = 'diff-line-del';
+      } else if (line.startsWith('@')) {
+        span.className = 'diff-line-hunk';
+      } else {
+        span.className = 'diff-line-normal';
+      }
+      span.textContent = line || ' ';
+      content.appendChild(span);
+    }
+  } catch (err) {
+    content.textContent = `加载 Diff 失败：${err.message}`;
+  }
+}
+
+$('#closeDiffBtn').onclick = () => {
+  const diffCol = $('#consoleDiffColumn');
+  if (diffCol) diffCol.hidden = true;
+  activeDiffFile = null;
+  document.querySelectorAll('.console-file-item').forEach((el) => el.classList.remove('active'));
+};
+
 function renderModifiedFilesList(files = []) {
   const container = $('#consoleFilesList');
   if (!container) return;
@@ -42,7 +94,9 @@ function renderModifiedFilesList(files = []) {
   for (const filePath of files) {
     const item = document.createElement('div');
     item.className = 'console-file-item';
-    item.title = `点击在资源管理器中定位：${filePath}`;
+    item.dataset.path = filePath;
+    if (activeDiffFile === filePath) item.classList.add('active');
+    item.title = `点击查看 Diff 差异，右侧定位：${filePath}`;
     
     const nameSpan = document.createElement('span');
     nameSpan.className = 'console-file-name';
@@ -51,19 +105,55 @@ function renderModifiedFilesList(files = []) {
     const actionSpan = document.createElement('span');
     actionSpan.className = 'console-file-action';
     actionSpan.textContent = '定位 ↗';
-
-    item.appendChild(nameSpan);
-    item.appendChild(actionSpan);
-
-    item.onclick = async (e) => {
+    actionSpan.title = '在系统资源管理器中定位';
+    actionSpan.onclick = async (e) => {
       e.stopPropagation();
       if (api.showInFolder) {
         try { unwrap(await api.showInFolder(filePath)); } catch { /* ignore */ }
       }
     };
+
+    item.appendChild(nameSpan);
+    item.appendChild(actionSpan);
+
+    item.onclick = (e) => {
+      e.stopPropagation();
+      showFileDiff(filePath);
+    };
     container.appendChild(item);
   }
 }
+
+async function handleGitCommit(push = false) {
+  const input = $('#gitCommitInput');
+  const commitBtn = $('#gitCommitBtn');
+  const pushBtn = $('#gitCommitPushBtn');
+  const message = input?.value?.trim();
+  if (!message) {
+    alert('请输入 Git 提交说明（Commit Message）');
+    input?.focus();
+    return;
+  }
+  if (commitBtn) commitBtn.disabled = true;
+  if (pushBtn) pushBtn.disabled = true;
+  try {
+    if (!api.gitCommitAndPush) return;
+    const res = unwrap(await api.gitCommitAndPush({ message, push }));
+    input.value = '';
+    $('#switchState').textContent = push ? 'Git 提交并推送成功' : 'Git 提交成功';
+    setTimeout(() => { $('#switchState').textContent = ''; }, 3000);
+    // Refresh diff view if open
+    if (activeDiffFile) showFileDiff(activeDiffFile);
+  } catch (err) {
+    alert(`Git 操作失败: ${err.message}`);
+  } finally {
+    if (commitBtn) commitBtn.disabled = false;
+    if (pushBtn) pushBtn.disabled = false;
+  }
+}
+
+$('#gitCommitBtn').onclick = () => handleGitCommit(false);
+$('#gitCommitPushBtn').onclick = () => handleGitCommit(true);
 
 function unwrap(result) {
   if (!result?.ok) throw new Error(result?.error || '操作失败');
@@ -562,6 +652,50 @@ $('#resetContextUsage').onclick = async (event) => {
       $('#contextUsageButton')?.setAttribute('aria-expanded', 'false');
     }
   } catch { /* ignore */ }
+};
+$('#continueContextUsage').onclick = async (event) => {
+  event.stopPropagation();
+  const btn = $('#continueContextUsage');
+  if (btn) btn.disabled = true;
+  try {
+    let snapshotText = '';
+    if (api.generateTaskSnapshot) {
+      try {
+        const snap = unwrap(await api.generateTaskSnapshot());
+        snapshotText = snap?.snapshot || '';
+      } catch { /* ignore */ }
+    }
+    if (api.navigate) {
+      await api.navigate('home');
+    }
+    if (api.resetContextUsage) {
+      const result = unwrap(await api.resetContextUsage());
+      renderContextUsage(result);
+    }
+    const popover = $('#contextUsagePopover');
+    if (popover) {
+      popover.hidden = true;
+      $('#contextUsageButton')?.setAttribute('aria-expanded', 'false');
+    }
+    if (snapshotText) {
+      // Copy to clipboard as reliable fallback
+      try { await navigator.clipboard.writeText(snapshotText); } catch {}
+      // Schedule injection when page is ready
+      setTimeout(async () => {
+        try {
+          if (api.injectPrompt) {
+            await api.injectPrompt(snapshotText, true);
+          }
+        } catch { /* fallback already copied to clipboard */ }
+      }, 1600);
+      $('#switchState').textContent = '已开启新会话并自动继承任务记忆';
+      setTimeout(() => { $('#switchState').textContent = ''; }, 3000);
+    }
+  } catch (err) {
+    $('#switchState').textContent = err.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 };
 document.addEventListener('click', (event) => {
   const wrap = $('#contextUsageWrap');

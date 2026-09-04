@@ -475,10 +475,105 @@ function registerIpc() {
   secureHandle('manager:open', () => invokeSafely(async () => { openManagerWindow(); return true; }));
   secureHandle('chat:navigate', (_event, action) => invokeSafely(async () => chatController?.navigate(action)));
   secureHandle('chat:status', () => invokeSafely(async () => chatController?.getState() || null));
+  secureHandle('chat:inject-prompt', (_event, text, autoSend) => invokeSafely(async () => chatController?.injectPrompt(text, autoSend)));
   secureHandle('chat:clear-session', () => invokeSafely(async () => {
     if (!chatController) throw new Error('ChatGPT 页面尚未初始化。');
     await chatController.clearSession();
     return true;
+  }));
+  secureHandle('git:file-diff', (_event, relativePath) => invokeSafely(async () => {
+    const { root } = workspaceStatePaths();
+    const targetFile = String(relativePath || '').trim();
+    if (!targetFile) throw new Error('未指定要对比的文件。');
+    const fullPath = path.resolve(root, targetFile);
+    try {
+      // 1. Try git diff HEAD
+      const res = await run('git', ['diff', 'HEAD', '--', targetFile], { cwd: root, timeoutMs: 5000 });
+      if (res.stdout.trim()) {
+        return { isGit: true, diff: res.stdout.slice(0, 150000) };
+      }
+      // 2. If HEAD diff empty, try untracked file diff against null
+      const statusRes = await run('git', ['status', '--porcelain', '--', targetFile], { cwd: root, timeoutMs: 3000 });
+      if (statusRes.stdout.trim().startsWith('??')) {
+        const content = await fs.readFile(fullPath, 'utf8').catch(() => '');
+        const lines = content.split(/\r?\n/).slice(0, 300).map((l) => `+${l}`).join('\n');
+        return { isGit: true, diff: `@@ 新增未跟踪文件: ${targetFile} @@\n${lines}` };
+      }
+      return { isGit: true, diff: '无内容变更（工作区与版本库一致）' };
+    } catch {
+      // Fallback if not a git repo: display current file preview
+      try {
+        const content = await fs.readFile(fullPath, 'utf8');
+        const lines = content.split(/\r?\n/).slice(0, 300).map((l) => ` ${l}`).join('\n');
+        return { isGit: false, diff: `@@ 本地文件内容预览（非 Git 仓库）@@\n${lines}` };
+      } catch (err) {
+        return { isGit: false, diff: `无法读取文件：${err.message}` };
+      }
+    }
+  }));
+  secureHandle('git:commit-and-push', (_event, options = {}) => invokeSafely(async () => {
+    const { root } = workspaceStatePaths();
+    const message = String(options.message || '').trim();
+    if (!message) throw new Error('请输入提交信息（Commit Message）。');
+    const doPush = Boolean(options.push);
+
+    // 1. git add -A
+    await run('git', ['add', '-A'], { cwd: root, timeoutMs: 10000 });
+    // 2. git commit -m "..."
+    const commitRes = await run('git', ['commit', '-m', message], { cwd: root, timeoutMs: 15000 });
+    let pushOutput = '';
+    if (doPush) {
+      try {
+        const pushRes = await run('git', ['push'], { cwd: root, timeoutMs: 25000 });
+        pushOutput = pushRes.stdout || pushRes.stderr || '推送成功';
+      } catch (pushErr) {
+        throw new Error(`提交成功，但推送到远程失败：${pushErr.message}`);
+      }
+    }
+    return {
+      commit: commitRes.stdout || '提交成功',
+      push: pushOutput
+    };
+  }));
+  secureHandle('task:generate-snapshot', () => invokeSafely(async () => {
+    let taskState = null;
+    let gitSummary = '';
+    let root = '';
+    try {
+      const paths = workspaceStatePaths();
+      root = paths.root;
+      taskState = readJson(paths.statePath, null);
+    } catch { /* ignore */ }
+
+    if (root) {
+      try {
+        const statusRes = await run('git', ['status', '--short'], { cwd: root, timeoutMs: 3000 });
+        gitSummary = statusRes.stdout.trim().slice(0, 800);
+      } catch { /* not git */ }
+    }
+
+    const objective = taskState?.objective || '持续迭代代码工作区';
+    const currentStep = taskState?.current_step || taskState?.next_step || '检查当前代码并推进下一步任务';
+    const modified = Array.isArray(taskState?.modified_files) && taskState.modified_files.length
+      ? taskState.modified_files.map((f) => `- \`${f}\``).join('\n')
+      : '（暂无已记录的修改文件）';
+    const gitSection = gitSummary ? `\n\n**当前 Git 状态变更：**\n\`\`\`\n${gitSummary}\n\`\`\`` : '';
+
+    const snapshotMarkdown = [
+      `【任务断点续接快照】`,
+      `你好！这是从上一个对话无缝继承过来的工作区任务状态：`,
+      `- **核心任务目标**：${objective}`,
+      `- **当前所处步骤**：${currentStep}`,
+      `- **本次任务已修改文件**：\n${modified}${gitSection}`,
+      ``,
+      `当前上下文已清空，请直接基于工作区当前文件状态，继续执行下一步骤！`
+    ].join('\n');
+
+    return {
+      snapshot: snapshotMarkdown,
+      objective,
+      modifiedFiles: taskState?.modified_files || []
+    };
   }));
   secureHandle('dialog:workspace', () => invokeSafely(async () => {
     const result = await dialog.showOpenDialog(managerWindow || chatWindow, { properties: ['openDirectory', 'createDirectory'] });

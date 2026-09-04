@@ -32,8 +32,11 @@ button{font:inherit}
 .context-usage-popover[hidden]{display:none}
 .popover-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .popover-header b{color:#25272a;font-size:12px}
-.popover-header button{padding:3px 9px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;color:#595c61;font-size:11px;font-weight:600;cursor:pointer}
+.popover-actions{display:flex;align-items:center;gap:6px}
+.popover-header button{padding:3px 8px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;color:#595c61;font-size:11px;font-weight:600;cursor:pointer}
 .popover-header button:hover{background:#fbeeec;border-color:#ecd2d0;color:#b3362f}
+.popover-header button.btn-continue{border-color:#b9e4d6;background:#eaf7f2;color:#087f65}
+.popover-header button.btn-continue:hover{background:#d3f1e6;border-color:#087f65;color:#055846}
 .popover-bar-wrap{display:flex;align-items:center;gap:9px;margin-bottom:12px}
 .popover-bar{flex:1;height:6px;overflow:hidden;border-radius:999px;background:#eceef0}
 .popover-bar span{display:block;width:0%;height:100%;border-radius:inherit;background:var(--green);transition:width .25s ease,background-color .25s ease}
@@ -133,15 +136,34 @@ button{font:inherit}
 .console-actions button.close-btn:hover{color:#fff;background:#3f3f46}
 .console-output{flex:1;overflow-y:auto;overflow-x:hidden;margin:0;padding:8px 12px;font-size:11px;line-height:1.55;white-space:pre-wrap;word-break:break-all;color:#d4d4d8}
 .console-output:empty::before{content:"[暂无活动输出]";color:#52525b;font-style:italic}
-.console-files-view{flex:1;overflow-y:auto;padding:8px 12px;font-size:11px;background:#18181b}
+.console-files-view{flex:1;overflow:hidden;padding:0;font-size:11px;background:#18181b}
 .console-files-view[hidden]{display:none}
+.console-files-layout{display:flex;width:100%;height:100%}
+.console-files-column{flex:1;display:flex;flex-direction:column;padding:8px 12px;overflow-y:auto;border-right:1px solid #27272a}
 .console-files-header{margin-bottom:8px;color:#a1a1aa;font-size:10.5px}
-.console-files-list{display:flex;flex-direction:column;gap:4px}
+.console-files-list{flex:1;display:flex;flex-direction:column;gap:4px;overflow-y:auto}
 .console-file-item{display:flex;align-items:center;justify-content:space-between;padding:5px 8px;border-radius:5px;background:#202024;border:1px solid #2e2e33;cursor:pointer}
 .console-file-item:hover{background:#27272a;border-color:#3f3f46}
+.console-file-item.active{background:#1e293b;border-color:#38bdf8}
 .console-file-name{color:#38bdf8;font-family:"Cascadia Code",Consolas,monospace;font-size:11px;word-break:break-all}
 .console-file-action{color:#71717a;font-size:10px}
 .console-file-item:hover .console-file-action{color:#34d399}
+.console-git-commit-bar{display:flex;align-items:center;gap:6px;padding:8px 0 0;margin-top:8px;border-top:1px solid #27272a}
+.console-git-commit-bar input{flex:1;height:26px;padding:0 8px;background:#202024;border:1px solid #3f3f46;border-radius:5px;color:#e4e4e7;font-size:11px;outline:none}
+.console-git-commit-bar input:focus{border-color:#38bdf8}
+.console-git-commit-bar button{height:26px;padding:0 10px;background:#27272a;border:1px solid #3f3f46;border-radius:5px;color:#d4d4d8;font-size:11px;font-weight:600;cursor:pointer}
+.console-git-commit-bar button:hover{background:#3f3f46;color:#fff}
+.console-git-commit-bar button.btn-primary{background:#052e24;border-color:#087f65;color:#34d399}
+.console-git-commit-bar button.btn-primary:hover{background:#044436;color:#6ee7b7}
+.console-diff-column{flex:1.4;display:flex;flex-direction:column;background:#141416;overflow:hidden}
+.console-diff-column[hidden]{display:none}
+.diff-view-header{display:flex;align-items:center;justify-content:space-between;height:30px;padding:0 10px;background:#1c1c1f;border-bottom:1px solid #27272a;font-size:11px}
+.diff-view-header b{color:#93c5fd;font-weight:600}
+.diff-view-content{flex:1;padding:8px 10px;overflow-y:auto;overflow-x:auto;font-family:"Cascadia Code",Consolas,monospace;font-size:10.5px;line-height:1.55;color:#d4d4d8;white-space:pre-wrap;word-break:break-all}
+.diff-line-add{color:#4ade80;background:rgba(74,222,128,.1);display:block}
+.diff-line-del{color:#f87171;background:rgba(248,113,113,.1);display:block}
+.diff-line-hunk{color:#38bdf8;background:rgba(56,189,248,.08);font-weight:bold;display:block}
+.diff-line-normal{color:#a1a1aa;display:block}
 .console-line{display:block}
 .console-line.stderr,.console-line.error{color:#f87171}
 .console-line.info{color:#60a5fa}

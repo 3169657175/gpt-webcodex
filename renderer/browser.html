@@ -28,7 +28,10 @@
           <div id="contextUsagePopover" class="context-usage-popover" hidden>
             <div class="popover-header">
               <b>会话上下文容量负载</b>
-              <button id="resetContextUsage" type="button" title="在网页端开启新对话并清空当前会话容量统计">新对话</button>
+              <div class="popover-actions">
+                <button id="continueContextUsage" type="button" class="btn-continue" title="生成当前任务记忆快照并在新会话中自动断点续接">续接新会话</button>
+                <button id="resetContextUsage" type="button" title="在网页端开启新对话并清空当前会话容量统计">新对话</button>
+              </div>
             </div>
             <div class="popover-bar-wrap">
               <div class="popover-bar"><span id="contextUsageProgress"></span></div>
@@ -112,10 +115,26 @@
     </div>
     <div id="consoleOutput" class="console-output"></div>
     <div id="consoleFilesView" class="console-files-view" hidden>
-      <div class="console-files-header">
-        <span>当前任务影响的文件变更列表（点击可在本地资源管理器中查看）：</span>
+      <div class="console-files-layout">
+        <div class="console-files-column">
+          <div class="console-files-header">
+            <span>任务影响文件（点击查看代码 Diff）：</span>
+          </div>
+          <div id="consoleFilesList" class="console-files-list"></div>
+          <div class="console-git-commit-bar">
+            <input type="text" id="gitCommitInput" placeholder="输入 Git 提交信息（如: feat: xxx）..." />
+            <button type="button" id="gitCommitBtn" title="将所有修改提交到本地 Git 仓库">提交</button>
+            <button type="button" id="gitCommitPushBtn" class="btn-primary" title="提交所有修改并推送到远程仓库">提交并推送</button>
+          </div>
+        </div>
+        <div class="console-diff-column" id="consoleDiffColumn" hidden>
+          <div class="diff-view-header">
+            <b id="diffViewTitle">文件差异对比</b>
+            <button type="button" id="closeDiffBtn" class="close-btn" title="关闭对比视图">✕</button>
+          </div>
+          <div id="diffViewContent" class="diff-view-content"></div>
+        </div>
       </div>
-      <div id="consoleFilesList" class="console-files-list"></div>
     </div>
   </div>
   <script src="browser.js"></script>

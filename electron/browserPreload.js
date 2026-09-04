@@ -42,5 +42,9 @@ contextBridge.exposeInMainWorld('browserAssistant', {
   killActiveCommand: () => ipcRenderer.invoke('task:kill-active-command'),
   openWorkspaceInExplorer: (target) => ipcRenderer.invoke('workspace:open-in-explorer', target),
   openWorkspaceInEditor: (target) => ipcRenderer.invoke('workspace:open-in-editor', target),
-  showInFolder: (path) => ipcRenderer.invoke('workspace:show-in-folder', path)
+  showInFolder: (path) => ipcRenderer.invoke('workspace:show-in-folder', path),
+  gitFileDiff: (relativePath) => ipcRenderer.invoke('git:file-diff', relativePath),
+  gitCommitAndPush: (options) => ipcRenderer.invoke('git:commit-and-push', options),
+  generateTaskSnapshot: () => ipcRenderer.invoke('task:generate-snapshot'),
+  injectPrompt: (text, autoSend) => ipcRenderer.invoke('chat:inject-prompt', text, autoSend)
 });
