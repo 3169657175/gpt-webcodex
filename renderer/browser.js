@@ -548,10 +548,19 @@ $('#contextUsageButton').onclick = (event) => {
 };
 $('#resetContextUsage').onclick = async (event) => {
   event.stopPropagation();
-  if (!api.resetContextUsage) return;
   try {
-    const result = unwrap(await api.resetContextUsage());
-    renderContextUsage(result);
+    if (api.navigate) {
+      await api.navigate('home');
+    }
+    if (api.resetContextUsage) {
+      const result = unwrap(await api.resetContextUsage());
+      renderContextUsage(result);
+    }
+    const popover = $('#contextUsagePopover');
+    if (popover) {
+      popover.hidden = true;
+      $('#contextUsageButton')?.setAttribute('aria-expanded', 'false');
+    }
   } catch { /* ignore */ }
 };
 document.addEventListener('click', (event) => {

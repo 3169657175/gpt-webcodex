@@ -28,6 +28,7 @@ let tray = null;
 let buildVerification;
 let healthService;
 let taskNotificationService;
+let superviseTimer = null;
 let sharedLocalMcpClient = null;
 const contextUsageTracker = new ContextUsageTracker();
 const settings = new SettingsStore();
@@ -599,7 +600,7 @@ if (!hasSingleInstanceLock) {
         chatWindow.webContents.send('context:usage-changed', snapshot);
       }
     });
-    let superviseTimer = null;
+    superviseTimer = null;
     const scheduleSupervise = (delayMs = 5000) => {
       if (superviseTimer) clearTimeout(superviseTimer);
       superviseTimer = setTimeout(() => {
