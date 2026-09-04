@@ -93,10 +93,12 @@ class LocalMcpClient {
         timeout: timeoutMs
       }, (response) => {
         let payload = '';
+        let payloadBytes = 0;
         const maxBytes = Number(options.maxBytes || 8 * 1024 * 1024);
         response.setEncoding('utf8');
         response.on('data', (chunk) => {
-          if (Buffer.byteLength(payload) < maxBytes) payload += chunk;
+          if (payloadBytes < maxBytes) payload += chunk;
+          payloadBytes += Buffer.byteLength(chunk);
         });
         response.on('end', () => {
           const sessionId = response.headers['mcp-session-id'];

@@ -16,7 +16,8 @@ const { readJson, writeJsonAtomic } = require('./services/jsonStore');
 const { LocalMcpClient } = require('./services/localMcpClient');
 const { TaskNotificationService } = require('./services/taskNotificationService');
 const { NotificationCheckpointStore } = require('./services/notificationCheckpointStore');
-const { notificationStateFile } = require('./paths');
+const { ContextUsageTracker } = require('./services/contextUsageTracker');
+const { notificationStateFile, mcpLogFile } = require('./paths');
 
 let chatWindow;
 let managerWindow;
@@ -28,6 +29,7 @@ let buildVerification;
 let healthService;
 let taskNotificationService;
 let sharedLocalMcpClient = null;
+const contextUsageTracker = new ContextUsageTracker();
 const settings = new SettingsStore();
 const secrets = new SecretStore();
 const log = new LogService();
@@ -48,9 +50,26 @@ function safeMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isTrustedRendererUrl(url) {
+  if (typeof url !== 'string' || !url.startsWith('file://')) return false;
+  try {
+    const parsed = new URL(url);
+    let filePath = decodeURIComponent(parsed.pathname);
+    if (process.platform === 'win32' && /^\/[a-zA-Z]:/.test(filePath)) {
+      filePath = filePath.slice(1);
+    }
+    const normalizedFile = path.resolve(filePath).toLowerCase();
+    const rendererDir = path.resolve(__dirname, '..', 'renderer').toLowerCase();
+    return normalizedFile.startsWith(rendererDir);
+  } catch {
+    return false;
+  }
+}
+
 function assertTrustedIpc(event) {
   const url = event.senderFrame?.url || event.sender?.getURL?.() || '';
   if (!url.startsWith('file://')) throw new Error('已阻止来自非本地页面的 IPC 调用。');
+  if (!isTrustedRendererUrl(url)) throw new Error('已阻止来自未授权本地页面的 IPC 调用。');
 }
 
 function secureHandle(channel, handler) {
@@ -104,9 +123,12 @@ async function callLocalMcpTool(name, args = {}) {
   }
   if (result?.isError) {
     const text = result?.content?.find?.((item) => item?.type === 'text')?.text;
+    contextUsageTracker.recordToolCall(name, args, { error: text || `${name} 调用失败。` });
     throw new Error(text || `${name} 调用失败。`);
   }
-  return result?.structuredContent ?? result;
+  const payload = result?.structuredContent ?? result;
+  contextUsageTracker.recordToolCall(name, args, payload);
+  return payload;
 }
 
 function invalidateLocalMcpDiscovery() {
@@ -326,6 +348,80 @@ function registerIpc() {
     state.updated_at = new Date().toISOString();
     writeJsonAtomic(statePath, state); return state;
   }));
+  secureHandle('task:read-console', () => invokeSafely(async () => {
+    let runningCommand = null;
+    let taskState = null;
+    try {
+      const { statePath } = workspaceStatePaths();
+      taskState = readJson(statePath, null);
+      if (taskState?.current_command && typeof taskState.current_command === 'object') {
+        runningCommand = taskState.current_command;
+      }
+    } catch { /* ignore if no workspace */ }
+
+    const logLines = [];
+    try {
+      const targetLog = mcpLogFile();
+      const content = await fs.readFile(targetLog, 'utf8');
+      const lines = content.split(/\r?\n/).filter(Boolean);
+      logLines.push(...lines.slice(-250));
+    } catch { /* ignore if log file not created yet */ }
+
+    const modifiedFiles = Array.isArray(taskState?.modified_files) ? taskState.modified_files : [];
+
+    return {
+      runningCommand,
+      status: taskState?.status || 'idle',
+      objective: taskState?.objective || '',
+      currentStep: taskState?.current_step || '',
+      modifiedFiles,
+      logs: logLines
+    };
+  }));
+  secureHandle('workspace:open-in-explorer', (_event, targetPath) => invokeSafely(async () => {
+    const current = settings.load();
+    const dest = targetPath ? path.resolve(current.workspace || '', targetPath) : (current.workspace ? path.resolve(current.workspace) : '');
+    if (!dest) throw new Error('当前未选择工作区。');
+    await shell.openPath(dest);
+    return true;
+  }));
+  secureHandle('workspace:open-in-editor', (_event, targetPath) => invokeSafely(async () => {
+    const current = settings.load();
+    const dest = targetPath ? path.resolve(current.workspace || '', targetPath) : (current.workspace ? path.resolve(current.workspace) : '');
+    if (!dest) throw new Error('当前未选择工作区。');
+    try {
+      await run('code.cmd', [dest], { timeoutMs: 5000 });
+      return true;
+    } catch {
+      try {
+        await run('code', [dest], { timeoutMs: 5000 });
+        return true;
+      } catch {
+        await shell.openPath(dest);
+        return false;
+      }
+    }
+  }));
+  secureHandle('workspace:show-in-folder', (_event, relativeOrAbsolute) => invokeSafely(async () => {
+    const current = settings.load();
+    const full = path.isAbsolute(relativeOrAbsolute) ? relativeOrAbsolute : path.resolve(current.workspace || '', relativeOrAbsolute);
+    shell.showItemInFolder(full);
+    return true;
+  }));
+  secureHandle('task:kill-active-command', () => invokeSafely(async () => {
+    try {
+      await callLocalMcpTool('command_control', { action: 'terminate' });
+    } catch { /* fallback to task-state stop */ }
+    const { statePath } = workspaceStatePaths();
+    const state = readJson(statePath, null);
+    if (state) {
+      state.status = 'stopped';
+      state.failure = '用户从控制台终止当前命令';
+      state.updated_at = new Date().toISOString();
+      writeJsonAtomic(statePath, state);
+    }
+    return true;
+  }));
   secureHandle('task-state:history', () => invokeSafely(async () => {
     let historyPath;
     try { ({ historyPath } = workspaceStatePaths()); } catch { return []; }
@@ -421,6 +517,8 @@ function registerIpc() {
     const result = await run('winget.exe', ['install', '--id', 'Python.Python.3.12', '-e', '--accept-source-agreements', '--accept-package-agreements']);
     return result.stdout;
   }));
+  secureHandle('context:usage', () => invokeSafely(async () => contextUsageTracker.snapshot()));
+  secureHandle('context:reset-usage', () => invokeSafely(async () => contextUsageTracker.reset()));
   secureHandle('shell:open', (_event, target) => invokeSafely(async () => {
     const allowed = new Set(['chatgpt-connectors', 'openai-tunnels', 'openai-runtime-keys', 'tunnel-ui', 'coding-tools-source']);
     if (!allowed.has(target)) throw new Error('不允许打开该地址。');
@@ -446,74 +544,98 @@ function registerIpc() {
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) app.quit();
-app.on('second-instance', () => showChatWindow());
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => showChatWindow());
 
-app.whenReady().then(async () => {
-  app.setLoginItemSettings({ openAtLogin: Boolean(settings.load().startWithWindows), path: process.execPath });
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  session.defaultSession.setPermissionCheckHandler(() => false);
-  app.on('web-contents-created', (_event, contents) => {
-    contents.on('will-attach-webview', (event) => event.preventDefault());
+  app.whenReady().then(async () => {
+    app.setLoginItemSettings({ openAtLogin: Boolean(settings.load().startWithWindows), path: process.execPath });
+    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    session.defaultSession.setPermissionCheckHandler(() => false);
+    app.on('web-contents-created', (_event, contents) => {
+      contents.on('will-attach-webview', (event) => event.preventDefault());
+    });
+    createTray();
+    orchestrator = new RuntimeOrchestrator({
+      settings,
+      secrets,
+      environment,
+      log,
+      emitProgress: (payload) => sendManager('runtime:progress', payload),
+      emitStatus: (payload) => sendManager('runtime:status-changed', payload)
+    });
+    buildVerification = new BuildVerificationService(log, (payload) => sendManager('build:progress', payload));
+    healthService = new HealthService({ settings, secrets, environment, orchestrator });
+    log.on('entry', (payload) => sendManager('logs:entry', payload));
+    registerIpc();
+    const startupSettings = settings.load();
+    createChatWindow();
+    taskNotificationService = new TaskNotificationService({
+      getSettings: () => settings.load(),
+      getWorkspace: () => settings.load().workspace,
+      loadNotificationCheckpoint: (workspace) => notificationCheckpoints.load(workspace),
+      saveNotificationCheckpoint: (workspace, checkpoint) => notificationCheckpoints.save(workspace, checkpoint),
+      readTaskState: () => {
+        try { return readJson(workspaceStatePaths().statePath, null); }
+        catch { return null; }
+      },
+      subscribeTaskEvents: (listener, onError, streamOptions = {}) => {
+        const current = settings.load();
+        const token = secrets.get('mcpAuthToken');
+        const client = new LocalMcpClient({ port: current.mcpPort, token, log });
+        return client.subscribeTaskEvents(listener, { onError, ...streamOptions });
+      },
+      getChatWindow: () => chatWindow,
+      getTray: () => tray,
+      showChatWindow,
+      NotificationClass: Notification,
+      icon: appIconPath(),
+      log
+    });
+    taskNotificationService.start();
+    contextUsageTracker.on('change', (snapshot) => {
+      if (chatWindow && !chatWindow.isDestroyed()) {
+        chatWindow.webContents.send('context:usage-changed', snapshot);
+      }
+    });
+    let superviseTimer = null;
+    const scheduleSupervise = (delayMs = 5000) => {
+      if (superviseTimer) clearTimeout(superviseTimer);
+      superviseTimer = setTimeout(() => {
+        orchestrator.supervise().then((status) => {
+          taskNotificationService?.acceptRuntimeStatus?.(status);
+          sendManager('runtime:heartbeat', status);
+          if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('runtime:heartbeat', status);
+        }).catch(() => {}).finally(() => {
+          const isForeground = Boolean(
+            (chatWindow && !chatWindow.isDestroyed() && chatWindow.isVisible() && !chatWindow.isMinimized())
+            || (managerWindow && !managerWindow.isDestroyed() && managerWindow.isVisible())
+          );
+          const nextDelay = isForeground ? 5000 : 15000;
+          scheduleSupervise(nextDelay);
+        });
+      }, delayMs);
+      superviseTimer.unref?.();
+    };
+    scheduleSupervise(5000);
+    log.info('网页 MCP 助手已启动');
+    if (startupSettings.autoStartServices && !orchestrator.isManuallyStopped()) {
+      orchestrator.start({ automatic: true }).catch((error) => log.error(error.message, { stage: 'auto-start' }));
+    }
   });
-  createTray();
-  orchestrator = new RuntimeOrchestrator({
-    settings,
-    secrets,
-    environment,
-    log,
-    emitProgress: (payload) => sendManager('runtime:progress', payload),
-    emitStatus: (payload) => sendManager('runtime:status-changed', payload)
-  });
-  buildVerification = new BuildVerificationService(log, (payload) => sendManager('build:progress', payload));
-  healthService = new HealthService({ settings, secrets, environment, orchestrator });
-  log.on('entry', (payload) => sendManager('logs:entry', payload));
-  registerIpc();
-  const startupSettings = settings.load();
-  createChatWindow();
-  taskNotificationService = new TaskNotificationService({
-    getSettings: () => settings.load(),
-    getWorkspace: () => settings.load().workspace,
-    loadNotificationCheckpoint: (workspace) => notificationCheckpoints.load(workspace),
-    saveNotificationCheckpoint: (workspace, checkpoint) => notificationCheckpoints.save(workspace, checkpoint),
-    readTaskState: () => {
-      try { return readJson(workspaceStatePaths().statePath, null); }
-      catch { return null; }
-    },
-    subscribeTaskEvents: (listener, onError, streamOptions = {}) => {
-      const current = settings.load();
-      const token = secrets.get('mcpAuthToken');
-      const client = new LocalMcpClient({ port: current.mcpPort, token, log });
-      return client.subscribeTaskEvents(listener, { onError, ...streamOptions });
-    },
-    getChatWindow: () => chatWindow,
-    getTray: () => tray,
-    showChatWindow,
-    NotificationClass: Notification,
-    icon: appIconPath(),
-    log
-  });
-  taskNotificationService.start();
-  setInterval(() => orchestrator.supervise().then((status) => {
-    taskNotificationService?.acceptRuntimeStatus?.(status);
-    sendManager('runtime:heartbeat', status);
-    if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('runtime:heartbeat', status);
-  }).catch(() => {}), 5000).unref();
-  log.info('网页 MCP 助手已启动');
-  if (startupSettings.autoStartServices && !orchestrator.isManuallyStopped()) {
-    orchestrator.start({ automatic: true }).catch((error) => log.error(error.message, { stage: 'auto-start' }));
-  }
-});
 
-app.on('before-quit', () => {
-  forceQuit = true;
-  taskNotificationService?.stop();
-});
-app.on('window-all-closed', () => {
-  if (!forceQuit && settings.load().keepRunningOnClose) return;
-  if (!forceQuit) app.quit();
-});
-app.on('activate', () => showChatWindow());
+  app.on('before-quit', () => {
+    forceQuit = true;
+    if (superviseTimer) clearTimeout(superviseTimer);
+    taskNotificationService?.stop();
+  });
+  app.on('window-all-closed', () => {
+    if (!forceQuit && settings.load().keepRunningOnClose) return;
+    if (!forceQuit) app.quit();
+  });
+  app.on('activate', () => showChatWindow());
+}
 
 
 

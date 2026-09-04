@@ -21,6 +21,29 @@ button{font:inherit}
 .page-state.error i,.service-state span.error i{background:var(--red)}
 .service-state span{display:inline-flex;align-items:center;gap:6px;padding:0 5px;color:var(--muted);font-size:11px}
 .service-state span em{font-style:normal}
+.context-usage-wrap{position:relative;display:flex;align-items:center}
+.context-usage-button{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 9px;border:1px solid #d9d9d9;border-radius:8px;background:#fff;color:#45484c;font-size:11px;font-weight:600;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.context-usage-button:hover{background:#f0f1f2;border-color:#cfd2d6}
+.context-dot{width:7px;height:7px;border-radius:50%;background:#b8bcc2}
+.context-dot.safe{background:var(--green);box-shadow:0 0 0 2px rgba(16,163,127,.12)}
+.context-dot.moderate{background:#e5a000;box-shadow:0 0 0 2px rgba(229,160,0,.15)}
+.context-dot.heavy{background:var(--red);box-shadow:0 0 0 2px rgba(217,67,67,.18)}
+.context-usage-popover{position:absolute;top:36px;right:0;z-index:90;width:min(380px,80vw);padding:13px 15px;border:1px solid #dedfe2;border-radius:12px;background:#fff;box-shadow:0 12px 35px rgba(0,0,0,.14);font-size:11px}
+.context-usage-popover[hidden]{display:none}
+.popover-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.popover-header b{color:#25272a;font-size:12px}
+.popover-header button{padding:3px 9px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;color:#595c61;font-size:11px;font-weight:600;cursor:pointer}
+.popover-header button:hover{background:#fbeeec;border-color:#ecd2d0;color:#b3362f}
+.popover-bar-wrap{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+.popover-bar{flex:1;height:6px;overflow:hidden;border-radius:999px;background:#eceef0}
+.popover-bar span{display:block;width:0%;height:100%;border-radius:inherit;background:var(--green);transition:width .25s ease,background-color .25s ease}
+.popover-bar span.moderate{background:#e5a000}
+.popover-bar span.heavy{background:var(--red)}
+.popover-bar-wrap small{color:#6b6f74;font-size:10px;font-variant-numeric:tabular-nums}
+.popover-grid{display:grid;grid-template-columns:1fr;gap:6px;padding-top:4px;border-top:1px solid #f0f1f2}
+.popover-grid div{display:flex;justify-content:space-between;gap:12px;color:#7b7f84}
+.popover-grid div strong{color:#35383c;font-family:"Cascadia Code",Consolas,monospace;font-size:11px}
+.popover-tip{margin-top:10px;padding:7px 9px;border-radius:7px;background:#f5f6f7;color:#6b6f74;font-size:10.5px;line-height:1.4}
 .manager-button{margin-left:7px;padding:0 17px;color:#fff;background:#202123;font-size:12px;font-weight:700}
 .workspace-bar{display:flex;height:49px;align-items:center;gap:10px;padding:0 15px;border-top:1px solid #f0f0f0}
 .workspace-label{position:relative;display:flex;min-width:255px;align-items:center;gap:9px}
@@ -37,6 +60,9 @@ button{font:inherit}
 .workspace-health-popover code{display:block;overflow:hidden;margin-bottom:10px;color:#6b6f74;font-family:"Cascadia Code",Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}
 .workspace-health-popover div{display:flex;justify-content:space-between;gap:12px;padding-top:6px;color:#7b7f84}
 .workspace-health-popover div strong{color:#35383c;font-size:11px}
+.workspace-quick-tools{margin-top:10px;padding-top:8px;border-top:1px solid #f0f1f2;display:flex;gap:8px}
+.workspace-quick-tools button{flex:1;height:26px;padding:0 8px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;color:#45484c;font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:4px}
+.workspace-quick-tools button:hover{background:#f0f1f2;border-color:#cfd2d6;color:#18181b}
 .workspace-select{height:32px;min-width:172px;max-width:220px;margin-left:auto;padding:0 28px 0 10px;border:1px solid #d9d9d9;border-radius:9px;background:#fff;color:#34363a;font-size:11px;font-weight:700;cursor:pointer}
 .switch-state{color:#087f65;font-size:11px;white-space:nowrap}
 .add-workspace{height:32px;padding:0 12px;border:1px solid #d9d9d9;background:#fff;font-size:11px;font-weight:700}
@@ -68,6 +94,9 @@ button{font:inherit}
 .task-progress span{display:block;width:0;height:100%;border-radius:inherit;background:var(--green);transition:width .25s ease}
 .task-progress-text{min-width:28px;color:#555b61;font-size:9px;font-variant-numeric:tabular-nums;text-align:right}
 .task-strip button{display:none;padding:2px 6px;border:0;border-radius:5px;background:#e6e7e9;color:#4d5054;font-size:9px;cursor:pointer}
+.task-strip .terminal-toggle-btn{display:inline-flex;align-items:center;padding:2px 7px;border:1px solid #d9d9d9;background:#fff;color:#3e4145;font-size:9.5px;font-weight:600}
+.task-strip .terminal-toggle-btn:hover{background:#ebecef}
+.task-strip.active .terminal-toggle-btn{border-color:#b9e4d6;color:#087f65;background:#eaf7f2}
 .task-strip.active i{background:var(--green)}
 .task-strip.isolated{box-shadow:inset 0 0 0 1px rgba(8,127,101,.18);background:#eef8f4}
 .task-strip.isolated i{background:#087f65}
@@ -78,6 +107,45 @@ button{font:inherit}
 .task-strip.stopped .task-progress span,.task-strip.failed .task-progress span{background:var(--red)}
 .task-strip.active #pauseTask,.task-strip.active #stopTask,.task-strip.paused #resumeTask,.task-strip.paused #stopTask,.task-strip.stopped #resumeTask{display:inline-block}
 .download-state{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#087f65!important}
+.task-console-drawer{position:fixed;bottom:0;left:0;right:0;z-index:95;height:320px;display:flex;flex-direction:column;background:#18181b;color:#e4e4e7;box-shadow:0 -6px 24px rgba(0,0,0,.35);border-top:1px solid #27272a;font-family:"Cascadia Code",Consolas,monospace;transition:transform .2s ease}
+.task-console-drawer[hidden]{display:none}
+.console-header{display:flex;align-items:center;justify-content:space-between;height:36px;padding:0 12px;background:#202024;border-bottom:1px solid #2e2e33;font-size:11px}
+.console-title{display:flex;align-items:center;gap:8px}
+.terminal-dot{width:8px;height:8px;border-radius:50%;background:#10a37f;box-shadow:0 0 6px rgba(16,163,127,.6)}
+.console-title b{color:#f4f4f5;font-weight:600;font-size:11.5px}
+.console-command-badge{padding:2px 6px;border-radius:4px;background:#27272a;color:#a1a1aa;font-size:10px}
+.console-command-badge.running{background:#052e24;color:#34d399;font-weight:600}
+.console-tabs{display:inline-flex;align-items:center;margin-left:12px;gap:2px;background:#18181b;padding:2px;border-radius:6px;border:1px solid #2e2e33}
+.console-tab{padding:2px 8px;border:0;border-radius:4px;background:transparent;color:#a1a1aa;font-size:10.5px;font-weight:600;cursor:pointer}
+.console-tab:hover{color:#fff}
+.console-tab.active{background:#27272a;color:#34d399}
+.task-strip .changes-btn{border-color:#d4b106;color:#876800;background:#fffbe6}
+.task-strip .changes-btn:hover{background:#fff1b8}
+.console-actions{display:flex;align-items:center;gap:8px}
+.console-toggle{display:inline-flex;align-items:center;gap:4px;color:#a1a1aa;font-size:10px;cursor:pointer;user-select:none}
+.console-toggle input{cursor:pointer}
+.console-actions button{height:24px;padding:0 8px;border:1px solid #3f3f46;border-radius:5px;background:#27272a;color:#d4d4d8;font-size:10.5px;cursor:pointer}
+.console-actions button:hover{background:#3f3f46;color:#fff}
+.console-actions button.danger{border-color:#7f1d1d;background:#450a0a;color:#fca5a5}
+.console-actions button.danger:hover:not(:disabled){background:#7f1d1d;color:#fff}
+.console-actions button:disabled{opacity:.4;cursor:not-allowed}
+.console-actions button.close-btn{border:0;background:transparent;color:#71717a;font-size:12px;padding:0 5px}
+.console-actions button.close-btn:hover{color:#fff;background:#3f3f46}
+.console-output{flex:1;overflow-y:auto;overflow-x:hidden;margin:0;padding:8px 12px;font-size:11px;line-height:1.55;white-space:pre-wrap;word-break:break-all;color:#d4d4d8}
+.console-output:empty::before{content:"[暂无活动输出]";color:#52525b;font-style:italic}
+.console-files-view{flex:1;overflow-y:auto;padding:8px 12px;font-size:11px;background:#18181b}
+.console-files-view[hidden]{display:none}
+.console-files-header{margin-bottom:8px;color:#a1a1aa;font-size:10.5px}
+.console-files-list{display:flex;flex-direction:column;gap:4px}
+.console-file-item{display:flex;align-items:center;justify-content:space-between;padding:5px 8px;border-radius:5px;background:#202024;border:1px solid #2e2e33;cursor:pointer}
+.console-file-item:hover{background:#27272a;border-color:#3f3f46}
+.console-file-name{color:#38bdf8;font-family:"Cascadia Code",Consolas,monospace;font-size:11px;word-break:break-all}
+.console-file-action{color:#71717a;font-size:10px}
+.console-file-item:hover .console-file-action{color:#34d399}
+.console-line{display:block}
+.console-line.stderr,.console-line.error{color:#f87171}
+.console-line.info{color:#60a5fa}
+.console-line.success{color:#4ade80}
 .loading-stage{display:grid;height:calc(100% - 112px);place-items:center;background:radial-gradient(circle at 50% 35%,#fff,#f5f5f6 55%,#eceeef)}
 .loading-card{text-align:center}
 .loading-card h1{margin:18px 0 7px;font-size:20px}

@@ -21,31 +21,36 @@ class TunnelService {
     ensureParent(tunnelLogFile());
     rotateLog(tunnelLogFile());
     const output = fs.openSync(tunnelLogFile(), 'a');
-    const env = {
-      ...process.env,
-      CONTROL_PLANE_API_KEY: runtimeApiKey,
-      MCP_RUNTIME_HEADER_VALUE: `Bearer ${token}`
-    };
-    const args = [
-      'run',
-      '--control-plane.tunnel-id', settings.tunnelId,
-      '--control-plane.api-key', 'env:CONTROL_PLANE_API_KEY',
-      '--health.listen-addr', `127.0.0.1:${settings.healthPort}`,
-      '--mcp.server-url', `url=http://127.0.0.1:${settings.mcpPort}/mcp,channel=main`,
-      '--mcp.extra-headers', 'Authorization: env:MCP_RUNTIME_HEADER_VALUE',
-      '--mcp.discovery-extra-headers', 'Authorization: env:MCP_RUNTIME_HEADER_VALUE',
-      '--log.file', tunnelLogFile()
-    ];
-    const proxyUrl = Object.prototype.hasOwnProperty.call(settings, 'effectiveProxyUrl')
-      ? settings.effectiveProxyUrl
-      : settings.proxyUrl;
-    if (proxyUrl) args.push('--control-plane.http-proxy', proxyUrl);
-    const child = spawn(tunnelExecutable(), args, {
-      detached: false,
-      windowsHide: true,
-      stdio: ['ignore', output, output],
-      env
-    });
+    let child;
+    try {
+      const env = {
+        ...process.env,
+        CONTROL_PLANE_API_KEY: runtimeApiKey,
+        MCP_RUNTIME_HEADER_VALUE: `Bearer ${token}`
+      };
+      const args = [
+        'run',
+        '--control-plane.tunnel-id', settings.tunnelId,
+        '--control-plane.api-key', 'env:CONTROL_PLANE_API_KEY',
+        '--health.listen-addr', `127.0.0.1:${settings.healthPort}`,
+        '--mcp.server-url', `url=http://127.0.0.1:${settings.mcpPort}/mcp,channel=main`,
+        '--mcp.extra-headers', 'Authorization: env:MCP_RUNTIME_HEADER_VALUE',
+        '--mcp.discovery-extra-headers', 'Authorization: env:MCP_RUNTIME_HEADER_VALUE',
+        '--log.file', tunnelLogFile()
+      ];
+      const proxyUrl = Object.prototype.hasOwnProperty.call(settings, 'effectiveProxyUrl')
+        ? settings.effectiveProxyUrl
+        : settings.proxyUrl;
+      if (proxyUrl) args.push('--control-plane.http-proxy', proxyUrl);
+      child = spawn(tunnelExecutable(), args, {
+        detached: false,
+        windowsHide: true,
+        stdio: ['ignore', output, output],
+        env
+      });
+    } finally {
+      fs.closeSync(output);
+    }
     child.unref();
     updateJsonAtomic(stateFile(), (state) => ({
       ...state,

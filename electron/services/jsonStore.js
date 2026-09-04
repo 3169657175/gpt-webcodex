@@ -46,15 +46,14 @@ function retrySync(action, attempts = 5) {
   throw lastError;
 }
 
-function writeJsonAtomic(file, value) {
+function writeBufferAtomic(file, buffer, isValidBackup = null) {
   ensureParent(file);
   const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
   const backup = backupFile(file);
-  const payload = `${JSON.stringify(value, null, 2)}\n`;
   let descriptor;
   try {
     descriptor = fs.openSync(temporary, 'w', 0o600);
-    fs.writeFileSync(descriptor, payload, 'utf8');
+    fs.writeFileSync(descriptor, buffer);
     fs.fsyncSync(descriptor);
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor);
@@ -63,8 +62,11 @@ function writeJsonAtomic(file, value) {
   try {
     if (fs.existsSync(file)) {
       try {
-        parseJsonFile(file);
-        retrySync(() => fs.copyFileSync(file, backup));
+        if (typeof isValidBackup === 'function') {
+          if (isValidBackup(file)) retrySync(() => fs.copyFileSync(file, backup));
+        } else {
+          retrySync(() => fs.copyFileSync(file, backup));
+        }
       } catch {
         // Keep the last known-good backup when the primary file is unreadable.
       }
@@ -76,6 +78,14 @@ function writeJsonAtomic(file, value) {
   }
 }
 
+function writeJsonAtomic(file, value) {
+  const payload = `${JSON.stringify(value, null, 2)}\n`;
+  writeBufferAtomic(file, payload, (existing) => {
+    parseJsonFile(existing);
+    return true;
+  });
+}
+
 function updateJsonAtomic(file, updater, fallback = {}) {
   const current = readJson(file, fallback);
   const next = updater(current);
@@ -83,4 +93,4 @@ function updateJsonAtomic(file, updater, fallback = {}) {
   return next;
 }
 
-module.exports = { readJson, writeJsonAtomic, updateJsonAtomic, ensureParent, backupFile };
+module.exports = { readJson, writeJsonAtomic, updateJsonAtomic, writeBufferAtomic, ensureParent, backupFile };

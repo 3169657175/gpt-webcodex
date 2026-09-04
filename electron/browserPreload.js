@@ -30,5 +30,17 @@ contextBridge.exposeInMainWorld('browserAssistant', {
   performanceTrace: () => ipcRenderer.invoke('performance:read'),
   pauseTask: () => ipcRenderer.invoke('task-state:pause'),
   resumeTask: () => ipcRenderer.invoke('task-state:resume'),
-  stopTask: () => ipcRenderer.invoke('task-state:stop')
+  stopTask: () => ipcRenderer.invoke('task-state:stop'),
+  contextUsage: () => ipcRenderer.invoke('context:usage'),
+  resetContextUsage: () => ipcRenderer.invoke('context:reset-usage'),
+  onContextUsage: (listener) => {
+    const wrapped = (_event, payload) => listener(payload);
+    ipcRenderer.on('context:usage-changed', wrapped);
+    return () => ipcRenderer.removeListener('context:usage-changed', wrapped);
+  },
+  readTaskConsole: () => ipcRenderer.invoke('task:read-console'),
+  killActiveCommand: () => ipcRenderer.invoke('task:kill-active-command'),
+  openWorkspaceInExplorer: (target) => ipcRenderer.invoke('workspace:open-in-explorer', target),
+  openWorkspaceInEditor: (target) => ipcRenderer.invoke('workspace:open-in-editor', target),
+  showInFolder: (path) => ipcRenderer.invoke('workspace:show-in-folder', path)
 });
