@@ -518,8 +518,22 @@ function registerIpc() {
     const result = await run('winget.exe', ['install', '--id', 'Python.Python.3.12', '-e', '--accept-source-agreements', '--accept-package-agreements']);
     return result.stdout;
   }));
-  secureHandle('context:usage', () => invokeSafely(async () => contextUsageTracker.snapshot()));
-  secureHandle('context:reset-usage', () => invokeSafely(async () => contextUsageTracker.reset()));
+  secureHandle('context:usage', () => invokeSafely(async () => {
+    try {
+      const { performancePath } = workspaceStatePaths();
+      const raw = await fs.readFile(performancePath, 'utf8');
+      const trace = JSON.parse(raw);
+      contextUsageTracker.syncWithRuntime(trace);
+    } catch { /* if no workspace or performance file yet, keep snapshot */ }
+    return contextUsageTracker.snapshot();
+  }));
+  secureHandle('context:reset-usage', () => invokeSafely(async () => {
+    try {
+      const { performancePath } = workspaceStatePaths();
+      await fs.rm(performancePath, { force: true });
+    } catch { /* ignore if not exist */ }
+    return contextUsageTracker.reset();
+  }));
   secureHandle('shell:open', (_event, target) => invokeSafely(async () => {
     const allowed = new Set(['chatgpt-connectors', 'openai-tunnels', 'openai-runtime-keys', 'tunnel-ui', 'coding-tools-source']);
     if (!allowed.has(target)) throw new Error('不允许打开该地址。');
@@ -608,6 +622,12 @@ if (!hasSingleInstanceLock) {
           taskNotificationService?.acceptRuntimeStatus?.(status);
           sendManager('runtime:heartbeat', status);
           if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('runtime:heartbeat', status);
+          try {
+            const { performancePath } = workspaceStatePaths();
+            fs.readFile(performancePath, 'utf8').then((raw) => {
+              contextUsageTracker.syncWithRuntime(JSON.parse(raw));
+            }).catch(() => {});
+          } catch { /* ignore if no workspace */ }
         }).catch(() => {}).finally(() => {
           const isForeground = Boolean(
             (chatWindow && !chatWindow.isDestroyed() && chatWindow.isVisible() && !chatWindow.isMinimized())

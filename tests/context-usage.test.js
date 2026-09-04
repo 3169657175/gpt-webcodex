@@ -64,6 +64,25 @@ test('ContextUsageTracker accumulates tool calls, tracks max, and computes press
   assert.equal(resetSnap.callCount, 0);
   assert.equal(resetSnap.pressureLevel, 'safe');
   assert.equal(tracker.totalTokens, 0);
+
+  // 5. syncWithRuntime from Python MCP performance trace
+  const trace = {
+    current_session_id: 'test-session-123',
+    tool_calls: 5,
+    request_bytes: 1200,
+    response_bytes: 16000,
+    recent: [
+      { tool: 'read_file', request_bytes: 200, response_bytes: 8000, finished_at: '2026-09-04T12:00:00Z' },
+      { tool: 'apply_patch', request_bytes: 1000, response_bytes: 8000, finished_at: '2026-09-04T12:01:00Z' }
+    ]
+  };
+  const syncedSnap = tracker.syncWithRuntime(trace);
+  assert.equal(syncedSnap.callCount, 5);
+  assert.ok(syncedSnap.totalBytes >= 17200);
+  assert.ok(syncedSnap.totalTokens >= 5000);
+  assert.equal(syncedSnap.pressureLevel, 'heavy'); // budget is 1000, ratio > 5
+  assert.ok(syncedSnap.maxCall);
+  assert.equal(syncedSnap.maxCall.tool, 'apply_patch');
 });
 
 test('context usage UI and IPC are wired end to end', () => {

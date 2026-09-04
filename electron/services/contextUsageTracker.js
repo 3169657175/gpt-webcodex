@@ -43,6 +43,8 @@ class ContextUsageTracker extends EventEmitter {
     this.lastCall = null;
     this.maxCall = null;
     this.tools = {};
+    this.localCalls = [];
+    this.syncedSessionId = null;
     this.sessionStartedAt = new Date().toISOString();
     this.updatedAt = this.sessionStartedAt;
     const currentSnapshot = this.snapshot();
@@ -78,6 +80,7 @@ class ContextUsageTracker extends EventEmitter {
       timestamp: this.updatedAt
     };
 
+    this.localCalls.push(callRecord);
     this.lastCall = callRecord;
     if (!this.maxCall || callTokens > this.maxCall.tokens) {
       this.maxCall = callRecord;
@@ -93,6 +96,96 @@ class ContextUsageTracker extends EventEmitter {
     const currentSnapshot = this.snapshot();
     this.emit('change', currentSnapshot);
     return currentSnapshot;
+  }
+
+  syncWithRuntime(performanceTrace = null) {
+    if (!performanceTrace || typeof performanceTrace !== 'object') {
+      return this.snapshot();
+    }
+
+    const sessionId = performanceTrace.current_session_id || null;
+    if (sessionId && this.syncedSessionId && sessionId !== this.syncedSessionId) {
+      this.reset();
+    }
+    if (sessionId) {
+      this.syncedSessionId = sessionId;
+    }
+
+    const extCalls = Math.max(0, Number(performanceTrace.tool_calls || 0));
+    const reqBytes = Math.max(0, Number(performanceTrace.request_bytes || 0));
+    const resBytes = Math.max(0, Number(performanceTrace.response_bytes || 0));
+    const extBytes = reqBytes + resBytes;
+    const recent = Array.isArray(performanceTrace.recent) ? performanceTrace.recent : [];
+
+    let calculatedTokens = 0;
+    let maxExtCall = null;
+    let lastExtCall = null;
+    const toolsMap = {};
+
+    for (const item of recent) {
+      const toolName = String(item.tool || 'unknown');
+      const itemBytes = Math.max(0, Number(item.request_bytes || 0)) + Math.max(0, Number(item.response_bytes || 0));
+      const itemTokens = Math.max(1, Math.round(itemBytes / 3.2));
+      calculatedTokens += itemTokens;
+
+      const record = {
+        tool: toolName,
+        bytes: itemBytes,
+        tokens: itemTokens,
+        timestamp: item.finished_at || item.started_at || this.updatedAt
+      };
+
+      if (!maxExtCall || itemTokens > maxExtCall.tokens) {
+        maxExtCall = record;
+      }
+      lastExtCall = record;
+
+      if (!toolsMap[toolName]) {
+        toolsMap[toolName] = { calls: 0, bytes: 0, tokens: 0 };
+      }
+      toolsMap[toolName].calls += 1;
+      toolsMap[toolName].bytes += itemBytes;
+      toolsMap[toolName].tokens += itemTokens;
+    }
+
+    if (extBytes > 0) {
+      const estimatedTotalTokens = Math.max(calculatedTokens, Math.round(extBytes / 3.2));
+      if (estimatedTotalTokens > calculatedTokens) {
+        calculatedTokens = estimatedTotalTokens;
+      }
+    }
+
+    let localBytes = 0;
+    let localTokens = 0;
+    for (const call of this.localCalls) {
+      localBytes += call.bytes;
+      localTokens += call.tokens;
+      if (!maxExtCall || call.tokens > maxExtCall.tokens) {
+        maxExtCall = call;
+      }
+      lastExtCall = call;
+      if (!toolsMap[call.tool]) {
+        toolsMap[call.tool] = { calls: 0, bytes: 0, tokens: 0 };
+      }
+      toolsMap[call.tool].calls += 1;
+      toolsMap[call.tool].bytes += call.bytes;
+      toolsMap[call.tool].tokens += call.tokens;
+    }
+
+    const previousTokens = this.totalTokens;
+    this.totalBytes = extBytes + localBytes;
+    this.totalTokens = calculatedTokens + localTokens;
+    this.callCount = extCalls + this.localCalls.length;
+    this.tools = toolsMap;
+    if (maxExtCall) this.maxCall = maxExtCall;
+    if (lastExtCall) this.lastCall = lastExtCall;
+    this.updatedAt = performanceTrace.last_finished_at || new Date().toISOString();
+
+    const snapshot = this.snapshot();
+    if (this.totalTokens !== previousTokens) {
+      this.emit('change', snapshot);
+    }
+    return snapshot;
   }
 
   pressureLevel() {
