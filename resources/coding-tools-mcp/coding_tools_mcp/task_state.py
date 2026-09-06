@@ -427,9 +427,20 @@ class TaskStateStore:
         command_tools = {"exec_command", "write_stdin", "kill_session", "command_control"}
         with self._lock:
             state = self._read()
-            if not self._has_task(state):
-                return
             ok = payload.get("ok", True) is not False
+            mutating_tools = {"apply_patch", "apply_changes_and_verify", "file_batch", "document_workflow", "document_create", "document_convert"}
+            if not self._has_task(state):
+                if name in mutating_tools and ok and not args.get("dry_run"):
+                    task_id = f"task_{uuid.uuid4().hex[:8]}"
+                    state["task_id"] = state.get("task_id") or task_id
+                    state["run_id"] = state.get("run_id") or state["task_id"]
+                    _set_lifecycle(state, "running")
+                    state["objective"] = state.get("objective") or "代码修改与任务执行"
+                    state["current_step"] = f"执行 {name}"
+                    state["updated_at"] = utc_now()
+                    self._event(state, "task_started", {"auto": True, "trigger_tool": name})
+                else:
+                    return
             terminal = str(state.get("lifecycle_state") or "") in TERMINAL_LIFECYCLE_STATES
 
             # Long agent_workflow handlers may finish the task before this final result hook runs.

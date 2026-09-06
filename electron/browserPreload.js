@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('browserAssistant', {
   chatStatus: () => ipcRenderer.invoke('chat:status'),
   lightweightStatus: () => ipcRenderer.invoke('app:lightweight-snapshot'),
   workspaceHub: () => ipcRenderer.invoke('workspace:hub'),
+  removeRecentWorkspaces: (targets) => ipcRenderer.invoke('workspace:remove-recent', targets),
+  clearActiveWorkspace: () => ipcRenderer.invoke('workspace:clear-active'),
   switchWorkspace: (workspace) => ipcRenderer.invoke('workspace:switch', workspace),
   chooseAndSwitchWorkspace: () => ipcRenderer.invoke('workspace:choose-and-switch'),
   chooseAuthorizedRoot: () => ipcRenderer.invoke('workspace:choose-authorized-root'),
@@ -29,5 +31,24 @@ contextBridge.exposeInMainWorld('browserAssistant', {
   performanceTrace: () => ipcRenderer.invoke('performance:read'),
   pauseTask: () => ipcRenderer.invoke('task-state:pause'),
   resumeTask: () => ipcRenderer.invoke('task-state:resume'),
-  stopTask: () => ipcRenderer.invoke('task-state:stop')
+  stopTask: () => ipcRenderer.invoke('task-state:stop'),
+  contextUsage: () => ipcRenderer.invoke('context:usage'),
+  resetContextUsage: () => ipcRenderer.invoke('context:reset-usage'),
+  onContextUsage: (listener) => {
+    const wrapped = (_event, payload) => listener(payload);
+    ipcRenderer.on('context:usage-changed', wrapped);
+    return () => ipcRenderer.removeListener('context:usage-changed', wrapped);
+  },
+  readTaskConsole: () => ipcRenderer.invoke('task:read-console'),
+  killActiveCommand: () => ipcRenderer.invoke('task:kill-active-command'),
+  openWorkspaceInExplorer: (target) => ipcRenderer.invoke('workspace:open-in-explorer', target),
+  openWorkspaceInEditor: (target) => ipcRenderer.invoke('workspace:open-in-editor', target),
+  showInFolder: (path) => ipcRenderer.invoke('workspace:show-in-folder', path),
+  gitFileDiff: (relativePath) => ipcRenderer.invoke('git:file-diff', relativePath),
+  gitCommitAndPush: (options) => ipcRenderer.invoke('git:commit-and-push', options),
+  generateTaskSnapshot: () => ipcRenderer.invoke('task:generate-snapshot'),
+  injectPrompt: (text, autoSend) => ipcRenderer.invoke('chat:inject-prompt', text, autoSend),
+  createCheckpoint: (options) => ipcRenderer.invoke('checkpoint:create', options),
+  getCheckpointStatus: () => ipcRenderer.invoke('checkpoint:status'),
+  rollbackCheckpoint: () => ipcRenderer.invoke('checkpoint:rollback')
 });

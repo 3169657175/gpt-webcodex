@@ -1,6 +1,6 @@
 {
   "name": "web-mcp-assistant",
-  "version": "0.2.4",
+  "version": "0.4.5",
   "description": "一键部署与管理 Coding Tools MCP、OpenAI Tunnel 和 ChatGPT 接入的 Windows 桌面助手",
   "author": "3169657175",
   "license": "MIT",

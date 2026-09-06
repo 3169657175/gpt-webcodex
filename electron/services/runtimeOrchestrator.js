@@ -262,7 +262,7 @@ class RuntimeOrchestrator {
         }
         await wait(1000);
       }
-      if (!identity) throw new Error('Coding Tools MCP 未能以本次启动实例通过身份健康检查，可能仍连接到旧进程。');
+      if (!identity) throw new Error('Coding Tools MCP 未能以本次启动实例通过身份健康检查：健康接口未就绪，或返回的工作区/鉴权/源码指纹与本次启动不一致（也可能是旧进程占用端口）。请查看运行日志 mcp.log 排查。');
 
       const discoveryClient = new LocalMcpClient({ port: settings.mcpPort, token, log: this.log });
       await discoveryClient.discoverTools();
@@ -349,6 +349,39 @@ class RuntimeOrchestrator {
       this.invalidateSnapshot();
       this.progress('tunnel-recovery-complete', 100, 'OpenAI Tunnel 已恢复，本地 MCP Runtime 未重启');
       return await this.snapshot({ force: true, reason: options.automatic ? 'tunnel-auto-recovered' : 'tunnel-restarted' });
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  removeRecentWorkspaces(targets = []) {
+    const removeKeys = new Set((Array.isArray(targets) ? targets : [])
+      .map((item) => workspaceKey(item))
+      .filter(Boolean));
+    const previous = this.settingsStore.load();
+    const kept = (previous.recentWorkspaces || [])
+      .filter((item) => item && !removeKeys.has(workspaceKey(item)));
+    // save() 会经过 config.normalize：当前工作区始终回到列表首位且自动去重，
+    // 因此即使误传当前工作区也不会被真正删除。
+    const saved = this.settingsStore.save({ recentWorkspaces: kept });
+    this.invalidateSnapshot();
+    return { activeWorkspace: saved.workspace, recentWorkspaces: saved.recentWorkspaces || [] };
+  }
+
+  async clearActiveWorkspace() {
+    if (this.busy) throw new Error('当前已有任务正在运行，无法退出工作区。');
+    const previous = this.settingsStore.load();
+    if (!previous.workspace) {
+      return { activeWorkspace: '', recentWorkspaces: previous.recentWorkspaces || [] };
+    }
+    this.busy = true;
+    try {
+      try {
+        await this.native.stop();
+      } catch { /* ignore stop error */ }
+      const saved = this.settingsStore.save({ workspace: '' });
+      this.invalidateSnapshot();
+      return { activeWorkspace: '', recentWorkspaces: saved.recentWorkspaces || [] };
     } finally {
       this.busy = false;
     }

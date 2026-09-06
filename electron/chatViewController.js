@@ -456,6 +456,52 @@ class ChatViewController {
     return true;
   }
 
+  async injectPrompt(text, autoSend = false) {
+    const contents = this.view?.webContents;
+    if (!contents || contents.isDestroyed()) return false;
+    const safeText = JSON.stringify(String(text || ''));
+    const safeAutoSend = Boolean(autoSend);
+    return contents.executeJavaScript(`(() => {
+      try {
+        const text = ${safeText};
+        const autoSend = ${safeAutoSend};
+        const candidates = [
+          document.querySelector('#prompt-textarea'),
+          document.querySelector('div[contenteditable="true"]'),
+          document.querySelector('textarea[data-id="root"]'),
+          document.querySelector('textarea')
+        ].filter(Boolean);
+        const input = candidates[0];
+        if (!input) return false;
+        input.focus();
+        if (input.tagName.toLowerCase() === 'textarea') {
+          input.value = text;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+          // contenteditable div
+          input.innerText = text;
+          input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        }
+        if (autoSend) {
+          setTimeout(() => {
+            const sendBtn = document.querySelector('button[data-testid="send-button"]')
+              || document.querySelector('button[aria-label="发送提示词"]')
+              || document.querySelector('button[aria-label="Send prompt"]');
+            if (sendBtn && !sendBtn.disabled) {
+              sendBtn.click();
+            } else {
+              const enterEvt = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', keyCode: 13 });
+              input.dispatchEvent(enterEvt);
+            }
+          }, 350);
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    })()`, true).catch(() => false);
+  }
+
   async clearSession() {
     const chatSession = session.fromPartition(CHAT_PARTITION);
     await chatSession.clearStorageData();

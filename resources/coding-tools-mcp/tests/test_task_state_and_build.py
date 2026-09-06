@@ -330,6 +330,21 @@ class TaskStateTests(unittest.TestCase):
             self.assertTrue((root / ".coding-tools" / "task-state.json").exists())
             runtime.close()
 
+    def test_direct_apply_patch_auto_initializes_active_task_and_modified_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = TaskStateStore(root)
+            store.record_tool_result(
+                "apply_patch",
+                {"patch": "sample"},
+                {"ok": True, "affected_files": [{"path": "hello.py", "operation": "update"}]},
+            )
+            self.assertTrue(store.path.exists())
+            state = json.loads(store.path.read_text(encoding="utf-8"))
+            self.assertEqual(state.get("status"), "active")
+            modified_paths = [f["path"] if isinstance(f, dict) else f for f in state.get("modified_files", [])]
+            self.assertIn("hello.py", modified_paths)
+
     def test_stale_waiting_task_with_different_objective_is_archived(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

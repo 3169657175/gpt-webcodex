@@ -31,6 +31,11 @@ const DEFAULTS = Object.freeze({
 function normalizeWorkspacePath(value) {
   const text = String(value || '').trim();
   if (!text) return '';
+  // 盘符根目录统一为绝对根形式（D:\ / D: / D:. / D:\. / D:\.. 都归一为 D:\）。
+  // 盘符相对路径（如 D:.）在 Electron 与 Python Runtime 两侧会解析出不同结果，
+  // 曾导致 /__control/health 的 workspace 校验永远失败（部署误报“旧进程”）。
+  const driveRoot = /^([a-zA-Z]:)(?:[\\/]+|\.)?$/.exec(path.win32.normalize(text));
+  if (driveRoot) return `${driveRoot[1]}\\`;
   const normalized = path.normalize(text).replace(/[\\/]+$/, '');
   return normalized || path.parse(text).root || text;
 }

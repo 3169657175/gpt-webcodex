@@ -23,6 +23,8 @@ if (-not $PthFile) { throw "Embedded Python ._pth file was not found." }
 $Pth = Get-Content -LiteralPath $PthFile.FullName
 $Pth = $Pth -replace '^#import site$', 'import site'
 if ($Pth -notcontains 'Lib\site-packages') { $Pth += 'Lib\site-packages' }
+if ($Pth -notcontains '..\coding-tools-mcp\python_vendor') { $Pth += '..\coding-tools-mcp\python_vendor' }
+if ($Pth -notcontains '..\coding-tools-mcp') { $Pth += '..\coding-tools-mcp' }
 Set-Content -LiteralPath $PthFile.FullName -Value $Pth -Encoding Ascii
 
 Invoke-WebRequest -UseBasicParsing -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $GetPip
@@ -32,11 +34,6 @@ $SitePackages = Join-Path $Target "Lib\site-packages"
 $BundledSource = Join-Path $ProjectRoot "resources\coding-tools-mcp"
 & (Join-Path $Target "python.exe") -m pip install --no-warn-script-location --target $SitePackages "PyJWT>=2.8,<3"
 if ($LASTEXITCODE -ne 0) { throw "PyJWT installation failed." }
-$McpPackageTarget = Join-Path $SitePackages "coding_tools_mcp"
-Copy-Item -LiteralPath (Join-Path $BundledSource "coding_tools_mcp") -Destination $McpPackageTarget -Recurse -Force
-if (-not (Test-Path -LiteralPath (Join-Path $McpPackageTarget "server.py"))) {
-    throw "Coding Tools MCP package copy failed."
-}
 
 # pip is only needed while assembling the portable runtime. Removing it keeps
 # the shipped runtime smaller and prevents the embedded interpreter from being

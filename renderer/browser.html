@@ -21,6 +21,34 @@
         <span id="downloadState" class="download-state"></span>
         <span id="mcpState" title="Coding Tools MCP 本地服务状态"><i></i>本地工具</span>
         <span id="tunnelState" title="OpenAI Tunnel 连接状态"><i></i><em id="connectionStateLabel">连接通道</em></span>
+        <div class="context-usage-wrap" id="contextUsageWrap">
+          <button id="contextUsageButton" class="context-usage-button" type="button" title="点击查看当前会话上下文容量与工具调用负载" aria-expanded="false">
+            <i class="context-dot safe"></i><span id="contextUsageSummary">上下文 0k</span>
+          </button>
+          <div id="contextUsagePopover" class="context-usage-popover" hidden>
+            <div class="popover-header">
+              <b>会话上下文容量负载</b>
+              <div class="popover-actions">
+                <button id="continueContextUsage" type="button" class="btn-continue" title="生成当前任务记忆快照并在新会话中自动断点续接">续接新会话</button>
+                <button id="resetContextUsage" type="button" title="在网页端开启新对话并清空当前会话容量统计">新对话</button>
+              </div>
+            </div>
+            <div class="popover-bar-wrap">
+              <div class="popover-bar"><span id="contextUsageProgress"></span></div>
+              <small id="contextUsagePercent">0% / 128k</small>
+            </div>
+            <div class="popover-grid">
+              <div><span>工具调用累计</span><strong id="contextTotalTokens">0 Tokens</strong></div>
+              <div><span>传输数据体积</span><strong id="contextTotalBytes">0 KB</strong></div>
+              <div><span>工具调用次数</span><strong id="contextCallCount">0 次</strong></div>
+              <div><span>最大单次输出</span><strong id="contextMaxCall">-</strong></div>
+              <div><span>最新调用消耗</span><strong id="contextLastCall">-</strong></div>
+            </div>
+            <div class="popover-tip" id="contextUsageTip">
+              当前会话工具调用负载极低，模型注意力良好。
+            </div>
+          </div>
+        </div>
         <button id="managerButton" class="manager-button">设置</button>
       </div>
     </div>
@@ -33,14 +61,32 @@
           <code id="workspaceHealthPath">-</code>
           <div><span>状态</span><strong id="workspaceHealthState">等待检查</strong></div>
           <div><span>最近检查</span><strong id="workspaceHealthTime">-</strong></div>
+          <div class="workspace-quick-tools">
+            <button id="openInExplorerBtn" type="button" title="在 Windows 资源管理器中查看当前工作区">📂 资源管理器</button>
+            <button id="openInEditorBtn" type="button" title="在 VS Code / 默认代码编辑器中打开">💻 VS Code</button>
+          </div>
         </div>
       </div>
       <div class="task-strip" id="taskStrip">
         <i></i><b id="taskTitle">暂无任务</b><small id="taskStep"></small>
         <span class="task-progress" aria-hidden="true"><span id="taskProgressBar"></span></span><span id="taskProgressText" class="task-progress-text"></span>
         <button id="pauseTask">暂停</button><button id="resumeTask">继续</button><button id="stopTask">停止</button>
+        <button id="taskChangesBtn" class="terminal-toggle-btn changes-btn" type="button" title="查看本次任务修改的文件" hidden>📝 0 文件</button>
+        <button id="openTerminalButton" class="terminal-toggle-btn" type="button" title="打开任务实时输出控制台">控制台</button>
       </div>
       <select id="workspaceSelect" class="workspace-select" aria-label="全部工作区"><option value="">全部工作区</option></select>
+      <div class="workspace-clean-wrap">
+        <button id="workspaceCleanButton" class="workspace-clean-button" type="button" title="清理最近工作区记录" aria-label="清理最近工作区记录" aria-expanded="false">清理</button>
+        <div id="workspaceCleanPopover" class="workspace-clean-popover" hidden>
+          <b>工作区记录与退出</b>
+          <p>点击 ✕ 移除单条记录；或点击下方按钮直接退出清空当前工作区。</p>
+          <div id="workspaceCleanList"></div>
+          <div class="workspace-clean-footer">
+            <button id="workspaceCleanActive" class="danger-btn" type="button" title="退出并解除当前工作区绑定">清空当前工作区</button>
+            <button id="workspaceCleanAll" type="button" title="清理全部历史记录（保留当前）">清理全部记录</button>
+          </div>
+        </div>
+      </div>
       <div id="switchState" class="switch-state"></div>
       <button id="addAuthorizedRootQuick" class="add-workspace secondary-action" title="授权一个额外目录，无需切换主工作区">＋ 授权目录</button>
       <button id="addWorkspace" class="add-workspace">＋ 添加工作区</button>
@@ -49,6 +95,54 @@
   <main class="loading-stage">
     <div class="loading-card"><div class="spinner"></div><h1>正在打开 ChatGPT</h1><p>聊天页面与本地工作区权限相互隔离。</p></div>
   </main>
+  <div id="taskConsoleDrawer" class="task-console-drawer" hidden>
+    <div class="console-header">
+      <div class="console-title">
+        <i class="terminal-dot"></i>
+        <b>任务实时控制台</b>
+        <span id="consoleActiveCommand" class="console-command-badge">空闲</span>
+        <div class="console-tabs">
+          <button id="consoleTabLogs" class="console-tab active" type="button">实时日志</button>
+          <button id="consoleTabFiles" class="console-tab" type="button">修改文件 (<span id="consoleFilesCount">0</span>)</button>
+        </div>
+      </div>
+      <div class="console-actions">
+        <label class="console-toggle" id="consoleAutoScrollWrap"><input type="checkbox" id="consoleAutoScroll" checked> 自动滚动</label>
+        <button id="copyConsoleBtn" type="button" title="复制日志">复制</button>
+        <button id="clearConsoleBtn" type="button" title="清空视图">清屏</button>
+        <button id="killConsoleBtn" type="button" class="danger" title="终止当前命令" disabled>终止命令</button>
+        <button id="closeConsoleBtn" type="button" class="close-btn" title="关闭控制台">✕</button>
+      </div>
+    </div>
+    <div id="consoleOutput" class="console-output"></div>
+    <div id="consoleFilesView" class="console-files-view" hidden>
+      <div class="console-files-layout">
+        <div class="console-files-column">
+          <div class="console-files-header">
+            <span class="console-files-header-title">任务影响文件（点击查看代码 Diff）：</span>
+            <div class="console-capsule-actions">
+              <span id="capsuleStatusBadge" class="capsule-badge" title="当前时间胶囊快照基线">💾 胶囊未就绪</span>
+              <button type="button" id="createCapsuleBtn" class="btn-capsule" title="为当前代码创建安全时间胶囊快照">💾 创建检查点</button>
+              <button type="button" id="rollbackCapsuleBtn" class="btn-capsule-rollback danger" title="一键撤销本次任务的所有修改，恢复到时间胶囊状态" disabled>⏪ 一键时间胶囊回滚</button>
+            </div>
+          </div>
+          <div id="consoleFilesList" class="console-files-list"></div>
+          <div class="console-git-commit-bar">
+            <input type="text" id="gitCommitInput" placeholder="输入 Git 提交信息（如: feat: xxx）..." />
+            <button type="button" id="gitCommitBtn" title="将所有修改提交到本地 Git 仓库">提交</button>
+            <button type="button" id="gitCommitPushBtn" class="btn-primary" title="提交所有修改并推送到远程仓库">提交并推送</button>
+          </div>
+        </div>
+        <div class="console-diff-column" id="consoleDiffColumn" hidden>
+          <div class="diff-view-header">
+            <b id="diffViewTitle">文件差异对比</b>
+            <button type="button" id="closeDiffBtn" class="close-btn" title="关闭对比视图">✕</button>
+          </div>
+          <div id="diffViewContent" class="diff-view-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
   <script src="browser.js"></script>
 </body>
 </html>

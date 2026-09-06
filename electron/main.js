@@ -16,7 +16,8 @@ const { readJson, writeJsonAtomic } = require('./services/jsonStore');
 const { LocalMcpClient } = require('./services/localMcpClient');
 const { TaskNotificationService } = require('./services/taskNotificationService');
 const { NotificationCheckpointStore } = require('./services/notificationCheckpointStore');
-const { notificationStateFile } = require('./paths');
+const { ContextUsageTracker } = require('./services/contextUsageTracker');
+const { notificationStateFile, mcpLogFile } = require('./paths');
 
 let chatWindow;
 let managerWindow;
@@ -27,7 +28,9 @@ let tray = null;
 let buildVerification;
 let healthService;
 let taskNotificationService;
+let superviseTimer = null;
 let sharedLocalMcpClient = null;
+const contextUsageTracker = new ContextUsageTracker();
 const settings = new SettingsStore();
 const secrets = new SecretStore();
 const log = new LogService();
@@ -48,9 +51,26 @@ function safeMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isTrustedRendererUrl(url) {
+  if (typeof url !== 'string' || !url.startsWith('file://')) return false;
+  try {
+    const parsed = new URL(url);
+    let filePath = decodeURIComponent(parsed.pathname);
+    if (process.platform === 'win32' && /^\/[a-zA-Z]:/.test(filePath)) {
+      filePath = filePath.slice(1);
+    }
+    const normalizedFile = path.resolve(filePath).toLowerCase();
+    const rendererDir = path.resolve(__dirname, '..', 'renderer').toLowerCase();
+    return normalizedFile.startsWith(rendererDir);
+  } catch {
+    return false;
+  }
+}
+
 function assertTrustedIpc(event) {
   const url = event.senderFrame?.url || event.sender?.getURL?.() || '';
   if (!url.startsWith('file://')) throw new Error('已阻止来自非本地页面的 IPC 调用。');
+  if (!isTrustedRendererUrl(url)) throw new Error('已阻止来自未授权本地页面的 IPC 调用。');
 }
 
 function secureHandle(channel, handler) {
@@ -70,6 +90,13 @@ function workspaceStatePaths() {
     historyPath: path.join(root, '.coding-tools', 'task-history.json'),
     performancePath: path.join(root, '.coding-tools', 'performance.json')
   };
+}
+
+function workspaceCapsulePaths() {
+  const { root, statePath } = workspaceStatePaths();
+  const capsuleDir = path.join(root, '.coding-tools', 'capsules');
+  const capsuleMetaPath = path.join(root, '.coding-tools', 'capsule-state.json');
+  return { root, statePath, capsuleDir, capsuleMetaPath };
 }
 
 function archiveTask(state, historyPath, reason) {
@@ -104,9 +131,12 @@ async function callLocalMcpTool(name, args = {}) {
   }
   if (result?.isError) {
     const text = result?.content?.find?.((item) => item?.type === 'text')?.text;
+    contextUsageTracker.recordToolCall(name, args, { error: text || `${name} 调用失败。` });
     throw new Error(text || `${name} 调用失败。`);
   }
-  return result?.structuredContent ?? result;
+  const payload = result?.structuredContent ?? result;
+  contextUsageTracker.recordToolCall(name, args, payload);
+  return payload;
 }
 
 function invalidateLocalMcpDiscovery() {
@@ -267,6 +297,13 @@ function registerIpc() {
   secureHandle('app:snapshot', (_event, options) => invokeSafely(() => orchestrator.snapshot(options || {})));
   secureHandle('app:lightweight-snapshot', () => invokeSafely(() => orchestrator.lightweightSnapshot()));
   secureHandle('workspace:hub', () => invokeSafely(async () => { const current = settings.load(); return { activeWorkspace: current.workspace, recentWorkspaces: current.recentWorkspaces || [] }; }));
+  secureHandle('workspace:remove-recent', (_event, targets) => invokeSafely(() => orchestrator.removeRecentWorkspaces(targets)));
+  secureHandle('workspace:clear-active', () => invokeSafely(async () => {
+    const result = await orchestrator.clearActiveWorkspace();
+    invalidateLocalMcpDiscovery();
+    taskNotificationService?.reset();
+    return result;
+  }));
   secureHandle('workspace:switch', (_event, workspace) => invokeSafely(async () => {
     const result = await orchestrator.switchWorkspace(workspace);
     invalidateLocalMcpDiscovery();
@@ -325,6 +362,153 @@ function registerIpc() {
     state.updated_at = new Date().toISOString();
     writeJsonAtomic(statePath, state); return state;
   }));
+  secureHandle('task:read-console', () => invokeSafely(async () => {
+    let runningCommand = null;
+    let taskState = null;
+    try {
+      const { statePath } = workspaceStatePaths();
+      taskState = readJson(statePath, null);
+      if (taskState?.current_command && typeof taskState.current_command === 'object') {
+        runningCommand = taskState.current_command;
+      }
+    } catch { /* ignore if no workspace */ }
+
+    const logLines = [];
+
+    // 1. Synthesize user-facing activity logs from taskState events and commands
+    if (taskState && Array.isArray(taskState.events) && taskState.events.length) {
+      const formatTime = (iso) => {
+        try {
+          const d = new Date(iso);
+          return isNaN(d.getTime()) ? '' : d.toTimeString().slice(0, 8);
+        } catch { return ''; }
+      };
+
+      for (const ev of taskState.events.slice(-80)) {
+        const timeStr = formatTime(ev.time);
+        const prefix = timeStr ? `[${timeStr}] ` : '';
+        const d = ev.details || {};
+        switch (ev.event) {
+          case 'task_started':
+            logLines.push(`${prefix}🚀 任务启动: ${taskState.objective || d.trigger_tool || '开始执行任务'}`);
+            break;
+          case 'files_modified':
+            logLines.push(`${prefix}📝 文件变更: 影响 ${d.count || 1} 个文件`);
+            break;
+          case 'command_started':
+            logLines.push(`${prefix}⚡ 启动命令: ${d.command || ''}`);
+            break;
+          case 'command_finished':
+            logLines.push(`${prefix}${d.status === 'passed' ? '✔' : '❌'} 命令完成 (${d.status || 'done'}): ${d.command || ''} (耗时: ${d.elapsed_ms || 0}ms, 退出码: ${d.exit_code ?? 0})`);
+            if (d.summary && typeof d.summary === 'string') {
+              const summaryLines = d.summary.split(/\r?\n/).filter(Boolean).slice(0, 20);
+              for (const sl of summaryLines) {
+                logLines.push(`   │ ${sl}`);
+              }
+            }
+            break;
+          case 'command_terminated':
+            logLines.push(`${prefix}⏹ 命令已终止: ${d.command || d.session_id || ''}`);
+            break;
+          case 'tool_failed':
+            logLines.push(`${prefix}❌ 工具调用失败: ${d.name || d.tool || ''} - ${d.error?.message || d.failure || JSON.stringify(d)}`);
+            break;
+          case 'capsule_rollback':
+            logLines.push(`${prefix}⏪ 时间胶囊已回滚: 还原 ${d.restored?.length || 0} 个文件，清理 ${d.removed?.length || 0} 个文件`);
+            break;
+          case 'build_verification_finished':
+            logLines.push(`${prefix}🔍 构建验证完成: ${d.status || ''}`);
+            break;
+          default:
+            logLines.push(`${prefix}ℹ [${ev.event}]: ${JSON.stringify(d)}`);
+            break;
+        }
+      }
+    }
+
+    // 2. If a command is actively running, append its current status/output
+    if (runningCommand) {
+      logLines.push(`⚡ [当前运行中] ${runningCommand.command || ''}`);
+      if (runningCommand.output && typeof runningCommand.output === 'string') {
+        const outLines = runningCommand.output.split(/\r?\n/).filter(Boolean).slice(-30);
+        for (const ol of outLines) {
+          logLines.push(`   │ ${ol}`);
+        }
+      }
+    }
+
+    // 3. Read MCP runtime log file for background server notices, filtering routine HTTP ping noise
+    try {
+      const targetLog = mcpLogFile();
+      const content = await fs.readFile(targetLog, 'utf8');
+      const lines = content.split(/\r?\n/).filter(Boolean);
+      // Filter out high-frequency raw HTTP 200 access logs so they don't drown actual task outputs
+      const serverNotices = lines.filter((l) => !/POST \/mcp HTTP\/1\.1" 200 OK/i.test(l)).slice(-100);
+      if (serverNotices.length) {
+        if (logLines.length) logLines.push('--- [本地 MCP 运行时系统日志] ---');
+        logLines.push(...serverNotices);
+      }
+    } catch { /* ignore if log file not created yet */ }
+
+    if (!logLines.length) {
+      logLines.push('暂无控制台日志输出。当 ChatGPT 执行修改文件或运行命令时，实时输出将展示在此处。');
+    }
+
+    const modifiedFiles = Array.isArray(taskState?.modified_files) ? taskState.modified_files : [];
+
+    return {
+      runningCommand,
+      status: taskState?.status || 'idle',
+      objective: taskState?.objective || '',
+      currentStep: taskState?.current_step || '',
+      modifiedFiles,
+      logs: logLines
+    };
+  }));
+  secureHandle('workspace:open-in-explorer', (_event, targetPath) => invokeSafely(async () => {
+    const current = settings.load();
+    const dest = targetPath ? path.resolve(current.workspace || '', targetPath) : (current.workspace ? path.resolve(current.workspace) : '');
+    if (!dest) throw new Error('当前未选择工作区。');
+    await shell.openPath(dest);
+    return true;
+  }));
+  secureHandle('workspace:open-in-editor', (_event, targetPath) => invokeSafely(async () => {
+    const current = settings.load();
+    const dest = targetPath ? path.resolve(current.workspace || '', targetPath) : (current.workspace ? path.resolve(current.workspace) : '');
+    if (!dest) throw new Error('当前未选择工作区。');
+    try {
+      await run('code.cmd', [dest], { timeoutMs: 5000 });
+      return true;
+    } catch {
+      try {
+        await run('code', [dest], { timeoutMs: 5000 });
+        return true;
+      } catch {
+        await shell.openPath(dest);
+        return false;
+      }
+    }
+  }));
+  secureHandle('workspace:show-in-folder', (_event, relativeOrAbsolute) => invokeSafely(async () => {
+    const current = settings.load();
+    const full = path.isAbsolute(relativeOrAbsolute) ? relativeOrAbsolute : path.resolve(current.workspace || '', relativeOrAbsolute);
+    shell.showItemInFolder(full);
+    return true;
+  }));
+  secureHandle('task:kill-active-command', () => invokeSafely(async () => {
+    try {
+      await callLocalMcpTool('command_control', { action: 'terminate' });
+    } catch { /* fallback to task-state stop */ }
+    const { statePath } = workspaceStatePaths();
+    const state = readJson(statePath, null);
+    if (state) {
+      state.status = 'stopped';
+      state.failure = '用户从控制台终止当前命令';
+      state.updated_at = new Date().toISOString();
+      writeJsonAtomic(statePath, state);
+    }
+    return true;
+  }));
   secureHandle('task-state:history', () => invokeSafely(async () => {
     let historyPath;
     try { ({ historyPath } = workspaceStatePaths()); } catch { return []; }
@@ -377,10 +561,296 @@ function registerIpc() {
   secureHandle('manager:open', () => invokeSafely(async () => { openManagerWindow(); return true; }));
   secureHandle('chat:navigate', (_event, action) => invokeSafely(async () => chatController?.navigate(action)));
   secureHandle('chat:status', () => invokeSafely(async () => chatController?.getState() || null));
+  secureHandle('chat:inject-prompt', (_event, text, autoSend) => invokeSafely(async () => chatController?.injectPrompt(text, autoSend)));
   secureHandle('chat:clear-session', () => invokeSafely(async () => {
     if (!chatController) throw new Error('ChatGPT 页面尚未初始化。');
     await chatController.clearSession();
+    try {
+      const { performancePath } = workspaceStatePaths();
+      const raw = await fs.readFile(performancePath, 'utf8').catch(() => null);
+      if (raw) contextUsageTracker.setSessionBaseline(JSON.parse(raw));
+    } catch { /* ignore */ }
+    contextUsageTracker.reset();
     return true;
+  }));
+  secureHandle('git:file-diff', (_event, relativePath) => invokeSafely(async () => {
+    const { root } = workspaceStatePaths();
+    const targetFile = String(relativePath || '').trim();
+    if (!targetFile) throw new Error('未指定要对比的文件。');
+    const fullPath = path.resolve(root, targetFile);
+    if (!fullPath.startsWith(root) || path.relative(root, fullPath).startsWith('..')) {
+      throw new Error('对比文件路径不能超出工作区范围。');
+    }
+    try {
+      // 1. Try git diff HEAD
+      const res = await run('git', ['diff', 'HEAD', '--', targetFile], { cwd: root, timeoutMs: 5000 });
+      if (res.stdout.trim()) {
+        return { isGit: true, diff: res.stdout.slice(0, 150000) };
+      }
+      // 2. If HEAD diff empty, try untracked file diff against null
+      const statusRes = await run('git', ['status', '--porcelain', '--', targetFile], { cwd: root, timeoutMs: 3000 });
+      if (statusRes.stdout.trim().startsWith('??')) {
+        const content = await fs.readFile(fullPath, 'utf8').catch(() => '');
+        const lines = content.split(/\r?\n/).slice(0, 300).map((l) => `+${l}`).join('\n');
+        return { isGit: true, diff: `@@ 新增未跟踪文件: ${targetFile} @@\n${lines}` };
+      }
+      return { isGit: true, diff: '无内容变更（工作区与版本库一致）' };
+    } catch {
+      // Fallback if not a git repo: display current file preview
+      try {
+        const content = await fs.readFile(fullPath, 'utf8');
+        const lines = content.split(/\r?\n/).slice(0, 300).map((l) => ` ${l}`).join('\n');
+        return { isGit: false, diff: `@@ 本地文件内容预览（非 Git 仓库）@@\n${lines}` };
+      } catch (err) {
+        return { isGit: false, diff: `无法读取文件：${err.message}` };
+      }
+    }
+  }));
+  secureHandle('git:commit-and-push', (_event, options = {}) => invokeSafely(async () => {
+    const { root } = workspaceStatePaths();
+    const message = String(options.message || '').trim();
+    if (!message) throw new Error('请输入提交信息（Commit Message）。');
+    const doPush = Boolean(options.push);
+
+    // 1. git add -A
+    await run('git', ['add', '-A'], { cwd: root, timeoutMs: 10000 });
+    // 2. git commit -m "..."
+    const commitRes = await run('git', ['commit', '-m', message], { cwd: root, timeoutMs: 15000 });
+    let pushOutput = '';
+    if (doPush) {
+      try {
+        const pushRes = await run('git', ['push'], { cwd: root, timeoutMs: 25000 });
+        pushOutput = pushRes.stdout || pushRes.stderr || '推送成功';
+      } catch (pushErr) {
+        throw new Error(`提交成功，但推送到远程失败：${pushErr.message}`);
+      }
+    }
+    return {
+      commit: commitRes.stdout || '提交成功',
+      push: pushOutput
+    };
+  }));
+  secureHandle('task:generate-snapshot', () => invokeSafely(async () => {
+    let taskState = null;
+    let gitSummary = '';
+    let root = '';
+    try {
+      const paths = workspaceStatePaths();
+      root = paths.root;
+      taskState = readJson(paths.statePath, null);
+    } catch { /* ignore */ }
+
+    if (root) {
+      try {
+        const statusRes = await run('git', ['status', '--short'], { cwd: root, timeoutMs: 3000 });
+        gitSummary = statusRes.stdout.trim().slice(0, 800);
+      } catch { /* not git */ }
+    }
+
+    const extractPath = (item) => (typeof item === 'string' ? item : (item?.path || ''));
+    const objective = taskState?.objective || '持续迭代代码工作区';
+    const currentStep = taskState?.current_step || taskState?.next_step || '检查当前代码并推进下一步任务';
+    const modified = Array.isArray(taskState?.modified_files) && taskState.modified_files.length
+      ? taskState.modified_files
+          .map((f) => {
+            const p = extractPath(f);
+            const op = (typeof f === 'object' && f?.operation) ? ` (${f.operation})` : '';
+            return p ? `- \`${p}\`${op}` : null;
+          })
+          .filter(Boolean)
+          .join('\n') || '（暂无已记录的修改文件）'
+      : '（暂无已记录的修改文件）';
+    const gitSection = gitSummary ? `\n\n**当前 Git 状态变更：**\n\`\`\`\n${gitSummary}\n\`\`\`` : '';
+
+    const snapshotMarkdown = [
+      `【任务断点续接快照】`,
+      `你好！这是从上一个对话无缝继承过来的工作区任务状态：`,
+      `- **核心任务目标**：${objective}`,
+      `- **当前所处步骤**：${currentStep}`,
+      `- **本次任务已修改文件**：\n${modified}${gitSection}`,
+      ``,
+      `当前上下文已清空，请直接基于工作区当前文件状态，继续执行下一步骤！`
+    ].join('\n');
+
+    return {
+      snapshot: snapshotMarkdown,
+      objective,
+      modifiedFiles: (taskState?.modified_files || []).map(extractPath).filter(Boolean)
+    };
+  }));
+  secureHandle('checkpoint:create', (_event, options = {}) => invokeSafely(async () => {
+    const { root, statePath, capsuleDir, capsuleMetaPath } = workspaceCapsulePaths();
+    await fs.mkdir(capsuleDir, { recursive: true });
+
+    const taskState = readJson(statePath, null);
+    const taskId = taskState?.task_id || `capsule_${Date.now()}`;
+    const now = new Date().toISOString();
+
+    let isGit = false;
+    let gitHead = '';
+    let stashSha = '';
+    try {
+      const rev = await run('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root, timeoutMs: 3000 });
+      isGit = rev.stdout.trim() === 'true';
+      if (isGit) {
+        const headRes = await run('git', ['rev-parse', 'HEAD'], { cwd: root, timeoutMs: 3000 });
+        gitHead = headRes.stdout.trim();
+        try {
+          const stashRes = await run('git', ['stash', 'create', `time-capsule:${taskId}`], { cwd: root, timeoutMs: 5000 });
+          stashSha = stashRes.stdout.trim();
+        } catch { /* ignore stash error */ }
+      }
+    } catch {
+      isGit = false;
+    }
+
+    const fileSnapshots = {};
+    const currentModified = Array.isArray(taskState?.modified_files) ? taskState.modified_files : [];
+    for (const item of currentModified) {
+      const rel = typeof item === 'string' ? item : item?.path;
+      if (!rel) continue;
+      const full = path.resolve(root, rel);
+      if (!full.startsWith(root) || rel.startsWith('.coding-tools')) continue;
+      try {
+        const content = await fs.readFile(full);
+        const backupName = `${taskId}_${rel.replace(/[\\/]/g, '_')}`;
+        const backupFull = path.join(capsuleDir, backupName);
+        await fs.writeFile(backupFull, content);
+        fileSnapshots[rel] = { existed: true, backupName };
+      } catch (e) {
+        if (e.code === 'ENOENT') {
+          fileSnapshots[rel] = { existed: false };
+        }
+      }
+    }
+
+    const capsuleMeta = {
+      capsuleId: taskId,
+      createdAt: now,
+      manual: Boolean(options.manual),
+      isGit,
+      gitHead,
+      stashSha,
+      fileSnapshots,
+      description: options.description || (options.manual ? '用户手动创建的安全检查点' : '时间胶囊安全基线')
+    };
+
+    writeJsonAtomic(capsuleMetaPath, capsuleMeta);
+    return capsuleMeta;
+  }));
+  secureHandle('checkpoint:status', () => invokeSafely(async () => {
+    try {
+      const { statePath, capsuleMetaPath } = workspaceCapsulePaths();
+      const meta = readJson(capsuleMetaPath, null);
+      const taskState = readJson(statePath, null);
+      const modifiedFiles = Array.isArray(taskState?.modified_files) ? taskState.modified_files : [];
+      return {
+        hasCapsule: Boolean(meta),
+        capsule: meta,
+        modifiedCount: modifiedFiles.length,
+        modifiedFiles: modifiedFiles.map((f) => typeof f === 'string' ? f : f?.path).filter(Boolean),
+        canRollback: Boolean(meta) || modifiedFiles.length > 0
+      };
+    } catch {
+      return {
+        hasCapsule: false,
+        capsule: null,
+        modifiedCount: 0,
+        modifiedFiles: [],
+        canRollback: false
+      };
+    }
+  }));
+  secureHandle('checkpoint:rollback', () => invokeSafely(async () => {
+    const { root, statePath, capsuleDir, capsuleMetaPath } = workspaceCapsulePaths();
+    const meta = readJson(capsuleMetaPath, null);
+    const taskState = readJson(statePath, null);
+    const modifiedFiles = Array.isArray(taskState?.modified_files) ? taskState.modified_files : [];
+
+    const targetFiles = new Set();
+    for (const item of modifiedFiles) {
+      const p = typeof item === 'string' ? item : item?.path;
+      if (p) targetFiles.add(p);
+    }
+    if (meta?.fileSnapshots) {
+      for (const p of Object.keys(meta.fileSnapshots)) {
+        if (p) targetFiles.add(p);
+      }
+    }
+
+    const restoredFiles = [];
+    const removedFiles = [];
+    const errors = [];
+
+    // 1. Try Git checkout / clean if Git repo
+    try {
+      const isInside = (await run('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root, timeoutMs: 3000 })).stdout.trim() === 'true';
+      if (isInside) {
+        for (const rel of targetFiles) {
+          const full = path.resolve(root, rel);
+          if (!full.startsWith(root) || rel.startsWith('.coding-tools')) continue;
+          try {
+            const statusRes = await run('git', ['status', '--porcelain', '--', rel], { cwd: root, timeoutMs: 3000 });
+            const status = statusRes.stdout.trim();
+            if (status.startsWith('??')) {
+              await fs.unlink(full).catch(() => {});
+              removedFiles.push(rel);
+            } else if (status) {
+              await run('git', ['checkout', 'HEAD', '--', rel], { cwd: root, timeoutMs: 5000 });
+              restoredFiles.push(rel);
+            }
+          } catch (gitErr) {
+            errors.push(`${rel}: ${gitErr.message}`);
+          }
+        }
+      }
+    } catch { /* not git or git error */ }
+
+    // 2. Physical snapshot restore fallback
+    if (meta?.fileSnapshots) {
+      for (const [rel, snap] of Object.entries(meta.fileSnapshots)) {
+        const full = path.resolve(root, rel);
+        if (!full.startsWith(root) || rel.startsWith('.coding-tools')) continue;
+        try {
+          if (!snap.existed) {
+            await fs.unlink(full).catch(() => {});
+            if (!removedFiles.includes(rel)) removedFiles.push(rel);
+          } else if (snap.backupName) {
+            const backupFull = path.join(capsuleDir, snap.backupName);
+            const content = await fs.readFile(backupFull);
+            await fs.mkdir(path.dirname(full), { recursive: true });
+            await fs.writeFile(full, content);
+            if (!restoredFiles.includes(rel)) restoredFiles.push(rel);
+          }
+        } catch (err) {
+          errors.push(`${rel}: ${err.message}`);
+        }
+      }
+    }
+
+    // 3. Clear task-state modified_files and record event
+    if (taskState) {
+      taskState.modified_files = [];
+      taskState.events = Array.isArray(taskState.events) ? taskState.events : [];
+      taskState.events.push({
+        time: new Date().toISOString(),
+        event: 'capsule_rollback',
+        details: {
+          restored: restoredFiles,
+          removed: removedFiles,
+          capsuleId: meta?.capsuleId || null
+        }
+      });
+      taskState.updated_at = new Date().toISOString();
+      writeJsonAtomic(statePath, taskState);
+    }
+
+    return {
+      restoredFiles,
+      removedFiles,
+      errors,
+      message: `时间胶囊回滚完成：已还原 ${restoredFiles.length} 个文件，清理 ${removedFiles.length} 个新增文件。`
+    };
   }));
   secureHandle('dialog:workspace', () => invokeSafely(async () => {
     const result = await dialog.showOpenDialog(managerWindow || chatWindow, { properties: ['openDirectory', 'createDirectory'] });
@@ -420,6 +890,23 @@ function registerIpc() {
     const result = await run('winget.exe', ['install', '--id', 'Python.Python.3.12', '-e', '--accept-source-agreements', '--accept-package-agreements']);
     return result.stdout;
   }));
+  secureHandle('context:usage', () => invokeSafely(async () => {
+    try {
+      const { performancePath } = workspaceStatePaths();
+      const raw = await fs.readFile(performancePath, 'utf8');
+      const trace = JSON.parse(raw);
+      contextUsageTracker.syncWithRuntime(trace);
+    } catch { /* if no workspace or performance file yet, keep snapshot */ }
+    return contextUsageTracker.snapshot();
+  }));
+  secureHandle('context:reset-usage', () => invokeSafely(async () => {
+    try {
+      const { performancePath } = workspaceStatePaths();
+      await fs.rm(performancePath, { force: true });
+    } catch { /* ignore if not exist */ }
+    contextUsageTracker.setSessionBaseline(null);
+    return contextUsageTracker.reset();
+  }));
   secureHandle('shell:open', (_event, target) => invokeSafely(async () => {
     const allowed = new Set(['chatgpt-connectors', 'openai-tunnels', 'openai-runtime-keys', 'tunnel-ui', 'coding-tools-source']);
     if (!allowed.has(target)) throw new Error('不允许打开该地址。');
@@ -445,74 +932,104 @@ function registerIpc() {
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) app.quit();
-app.on('second-instance', () => showChatWindow());
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => showChatWindow());
 
-app.whenReady().then(async () => {
-  app.setLoginItemSettings({ openAtLogin: Boolean(settings.load().startWithWindows), path: process.execPath });
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  session.defaultSession.setPermissionCheckHandler(() => false);
-  app.on('web-contents-created', (_event, contents) => {
-    contents.on('will-attach-webview', (event) => event.preventDefault());
+  app.whenReady().then(async () => {
+    app.setLoginItemSettings({ openAtLogin: Boolean(settings.load().startWithWindows), path: process.execPath });
+    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    session.defaultSession.setPermissionCheckHandler(() => false);
+    app.on('web-contents-created', (_event, contents) => {
+      contents.on('will-attach-webview', (event) => event.preventDefault());
+    });
+    createTray();
+    orchestrator = new RuntimeOrchestrator({
+      settings,
+      secrets,
+      environment,
+      log,
+      emitProgress: (payload) => sendManager('runtime:progress', payload),
+      emitStatus: (payload) => sendManager('runtime:status-changed', payload)
+    });
+    buildVerification = new BuildVerificationService(log, (payload) => sendManager('build:progress', payload));
+    healthService = new HealthService({ settings, secrets, environment, orchestrator });
+    log.on('entry', (payload) => sendManager('logs:entry', payload));
+    registerIpc();
+    const startupSettings = settings.load();
+    createChatWindow();
+    taskNotificationService = new TaskNotificationService({
+      getSettings: () => settings.load(),
+      getWorkspace: () => settings.load().workspace,
+      loadNotificationCheckpoint: (workspace) => notificationCheckpoints.load(workspace),
+      saveNotificationCheckpoint: (workspace, checkpoint) => notificationCheckpoints.save(workspace, checkpoint),
+      readTaskState: () => {
+        try { return readJson(workspaceStatePaths().statePath, null); }
+        catch { return null; }
+      },
+      subscribeTaskEvents: (listener, onError, streamOptions = {}) => {
+        const current = settings.load();
+        const token = secrets.get('mcpAuthToken');
+        const client = new LocalMcpClient({ port: current.mcpPort, token, log });
+        return client.subscribeTaskEvents(listener, { onError, ...streamOptions });
+      },
+      getChatWindow: () => chatWindow,
+      getTray: () => tray,
+      showChatWindow,
+      NotificationClass: Notification,
+      icon: appIconPath(),
+      log
+    });
+    taskNotificationService.start();
+    contextUsageTracker.on('change', (snapshot) => {
+      if (chatWindow && !chatWindow.isDestroyed()) {
+        chatWindow.webContents.send('context:usage-changed', snapshot);
+      }
+    });
+    superviseTimer = null;
+    const scheduleSupervise = (delayMs = 5000) => {
+      if (superviseTimer) clearTimeout(superviseTimer);
+      superviseTimer = setTimeout(() => {
+        orchestrator.supervise().then((status) => {
+          taskNotificationService?.acceptRuntimeStatus?.(status);
+          sendManager('runtime:heartbeat', status);
+          if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('runtime:heartbeat', status);
+          try {
+            const { performancePath } = workspaceStatePaths();
+            fs.readFile(performancePath, 'utf8').then((raw) => {
+              contextUsageTracker.syncWithRuntime(JSON.parse(raw));
+            }).catch(() => {});
+          } catch { /* ignore if no workspace */ }
+        }).catch(() => {}).finally(() => {
+          const isForeground = Boolean(
+            (chatWindow && !chatWindow.isDestroyed() && chatWindow.isVisible() && !chatWindow.isMinimized())
+            || (managerWindow && !managerWindow.isDestroyed() && managerWindow.isVisible())
+          );
+          const nextDelay = isForeground ? 5000 : 15000;
+          scheduleSupervise(nextDelay);
+        });
+      }, delayMs);
+      superviseTimer.unref?.();
+    };
+    scheduleSupervise(5000);
+    log.info('网页 MCP 助手已启动');
+    if (startupSettings.autoStartServices && !orchestrator.isManuallyStopped()) {
+      orchestrator.start({ automatic: true }).catch((error) => log.error(error.message, { stage: 'auto-start' }));
+    }
   });
-  createTray();
-  orchestrator = new RuntimeOrchestrator({
-    settings,
-    secrets,
-    environment,
-    log,
-    emitProgress: (payload) => sendManager('runtime:progress', payload),
-    emitStatus: (payload) => sendManager('runtime:status-changed', payload)
-  });
-  buildVerification = new BuildVerificationService(log, (payload) => sendManager('build:progress', payload));
-  healthService = new HealthService({ settings, secrets, environment, orchestrator });
-  log.on('entry', (payload) => sendManager('logs:entry', payload));
-  registerIpc();
-  const startupSettings = settings.load();
-  createChatWindow();
-  taskNotificationService = new TaskNotificationService({
-    getSettings: () => settings.load(),
-    getWorkspace: () => settings.load().workspace,
-    loadNotificationCheckpoint: (workspace) => notificationCheckpoints.load(workspace),
-    saveNotificationCheckpoint: (workspace, checkpoint) => notificationCheckpoints.save(workspace, checkpoint),
-    readTaskState: () => {
-      try { return readJson(workspaceStatePaths().statePath, null); }
-      catch { return null; }
-    },
-    subscribeTaskEvents: (listener, onError, streamOptions = {}) => {
-      const current = settings.load();
-      const token = secrets.get('mcpAuthToken');
-      const client = new LocalMcpClient({ port: current.mcpPort, token, log });
-      return client.subscribeTaskEvents(listener, { onError, ...streamOptions });
-    },
-    getChatWindow: () => chatWindow,
-    getTray: () => tray,
-    showChatWindow,
-    NotificationClass: Notification,
-    icon: appIconPath(),
-    log
-  });
-  taskNotificationService.start();
-  setInterval(() => orchestrator.supervise().then((status) => {
-    taskNotificationService?.acceptRuntimeStatus?.(status);
-    sendManager('runtime:heartbeat', status);
-    if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('runtime:heartbeat', status);
-  }).catch(() => {}), 5000).unref();
-  log.info('网页 MCP 助手已启动');
-  if (startupSettings.autoStartServices && !orchestrator.isManuallyStopped()) {
-    orchestrator.start({ automatic: true }).catch((error) => log.error(error.message, { stage: 'auto-start' }));
-  }
-});
 
-app.on('before-quit', () => {
-  forceQuit = true;
-  taskNotificationService?.stop();
-});
-app.on('window-all-closed', () => {
-  if (!forceQuit && settings.load().keepRunningOnClose) return;
-  if (!forceQuit) app.quit();
-});
-app.on('activate', () => showChatWindow());
+  app.on('before-quit', () => {
+    forceQuit = true;
+    if (superviseTimer) clearTimeout(superviseTimer);
+    taskNotificationService?.stop();
+  });
+  app.on('window-all-closed', () => {
+    if (!forceQuit && settings.load().keepRunningOnClose) return;
+    if (!forceQuit) app.quit();
+  });
+  app.on('activate', () => showChatWindow());
+}
 
 
 

@@ -72,22 +72,51 @@ function hashFile(file) {
   });
 }
 
+async function mapConcurrent(items, limit, fn) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function collectArtifacts(root, entries) {
-  const results = [];
+  const fileEntries = [];
   const walk = async (target) => {
-    if (results.length >= 200) return;
+    if (fileEntries.length >= 200) return;
     let stat;
     try { stat = await fsp.lstat(target); } catch { return; }
     if (stat.isSymbolicLink()) return;
     if (stat.isFile()) {
-      results.push({ path: path.relative(root, target), size: stat.size, sha256: await hashFile(target), modifiedAt: stat.mtime.toISOString() });
+      fileEntries.push({ target, stat });
       return;
     }
     if (!stat.isDirectory()) return;
-    for (const name of await fsp.readdir(target)) await walk(path.join(target, name));
+    try {
+      for (const name of await fsp.readdir(target)) await walk(path.join(target, name));
+    } catch { /* ignore directory read errors */ }
   };
   for (const target of normalizeArtifactEntries(root, entries)) await walk(target);
-  return results;
+
+  return mapConcurrent(fileEntries, 6, async ({ target, stat }) => {
+    let sha256;
+    try {
+      sha256 = await hashFile(target);
+    } catch {
+      sha256 = '0'.repeat(64);
+    }
+    return {
+      path: path.relative(root, target),
+      size: stat.size,
+      sha256,
+      modifiedAt: stat.mtime.toISOString()
+    };
+  });
 }
 
 class BuildVerificationService {
