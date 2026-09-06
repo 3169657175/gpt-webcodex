@@ -546,6 +546,11 @@ function renderWorkspaceClean(hub) {
   const list = $('#workspaceCleanList');
   list.replaceChildren();
   const entries = (hub.recentWorkspaces || []).filter(Boolean);
+  const cleanActiveBtn = $('#workspaceCleanActive');
+  if (cleanActiveBtn) {
+    cleanActiveBtn.disabled = !activeWorkspace;
+    cleanActiveBtn.title = activeWorkspace ? `退出并解除当前工作区绑定：${activeWorkspace}` : '当前未选择工作区';
+  }
   if (!entries.length) {
     const empty = document.createElement('p');
     empty.textContent = '暂无最近工作区记录。';
@@ -567,6 +572,12 @@ function renderWorkspaceClean(hub) {
       tag.className = 'workspace-clean-current';
       tag.textContent = '当前';
       row.appendChild(tag);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '✕';
+      remove.title = '退出并清空当前工作区';
+      remove.onclick = () => handleClearActiveWorkspace();
+      row.appendChild(remove);
     } else {
       const remove = document.createElement('button');
       remove.type = 'button';
@@ -589,6 +600,29 @@ function toggleWorkspaceCleanPopover(show) {
   const nextHidden = typeof show === 'boolean' ? !show : !popover.hidden;
   popover.hidden = nextHidden;
   $('#workspaceCleanButton').setAttribute('aria-expanded', String(!nextHidden));
+}
+
+async function handleClearActiveWorkspace() {
+  if (switching) return;
+  if (!activeWorkspace) {
+    toggleWorkspaceCleanPopover(false);
+    return;
+  }
+  if (!window.confirm(`确定退出并解除当前绑定的工作区（${baseName(activeWorkspace)}）吗？\n退出后将不关联任何本地工作区。`)) return;
+  switching = true;
+  $('#switchState').textContent = '正在解除当前工作区绑定…';
+  try {
+    const result = unwrap(await api.clearActiveWorkspace());
+    renderWorkspace(result);
+    $('#switchState').textContent = '已退出工作区';
+    await Promise.all([refreshWorkspace(), refreshStatus(), refreshTask()]);
+    toggleWorkspaceCleanPopover(false);
+    setTimeout(() => { $('#switchState').textContent = ''; }, 1800);
+  } catch (error) {
+    $('#switchState').textContent = error.message;
+  } finally {
+    switching = false;
+  }
 }
 
 async function removeRecentWorkspaces(targets) {
@@ -657,10 +691,14 @@ document.addEventListener('click', (event) => {
   const popover = $('#workspaceCleanPopover');
   if (popover && !popover.hidden) toggleWorkspaceCleanPopover(false);
 });
+$('#workspaceCleanActive').onclick = () => handleClearActiveWorkspace();
 $('#workspaceCleanAll').onclick = async () => {
   const entries = ((recentWorkspaceHub?.recentWorkspaces) || [])
     .filter((item) => item && !workspaceKeyEquals(item, activeWorkspace));
-  if (!entries.length) return;
+  if (!entries.length) {
+    alert('当前没有可清理的其他历史记录。如需解除当前工作区，请点击“清空当前工作区”。');
+    return;
+  }
   if (!window.confirm(`确定清理 ${entries.length} 条最近工作区记录吗？当前工作区会保留。`)) return;
   await removeRecentWorkspaces(entries);
   toggleWorkspaceCleanPopover(false);

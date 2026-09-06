@@ -85,9 +85,11 @@ button{font:inherit}
 .workspace-clean-row button{flex:0 0 auto;width:22px;height:22px;padding:0;border:0;border-radius:7px;background:transparent;color:#b3362f;font-size:13px;line-height:1;cursor:pointer}
 .workspace-clean-row button:hover{background:#fbeeec}
 .workspace-clean-row button:disabled{color:#c2c5c9;cursor:default;background:transparent}
-.workspace-clean-footer{margin-top:9px;display:flex;justify-content:flex-end}
-.workspace-clean-footer button{padding:5px 11px;border:1px solid #ecd2d0;border-radius:8px;background:#fff;color:#b3362f;font-size:11px;font-weight:700;cursor:pointer}
-.workspace-clean-footer button:hover{background:#fbeeec}
+.workspace-clean-footer{margin-top:9px;display:flex;justify-content:space-between;gap:8px}
+.workspace-clean-footer button{padding:5px 9px;border:1px solid #d4d4d8;border-radius:6px;background:#fff;color:#3f3f46;font-size:10.5px;font-weight:600;cursor:pointer}
+.workspace-clean-footer button:hover{background:#f4f4f5}
+.workspace-clean-footer button.danger-btn{border-color:#ecd2d0;color:#b3362f}
+.workspace-clean-footer button.danger-btn:hover{background:#fbeeec}
 .task-strip{display:flex;min-width:0;max-width:590px;align-items:center;gap:7px;padding:5px 8px;border-radius:9px;background:#f5f5f5;color:#74777c;font-size:10px}
 .task-strip i{width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:#b8bcc2}
 .task-strip b,.task-strip small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -298,6 +298,12 @@ function registerIpc() {
   secureHandle('app:lightweight-snapshot', () => invokeSafely(() => orchestrator.lightweightSnapshot()));
   secureHandle('workspace:hub', () => invokeSafely(async () => { const current = settings.load(); return { activeWorkspace: current.workspace, recentWorkspaces: current.recentWorkspaces || [] }; }));
   secureHandle('workspace:remove-recent', (_event, targets) => invokeSafely(() => orchestrator.removeRecentWorkspaces(targets)));
+  secureHandle('workspace:clear-active', () => invokeSafely(async () => {
+    const result = await orchestrator.clearActiveWorkspace();
+    invalidateLocalMcpDiscovery();
+    taskNotificationService?.reset();
+    return result;
+  }));
   secureHandle('workspace:switch', (_event, workspace) => invokeSafely(async () => {
     const result = await orchestrator.switchWorkspace(workspace);
     invalidateLocalMcpDiscovery();
@@ -368,12 +374,85 @@ function registerIpc() {
     } catch { /* ignore if no workspace */ }
 
     const logLines = [];
+
+    // 1. Synthesize user-facing activity logs from taskState events and commands
+    if (taskState && Array.isArray(taskState.events) && taskState.events.length) {
+      const formatTime = (iso) => {
+        try {
+          const d = new Date(iso);
+          return isNaN(d.getTime()) ? '' : d.toTimeString().slice(0, 8);
+        } catch { return ''; }
+      };
+
+      for (const ev of taskState.events.slice(-80)) {
+        const timeStr = formatTime(ev.time);
+        const prefix = timeStr ? `[${timeStr}] ` : '';
+        const d = ev.details || {};
+        switch (ev.event) {
+          case 'task_started':
+            logLines.push(`${prefix}🚀 任务启动: ${taskState.objective || d.trigger_tool || '开始执行任务'}`);
+            break;
+          case 'files_modified':
+            logLines.push(`${prefix}📝 文件变更: 影响 ${d.count || 1} 个文件`);
+            break;
+          case 'command_started':
+            logLines.push(`${prefix}⚡ 启动命令: ${d.command || ''}`);
+            break;
+          case 'command_finished':
+            logLines.push(`${prefix}${d.status === 'passed' ? '✔' : '❌'} 命令完成 (${d.status || 'done'}): ${d.command || ''} (耗时: ${d.elapsed_ms || 0}ms, 退出码: ${d.exit_code ?? 0})`);
+            if (d.summary && typeof d.summary === 'string') {
+              const summaryLines = d.summary.split(/\r?\n/).filter(Boolean).slice(0, 20);
+              for (const sl of summaryLines) {
+                logLines.push(`   │ ${sl}`);
+              }
+            }
+            break;
+          case 'command_terminated':
+            logLines.push(`${prefix}⏹ 命令已终止: ${d.command || d.session_id || ''}`);
+            break;
+          case 'tool_failed':
+            logLines.push(`${prefix}❌ 工具调用失败: ${d.name || d.tool || ''} - ${d.error?.message || d.failure || JSON.stringify(d)}`);
+            break;
+          case 'capsule_rollback':
+            logLines.push(`${prefix}⏪ 时间胶囊已回滚: 还原 ${d.restored?.length || 0} 个文件，清理 ${d.removed?.length || 0} 个文件`);
+            break;
+          case 'build_verification_finished':
+            logLines.push(`${prefix}🔍 构建验证完成: ${d.status || ''}`);
+            break;
+          default:
+            logLines.push(`${prefix}ℹ [${ev.event}]: ${JSON.stringify(d)}`);
+            break;
+        }
+      }
+    }
+
+    // 2. If a command is actively running, append its current status/output
+    if (runningCommand) {
+      logLines.push(`⚡ [当前运行中] ${runningCommand.command || ''}`);
+      if (runningCommand.output && typeof runningCommand.output === 'string') {
+        const outLines = runningCommand.output.split(/\r?\n/).filter(Boolean).slice(-30);
+        for (const ol of outLines) {
+          logLines.push(`   │ ${ol}`);
+        }
+      }
+    }
+
+    // 3. Read MCP runtime log file for background server notices, filtering routine HTTP ping noise
     try {
       const targetLog = mcpLogFile();
       const content = await fs.readFile(targetLog, 'utf8');
       const lines = content.split(/\r?\n/).filter(Boolean);
-      logLines.push(...lines.slice(-250));
+      // Filter out high-frequency raw HTTP 200 access logs so they don't drown actual task outputs
+      const serverNotices = lines.filter((l) => !/POST \/mcp HTTP\/1\.1" 200 OK/i.test(l)).slice(-100);
+      if (serverNotices.length) {
+        if (logLines.length) logLines.push('--- [本地 MCP 运行时系统日志] ---');
+        logLines.push(...serverNotices);
+      }
     } catch { /* ignore if log file not created yet */ }
+
+    if (!logLines.length) {
+      logLines.push('暂无控制台日志输出。当 ChatGPT 执行修改文件或运行命令时，实时输出将展示在此处。');
+    }
 
     const modifiedFiles = Array.isArray(taskState?.modified_files) ? taskState.modified_files : [];
 
@@ -486,6 +565,12 @@ function registerIpc() {
   secureHandle('chat:clear-session', () => invokeSafely(async () => {
     if (!chatController) throw new Error('ChatGPT 页面尚未初始化。');
     await chatController.clearSession();
+    try {
+      const { performancePath } = workspaceStatePaths();
+      const raw = await fs.readFile(performancePath, 'utf8').catch(() => null);
+      if (raw) contextUsageTracker.setSessionBaseline(JSON.parse(raw));
+    } catch { /* ignore */ }
+    contextUsageTracker.reset();
     return true;
   }));
   secureHandle('git:file-diff', (_event, relativePath) => invokeSafely(async () => {
@@ -808,6 +893,7 @@ function registerIpc() {
       const { performancePath } = workspaceStatePaths();
       await fs.rm(performancePath, { force: true });
     } catch { /* ignore if not exist */ }
+    contextUsageTracker.setSessionBaseline(null);
     return contextUsageTracker.reset();
   }));
   secureHandle('shell:open', (_event, target) => invokeSafely(async () => {

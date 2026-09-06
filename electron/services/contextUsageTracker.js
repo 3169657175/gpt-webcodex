@@ -155,27 +155,36 @@ class ContextUsageTracker extends EventEmitter {
       }
     }
 
-    let localBytes = 0;
-    let localTokens = 0;
-    for (const call of this.localCalls) {
-      localBytes += call.bytes;
-      localTokens += call.tokens;
-      if (!maxExtCall || call.tokens > maxExtCall.tokens) {
-        maxExtCall = call;
+    // Merge localCalls only if they are not already represented in extCalls
+    if (extBytes === 0) {
+      for (const call of this.localCalls) {
+        if (!maxExtCall || call.tokens > maxExtCall.tokens) {
+          maxExtCall = call;
+        }
+        lastExtCall = call;
+        if (!toolsMap[call.tool]) {
+          toolsMap[call.tool] = { calls: 0, bytes: 0, tokens: 0 };
+        }
+        toolsMap[call.tool].calls += 1;
+        toolsMap[call.tool].bytes += call.bytes;
+        toolsMap[call.tool].tokens += call.tokens;
       }
-      lastExtCall = call;
-      if (!toolsMap[call.tool]) {
-        toolsMap[call.tool] = { calls: 0, bytes: 0, tokens: 0 };
-      }
-      toolsMap[call.tool].calls += 1;
-      toolsMap[call.tool].bytes += call.bytes;
-      toolsMap[call.tool].tokens += call.tokens;
+    }
+
+    let finalBytes = extBytes > 0 ? extBytes : this.localCalls.reduce((s, c) => s + c.bytes, 0);
+    let finalTokens = calculatedTokens > 0 ? calculatedTokens : this.localCalls.reduce((s, c) => s + c.tokens, 0);
+    let finalCalls = extCalls > 0 ? extCalls : this.localCalls.length;
+
+    if (this.sessionBaseline) {
+      finalBytes = Math.max(0, finalBytes - (this.sessionBaseline.bytes || 0));
+      finalTokens = Math.max(0, finalTokens - (this.sessionBaseline.tokens || 0));
+      finalCalls = Math.max(0, finalCalls - (this.sessionBaseline.calls || 0));
     }
 
     const previousTokens = this.totalTokens;
-    this.totalBytes = extBytes + localBytes;
-    this.totalTokens = calculatedTokens + localTokens;
-    this.callCount = extCalls + this.localCalls.length;
+    this.totalBytes = finalBytes;
+    this.totalTokens = finalTokens;
+    this.callCount = finalCalls;
     this.tools = toolsMap;
     if (maxExtCall) this.maxCall = maxExtCall;
     if (lastExtCall) this.lastCall = lastExtCall;
@@ -186,6 +195,18 @@ class ContextUsageTracker extends EventEmitter {
       this.emit('change', snapshot);
     }
     return snapshot;
+  }
+
+  setSessionBaseline(performanceTrace = null) {
+    if (!performanceTrace) {
+      this.sessionBaseline = null;
+    } else {
+      const extBytes = Math.max(0, Number(performanceTrace.request_bytes || 0)) + Math.max(0, Number(performanceTrace.response_bytes || 0));
+      const extCalls = Math.max(0, Number(performanceTrace.tool_calls || 0));
+      const estimatedTokens = Math.round(extBytes / 3.2);
+      this.sessionBaseline = { bytes: extBytes, calls: extCalls, tokens: estimatedTokens };
+    }
+    return this.reset();
   }
 
   pressureLevel() {

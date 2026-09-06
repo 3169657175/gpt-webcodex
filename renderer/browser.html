@@ -78,11 +78,12 @@
       <div class="workspace-clean-wrap">
         <button id="workspaceCleanButton" class="workspace-clean-button" type="button" title="清理最近工作区记录" aria-label="清理最近工作区记录" aria-expanded="false">清理</button>
         <div id="workspaceCleanPopover" class="workspace-clean-popover" hidden>
-          <b>清理最近工作区</b>
-          <p>点击 ✕ 移除单条记录；也可以一键清理全部记录。当前工作区不可删除，删除后可通过“添加工作区”重新加入。</p>
+          <b>工作区记录与退出</b>
+          <p>点击 ✕ 移除单条记录；或点击下方按钮直接退出清空当前工作区。</p>
           <div id="workspaceCleanList"></div>
           <div class="workspace-clean-footer">
-            <button id="workspaceCleanAll" type="button">清理全部记录（保留当前）</button>
+            <button id="workspaceCleanActive" class="danger-btn" type="button" title="退出并解除当前工作区绑定">清空当前工作区</button>
+            <button id="workspaceCleanAll" type="button" title="清理全部历史记录（保留当前）">清理全部记录</button>
           </div>
         </div>
       </div>

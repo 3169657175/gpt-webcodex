@@ -83,6 +83,24 @@ test('ContextUsageTracker accumulates tool calls, tracks max, and computes press
   assert.equal(syncedSnap.pressureLevel, 'heavy'); // budget is 1000, ratio > 5
   assert.ok(syncedSnap.maxCall);
   assert.equal(syncedSnap.maxCall.tool, 'apply_patch');
+
+  // 6. Test session baseline: new session ignores previous 17200 bytes
+  tracker.setSessionBaseline(trace);
+  const freshSessionSnap = tracker.snapshot();
+  assert.equal(freshSessionSnap.totalTokens, 0);
+  assert.equal(freshSessionSnap.callCount, 0);
+  assert.equal(freshSessionSnap.totalBytes, 0);
+
+  // When a new call happens in Python MCP, only the delta is counted
+  const nextTrace = {
+    ...trace,
+    tool_calls: 6,
+    request_bytes: 1500,
+    response_bytes: 18000
+  };
+  const deltaSnap = tracker.syncWithRuntime(nextTrace);
+  assert.equal(deltaSnap.callCount, 1);
+  assert.equal(deltaSnap.totalBytes, 2300); // 19500 - 17200
 });
 
 test('context usage UI and IPC are wired end to end', () => {

@@ -46,14 +46,32 @@ test('removing nothing keeps the existing list with the active workspace first',
   assert.deepEqual(result.recentWorkspaces, ['D:\\work', 'D:\\chatgpt']);
 });
 
+test('clearActiveWorkspace unbinds the active workspace while preserving history', async () => {
+  const store = createStore({ workspace: 'D:\\work', recentWorkspaces: ['D:\\work', 'D:\\chatgpt'] });
+  const orchestrator = createOrchestrator(store);
+  const result = await orchestrator.clearActiveWorkspace();
+  assert.equal(result.activeWorkspace, '');
+  assert.deepEqual(result.recentWorkspaces, ['D:\\work', 'D:\\chatgpt']);
+  assert.equal(store.load().workspace, '');
+
+  // Calling it again when already cleared is a safe no-op
+  const second = await orchestrator.clearActiveWorkspace();
+  assert.equal(second.activeWorkspace, '');
+});
+
 test('workspace cleanup UI and IPC are wired end to end', () => {
   const root = path.join(__dirname, '..');
   const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
   assert.match(read('renderer', 'browser.html'), /id="workspaceCleanButton"/);
   assert.match(read('renderer', 'browser.html'), /id="workspaceCleanPopover"/);
+  assert.match(read('renderer', 'browser.html'), /id="workspaceCleanActive"/);
   assert.match(read('renderer', 'browser.js'), /removeRecentWorkspaces/);
   assert.match(read('renderer', 'browser.js'), /workspaceCleanAll/);
+  assert.match(read('renderer', 'browser.js'), /handleClearActiveWorkspace/);
   assert.match(read('electron', 'browserPreload.js'), /workspace:remove-recent/);
+  assert.match(read('electron', 'browserPreload.js'), /workspace:clear-active/);
   assert.match(read('electron', 'main.js'), /workspace:remove-recent/);
+  assert.match(read('electron', 'main.js'), /workspace:clear-active/);
   assert.match(read('electron', 'services', 'runtimeOrchestrator.js'), /removeRecentWorkspaces\(targets/);
+  assert.match(read('electron', 'services', 'runtimeOrchestrator.js'), /clearActiveWorkspace\(\)/);
 });

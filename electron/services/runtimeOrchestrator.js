@@ -368,6 +368,25 @@ class RuntimeOrchestrator {
     return { activeWorkspace: saved.workspace, recentWorkspaces: saved.recentWorkspaces || [] };
   }
 
+  async clearActiveWorkspace() {
+    if (this.busy) throw new Error('当前已有任务正在运行，无法退出工作区。');
+    const previous = this.settingsStore.load();
+    if (!previous.workspace) {
+      return { activeWorkspace: '', recentWorkspaces: previous.recentWorkspaces || [] };
+    }
+    this.busy = true;
+    try {
+      try {
+        await this.native.stop();
+      } catch { /* ignore stop error */ }
+      const saved = this.settingsStore.save({ workspace: '' });
+      this.invalidateSnapshot();
+      return { activeWorkspace: '', recentWorkspaces: saved.recentWorkspaces || [] };
+    } finally {
+      this.busy = false;
+    }
+  }
+
   async switchWorkspace(nextWorkspace) {
     if (this.busy) throw new Error('当前已有任务正在运行。');
     const previous = this.settingsStore.load();
