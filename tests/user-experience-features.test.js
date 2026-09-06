@@ -112,6 +112,7 @@ test('task checkpoint and one-click time capsule rollback are wired end to end',
   // Verify JS logic in browser.js
   assert.match(js, /handleCreateCheckpoint/);
   assert.match(js, /handleRollbackCheckpoint/);
+  assert.doesNotMatch(js, /updateTaskUi/);
   assert.match(js, /#createCapsuleBtn/);
   assert.match(js, /#rollbackCapsuleBtn/);
   assert.match(js, /#capsuleStatusBadge/);
@@ -161,5 +162,28 @@ test('checkpoint physical fallback handles backup, restore and file deletion saf
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('task snapshot generation cleanly formats modified files without [object Object]', () => {
+  const main = read('electron/main.js');
+  assert.match(main, /extractPath/);
+  const extractPath = (item) => (typeof item === 'string' ? item : (item?.path || ''));
+  const modifiedFiles = [
+    { path: 'src/index.js', operation: 'update' },
+    { path: 'package.json', operation: 'update' },
+    'README.md'
+  ];
+  const formatted = modifiedFiles
+    .map((f) => {
+      const p = extractPath(f);
+      const op = (typeof f === 'object' && f?.operation) ? ` (${f.operation})` : '';
+      return p ? `- \`${p}\`${op}` : null;
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  assert.ok(!formatted.includes('[object Object]'));
+  assert.match(formatted, /- `src\/index\.js` \(update\)/);
+  assert.match(formatted, /- `README\.md`/);
 });
 

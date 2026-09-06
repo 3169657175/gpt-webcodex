@@ -578,6 +578,9 @@ function registerIpc() {
     const targetFile = String(relativePath || '').trim();
     if (!targetFile) throw new Error('未指定要对比的文件。');
     const fullPath = path.resolve(root, targetFile);
+    if (!fullPath.startsWith(root) || path.relative(root, fullPath).startsWith('..')) {
+      throw new Error('对比文件路径不能超出工作区范围。');
+    }
     try {
       // 1. Try git diff HEAD
       const res = await run('git', ['diff', 'HEAD', '--', targetFile], { cwd: root, timeoutMs: 5000 });
@@ -644,10 +647,18 @@ function registerIpc() {
       } catch { /* not git */ }
     }
 
+    const extractPath = (item) => (typeof item === 'string' ? item : (item?.path || ''));
     const objective = taskState?.objective || '持续迭代代码工作区';
     const currentStep = taskState?.current_step || taskState?.next_step || '检查当前代码并推进下一步任务';
     const modified = Array.isArray(taskState?.modified_files) && taskState.modified_files.length
-      ? taskState.modified_files.map((f) => `- \`${f}\``).join('\n')
+      ? taskState.modified_files
+          .map((f) => {
+            const p = extractPath(f);
+            const op = (typeof f === 'object' && f?.operation) ? ` (${f.operation})` : '';
+            return p ? `- \`${p}\`${op}` : null;
+          })
+          .filter(Boolean)
+          .join('\n') || '（暂无已记录的修改文件）'
       : '（暂无已记录的修改文件）';
     const gitSection = gitSummary ? `\n\n**当前 Git 状态变更：**\n\`\`\`\n${gitSummary}\n\`\`\`` : '';
 
@@ -664,7 +675,7 @@ function registerIpc() {
     return {
       snapshot: snapshotMarkdown,
       objective,
-      modifiedFiles: taskState?.modified_files || []
+      modifiedFiles: (taskState?.modified_files || []).map(extractPath).filter(Boolean)
     };
   }));
   secureHandle('checkpoint:create', (_event, options = {}) => invokeSafely(async () => {

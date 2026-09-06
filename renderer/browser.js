@@ -134,7 +134,7 @@ async function handleCreateCheckpoint() {
     const res = unwrap(await api.createCheckpoint({ manual: true }));
     $('#switchState').textContent = '✅ 已成功创建时间胶囊检查点！';
     setTimeout(() => { $('#switchState').textContent = ''; }, 3000);
-    await updateTaskUi();
+    await Promise.all([refreshTask(), refreshTaskConsole()]);
   } catch (err) {
     alert(`创建检查点失败: ${err.message}`);
   } finally {
@@ -161,7 +161,7 @@ async function handleRollbackCheckpoint() {
 
     $('#switchState').textContent = `✅ ${res?.message || '代码已成功回滚到时间胶囊！'}`;
     setTimeout(() => { $('#switchState').textContent = ''; }, 4000);
-    await updateTaskUi();
+    await Promise.all([refreshTask(), refreshTaskConsole()]);
   } catch (err) {
     alert(`回滚失败: ${err.message}`);
   } finally {
