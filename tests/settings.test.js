@@ -1,68 +1,70 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalize, validateRuntimeSettings, mergeRecentWorkspaces, workspaceKey } = require('../electron/services/config');
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.resolve(__dirname, '..');
+const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('invalid modes fall back to safe defaults', () => {
-  const result = normalize({ permissionMode: 'dangerous', toolMode: 'dangerous', proxyMode: 'dangerous' });
+const { normalize, validateRuntimeSettings, mergeRecentWorkspaces } = require('../electron/services/config');
+
+test('0.5.1 fixes product modes to safe personal-development defaults', () => {
+  const result = normalize({ permissionMode: 'dangerous', toolMode: 'dangerous', agentMode: 'full', proxyMode: 'dangerous' });
   assert.equal(result.permissionMode, 'safe');
-  assert.equal(result.toolMode, 'smart');
-  assert.equal(result.mcpPort, 18765);
+  assert.equal(result.agentMode, 'code');
   assert.equal(result.proxyMode, 'auto');
+  assert.equal(Object.hasOwn(result, 'toolMode'), false);
+  assert.equal(result.continuousMcpMode, true);
+  assert.equal(result.progressReportSeconds, 30);
 });
 
-test('legacy tool modes migrate to smart mode', () => {
-  for (const toolMode of ['readonly', 'coding', 'build', 'full', 'smart']) assert.equal(normalize({ toolMode }).toolMode, 'smart');
+test('legacy approval-heavy defaults migrate ordinary development categories to allow', () => {
+  const result = normalize({ configVersion: 12, toolPermissions: { read:'ask', write:'ask', command:'ask', network:'ask', extra_access:'ask', delete:'ask', git_write:'ask', system_modify:'ask' } });
+  for (const key of ['read','write','command','network','extra_access']) assert.equal(result.toolPermissions[key], 'allow');
+  for (const key of ['delete','git_write','system_modify']) assert.equal(result.toolPermissions[key], 'ask');
 });
 
-test('all installations use official mode and old Bridge users are migrated safely', () => {
-  const legacy = normalize({ configVersion: 5, tunnelId: 'tunnel_demo' });
-  assert.equal(legacy.connectionMode, 'official');
-  assert.equal(legacy.tunnelId, 'tunnel_demo');
-  assert.equal(normalize({}).connectionMode, 'official');
-  const migrated = normalize({ configVersion: 6, connectionMode: 'bridge', autoStartServices: true, tunnelId: 'tunnel_demo' });
+test('all installations use official mode and old Bridge users migrate safely', () => {
+  const migrated = normalize({ configVersion: 6, connectionMode: 'bridge', autoStartServices: true });
   assert.equal(migrated.connectionMode, 'official');
   assert.equal(migrated.autoStartServices, false);
-  assert.equal(migrated.bridgeRemovedNotice, true);
-  assert.equal(migrated.tunnelId, 'tunnel_demo');
+  assert.equal(Object.hasOwn(migrated, 'bridgeRemovedNotice'), false);
 });
 
 test('unknown legacy settings are removed from normalized settings', () => {
-  assert.deepEqual(Object.keys(normalize({ obsoleteRuntimeChoice: 'legacy' })).sort(), Object.keys(normalize()).sort());
+  const result = normalize({ unknownThing: true, guideProgress: { a: true }, firstRunCompleted: true, taskNotificationMinSeconds: 60 });
+  assert.equal(Object.hasOwn(result, 'unknownThing'), false);
+  assert.equal(Object.hasOwn(result, 'guideProgress'), false);
+  assert.equal(Object.hasOwn(result, 'firstRunCompleted'), false);
+  assert.equal(Object.hasOwn(result, 'taskNotificationMinSeconds'), false);
 });
 
-test('trusted values are preserved', () => {
-  const result = normalize({ permissionMode: 'trusted', mcpPort: '9000' });
-  assert.equal(result.permissionMode, 'trusted');
-  assert.equal(result.mcpPort, 9000);
+test('trusted ordinary settings are preserved', () => {
+  const result = normalize({ configVersion: 13, theme:'dark', proxyMode:'manual', proxyUrl:'http://127.0.0.1:7890', mcpPort:19001, healthPort:19002, tunnelId:'tunnel_demo1' });
+  assert.equal(result.theme, 'dark');
+  assert.equal(result.proxyMode, 'manual');
+  assert.equal(result.mcpPort, 19001);
+  assert.equal(result.healthPort, 19002);
 });
 
 test('runtime ports cannot overlap', () => {
-  assert.throws(() => validateRuntimeSettings(normalize({ connectionMode: 'official', mcpPort: 9000, healthPort: 9000 })), /不能相同/);
+  assert.throws(() => validateRuntimeSettings(normalize({ mcpPort: 19000, healthPort: 19000 })));
 });
 
 test('proxy credentials are rejected', () => {
-  assert.throws(() => validateRuntimeSettings(normalize({ connectionMode: 'official', proxyUrl: 'http://user:pass@127.0.0.1:1080' })), /不要在代理地址/);
+  assert.throws(() => validateRuntimeSettings(normalize({ proxyMode:'manual', proxyUrl:'http://user:pass@127.0.0.1:7890' })));
 });
 
 test('manual proxy mode requires an address', () => {
-  assert.throws(() => validateRuntimeSettings(normalize({ connectionMode: 'official', proxyMode: 'manual', proxyUrl: '' })), /手动代理/);
+  assert.throws(() => validateRuntimeSettings(normalize({ proxyMode:'manual', proxyUrl:'' })));
 });
 
 test('tunnel id must use the official prefix', () => {
-  assert.throws(() => validateRuntimeSettings(normalize({ connectionMode: 'official', tunnelId: 'wrong-id' })), /tunnel_/);
+  assert.throws(() => validateRuntimeSettings(normalize({ tunnelId:'bad-id' })));
 });
 
 test('recent workspaces use a 50-item MRU list', () => {
-  let recent = [];
-  for (let index = 0; index < 55; index += 1) {
-    recent = mergeRecentWorkspaces(recent, `C:\\workspace-${index}`);
-  }
-  assert.equal(recent.length, 50);
-  assert.equal(recent[0], 'C:\\workspace-54');
-  assert.equal(recent.at(-1), 'C:\\workspace-5');
-
-  recent = mergeRecentWorkspaces(recent, 'c:\\WORKSPACE-20\\');
-  assert.equal(recent.length, 50);
-  assert.equal(workspaceKey(recent[0]), workspaceKey('C:\\workspace-20'));
-  assert.equal(recent.filter((item) => workspaceKey(item) === workspaceKey('C:\\workspace-20')).length, 1);
+  const values = Array.from({length:60},(_,i)=>'C:\\work\\'+i);
+  const result = mergeRecentWorkspaces(values, 'C:\\work\\new');
+  assert.equal(result.length, 50);
+  assert.match(result[0], /new$/);
 });

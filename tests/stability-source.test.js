@@ -1,4 +1,4 @@
-const test = require('node:test');
+﻿const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -54,10 +54,10 @@ test('runtime exposes a versioned schema contract and desktop health detects sta
   const native = read('electron/services/nativeService.js');
   const health = read('electron/services/healthService.js');
   const contract = JSON.parse(read('resources/coding-tools-mcp/schema-contract.json'));
-  assert.equal(contract.schema_version, 7);
+  assert.equal(contract.schema_version, 10);
   assert.equal(contract.tool_count, 9);
   assert.match(contract.schema_hash, /^[a-f0-9]{64}$/);
-  assert.match(server, /TOOL_SCHEMA_VERSION = 7/);
+  assert.match(server, /TOOL_SCHEMA_VERSION = 10/);
   assert.match(server, /tool_schema_hash/);
   assert.match(protocol, /schemaHash/);
   assert.match(native, /runtimeSourceFingerprint/);
@@ -67,14 +67,18 @@ test('runtime exposes a versioned schema contract and desktop health detects sta
   assert.match(health, /runtimeSchema\.runtimeInstanceId/);
 });
 
-test('desktop runtime hot-switches workspaces and shows stale-task progress', () => {
+test('desktop runtime hot-switches workspaces while the chat chrome stays compact', () => {
   const orchestrator = read('electron/services/runtimeOrchestrator.js');
   const browser = read('renderer/browser.js');
+  const workspaceWindow = read('renderer/workspace.js');
   assert.match(orchestrator, /switchMcpWorkspace/);
-  assert.match(orchestrator, /MCP 与 Tunnel 均未重启/);
   assert.match(orchestrator, /async supervise\(\)/);
-  assert.match(browser, /后台任务运行正常/);
-  assert.match(browser, /workspaceSelect/);
+  assert.match(browser, /workspacePickerButton/);
+  assert.match(browser, /function taskPresentation/);
+  assert.match(browser, /setInterval\(refreshTask, 3000\)/);
+  assert.doesNotMatch(browser, /backgroundOperationStatus|progressForTask|taskProgressBar/);
+  assert.match(workspaceWindow, /inspectWorkspaces/);
+  assert.match(workspaceWindow, /cleanupInvalidWorkspaces/);
 });
 
 test('startup failure cleans runtime state and blocks automatic recovery until manual retry', () => {
@@ -90,23 +94,21 @@ test('startup failure cleans runtime state and blocks automatic recovery until m
   assert.match(main, /start\(\{ automatic: true \}\)/);
 });
 
-test('browser task strip exposes stage progress and long-command elapsed time', () => {
+test('browser task strip exposes only user-facing status and a real stop action', () => {
   const html = read('renderer/browser.html');
   const browser = read('renderer/browser.js');
-  assert.match(html, /taskProgressBar/);
-  assert.match(html, /taskProgressText/);
-  assert.match(browser, /function progressForTask/);
-  assert.match(browser, /current_command/);
-  assert.match(browser, /阶段进度/);
+  const preload = read('electron/browserPreload.js');
+  assert.match(html, /id="taskStatusLabel"/);
+  assert.match(html, /id="stopTask"/);
+  assert.doesNotMatch(html, /taskProgressBar|taskProgressText|pauseTask|resumeTask/);
+  assert.match(browser, /function taskPresentation/);
   assert.match(browser, /taskRuntime/);
   assert.match(browser, /runningOperation/);
-  assert.match(browser, /backgroundOperationStatus/);
-  assert.match(browser, /progressLabelForTask/);
-  assert.match(browser, /heartbeatAge/);
-  assert.match(browser, /keepVisibleMs = status === 'completed' \? 30000 : 120000/);
-  assert.match(browser, /if \(!runtime\?\.state\)/);
+  assert.match(browser, /api\.stopTask/);
   assert.match(browser, /setInterval\(refreshTask, 3000\)/);
-  assert.doesNotMatch(browser, /仍在执行，并非卡死/);
+  assert.doesNotMatch(browser, /progressForTask|backgroundOperationStatus|heartbeatAge/);
+  assert.match(preload, /stopTask: \(\) => ipcRenderer\.invoke\('task-state:stop'\)/);
+  assert.doesNotMatch(preload, /pauseTask|resumeTask|performanceTrace/);
 });
 
 test('desktop reuses one local MCP client instead of rediscovering tools for every status poll', () => {
@@ -117,14 +119,21 @@ test('desktop reuses one local MCP client instead of rediscovering tools for eve
   assert.doesNotMatch(main, /const client = new LocalMcpClient\(\{ port: current\.mcpPort, token, log \}\);\s*await client\.discoverTools\(\);/);
 });
 
-test('manager task page renders background operations', () => {
+test('Manager exposes compact task details without restoring the internal task console', () => {
   const html = read('renderer/index.html');
   const manager = read('renderer/app.js');
-  assert.match(html, /id="taskOperations"/);
-  assert.match(manager, /renderTaskOperations/);
-  assert.match(manager, /progress_report_seconds/);
-  assert.match(manager, /心跳正常/);
-  assert.match(manager, /已中断，可恢复/);
+  const preload = read('electron/preload.js');
+  const browserPreload = read('electron/browserPreload.js');
+  assert.doesNotMatch(html, /data-page-view="task"|taskOperations|taskHistory|历史与性能/);
+  assert.match(html, /id="taskPanel"/);
+  assert.match(html, /id="taskObjective"/);
+  assert.match(html, /id="taskCurrentStep"/);
+  assert.match(html, /技术详情/);
+  assert.match(manager, /refreshTaskRuntime/);
+  assert.match(preload, /taskRuntime/);
+  assert.doesNotMatch(preload, /performanceTrace|taskHistory/);
+  assert.match(browserPreload, /taskRuntime/);
+  assert.match(browserPreload, /stopTask/);
 });
 
 test('desktop task notifications prefer authenticated MCP task events with slow polling only as fallback', () => {
@@ -164,25 +173,44 @@ test('runtime heartbeat alerts only after sustained unexpected outages and repor
   assert.match(main, /acceptRuntimeStatus\?\.\(status\)/);
 });
 
-test('desktop shell observes real task boundaries and exposes notification preferences', () => {
+test('0.5.5 keeps last known task progress when a status refresh temporarily fails', () => {
+  const manager = read('renderer/app.js');
+  const server = read('resources/coding-tools-mcp/coding_tools_mcp/server.py');
+  assert.match(manager, /taskRuntimeError: null/);
+  assert.match(manager, /状态读取暂时失败，保留上次进度/);
+  assert.doesNotMatch(manager, /catch \{\s*state\.taskRuntime = null;\s*renderTaskRuntime\(\)/);
+  assert.match(server, /command_read_only = name == "command_control" and command_action in \{"poll", "read"\}/);
+  assert.match(server, /str\(item\.get\("status"\) or ""\) in \{"running", "queued"\}/);
+});
+
+test('desktop shell observes real task boundaries and keeps only useful notification preferences', () => {
   const main = read('electron/main.js');
   const manager = read('renderer/index.html');
   const preload = read('electron/preload.js');
   assert.match(main, /TaskNotificationService/);
-  assert.match(main, /notification:test/);
   assert.match(main, /setAppUserModelId/);
-  assert.match(manager, /Windows 桌面任务提醒/);
-  assert.match(preload, /testTaskNotification/);
+  assert.match(manager, /id="taskNotificationsToggle"/);
+  assert.match(manager, /id="taskNotificationSoundToggle"/);
+  assert.doesNotMatch(manager, /testTaskNotification|taskNotificationOnlyWhenUnfocused|taskNotificationMinSeconds/);
+  assert.doesNotMatch(preload, /testTaskNotification/);
 });
 
 test('workspace context exposes project instructions and local context pressure', () => {
   const server = read('resources/coding-tools-mcp/coding_tools_mcp/server.py');
   const results = read('resources/coding-tools-mcp/coding_tools_mcp/tool_results.py');
   assert.match(server, /"project_instructions": instruction_summary/);
-  assert.match(server, /"context_pressure": self\._context_pressure_snapshot\(\)/);
+  assert.match(server, /"context_pressure": context_pressure/);
   assert.match(server, /"core_entries": core_entries/);
   assert.match(server, /"recommended_next_action": recommended_next_action/);
   assert.match(server, /classify_context_pressure\(tool_calls, response_bytes, files_read\)/);
+  assert.match(server, /"large_payloads": large_payloads/);
+  assert.match(server, /"command_heavy": command_heavy/);
+  assert.match(server, /"diff_heavy": diff_heavy/);
+  assert.match(server, /"history_heavy": history_heavy/);
+  assert.match(server, /"recommend_compact": recommend_compact/);
+  assert.match(server, /context_budget_snapshot\(context_pressure\)/);
+  assert.match(server, /"runtime_layers": runtime_layers/);
+  assert.match(server, /tool_registry_snapshot/);
   assert.doesNotMatch(server, /tool_calls >= 50 or response_bytes/);
   assert.match(results, /def _render_workspace_context/);
   assert.match(results, /"workspace_context": _render_workspace_context/);
@@ -200,51 +228,87 @@ test('prepare context uses internal adaptive budgets and search windows', () => 
   assert.doesNotMatch(workflowSchema, /"max_total_bytes"/);
 });
 
-test('performance trace counts files read and the manager surfaces pressure without crowding chat chrome', () => {
+test('performance trace remains backend infrastructure and is removed from the Manager UI', () => {
   const trace = read('resources/coding-tools-mcp/coding_tools_mcp/performance_trace.py');
   const server = read('resources/coding-tools-mcp/coding_tools_mcp/server.py');
   const client = read('electron/services/localMcpClient.js');
   const manager = read('renderer/app.js');
   const browser = read('renderer/browser.js');
-  const html = read('renderer/browser.html');
-  assert.match(trace, /TRACE_VERSION = 2/);
+  const html = read('renderer/index.html');
+  assert.match(trace, /TRACE_VERSION = 3/);
   assert.match(trace, /"context_visible": visible/);
   assert.match(trace, /state\["tool_calls"\] \+= 1/);
-  assert.match(trace, /state\["desktop_calls"\] \+= 1/);
-  assert.match(trace, /"files_read": 0/);
   assert.match(trace, /state\["files_read"\] \+= event\["files_read"\]/);
-  assert.match(server, /origin="system"/);
+  assert.match(trace, /state\["large_payloads"\] \+= 1/);
   assert.match(server, /trace_origin=self\._trace_origin\(\)/);
-  assert.match(server, /tool_calls = max\(0, int\(trace\.get\("tool_calls"/);
-  assert.doesNotMatch(server, /tool_calls = len\(session_events\)/);
   assert.match(client, /X-Coding-Tools-Origin': 'desktop'/);
-  assert.doesNotMatch(html, /id="contextPressure"/);
-  assert.doesNotMatch(html, /id="workspaceChips"/);
+  assert.doesNotMatch(html, /contextPressureStatus|performanceMetrics|performanceTimeline/);
+  assert.doesNotMatch(manager, /renderPerformanceTrace|loadPerformanceTrace|contextPressureStatus/);
   assert.doesNotMatch(browser, /refreshContextPressure/);
-  assert.match(manager, /contextPressureStatus/);
-  assert.match(manager, /读取文件/);
-  assert.match(manager, /MCP 输出/);
 });
 
-test('desktop task center wires isolated worktree inspection, safe apply and discard actions', () => {
+test('Worktree safety is hidden normally but recoverable when isolated changes need attention', () => {
   const server = read('resources/coding-tools-mcp/coding_tools_mcp/server.py');
   const worktrees = read('resources/coding-tools-mcp/coding_tools_mcp/worktrees.py');
   const main = read('electron/main.js');
   const preload = read('electron/preload.js');
   const manager = read('renderer/app.js');
+  const html = read('renderer/index.html');
   assert.match(server, /"active_worktree": active_worktree/);
   assert.match(server, /worktree_apply/);
   assert.match(main, /mcp:task-worktrees/);
   assert.match(main, /mcp:task-worktree-diff/);
   assert.match(main, /mcp:task-worktree-apply/);
   assert.match(main, /mcp:task-worktree-discard/);
-  assert.match(preload, /taskWorktreeDiff/);
-  assert.match(preload, /applyTaskWorktree/);
-  assert.match(preload, /discardTaskWorktree/);
-  assert.match(manager, /taskWorktrees/);
-  assert.match(manager, /applyTaskWorktree/);
-  assert.match(manager, /window\.confirm/);
   assert.match(worktrees, /def apply_back/);
   assert.match(worktrees, /WORKTREE_APPLY_CONFLICT/);
   assert.match(worktrees, /primary_index_untouched/);
+  assert.match(preload, /taskWorktreeDiff/);
+  assert.match(preload, /applyTaskWorktree/);
+  assert.match(preload, /discardTaskWorktree/);
+  assert.match(manager, /unresolvedWorktree/);
+  assert.match(manager, /viewWorktreeDiff/);
+  assert.match(html, /id="worktreePanel" hidden/);
+  assert.doesNotMatch(html, /data-page-view="worktree"|Git 隔离与后台运行/);
+});
+
+test('tunnel supervision checks the real upstream route and refreshes proxy selection before recovery', () => {
+  const tunnel = read('electron/services/tunnelService.js');
+  const orchestrator = read('electron/services/runtimeOrchestrator.js');
+  assert.match(tunnel, /tunnelProxyUrl/);
+  assert.match(tunnel, /probeHttpProxy/);
+  assert.match(tunnel, /probeDirect/);
+  assert.match(tunnel, /requireUpstream/);
+  assert.match(tunnel, /connectionStatus/);
+  assert.match(orchestrator, /tunnel\.connectionStatus\(settings\)/);
+  assert.match(orchestrator, /tunnelUpstreamReachable/);
+  assert.match(orchestrator, /const failureThreshold = failureLayer === 'tunnel' \? 6 : 3/);
+  assert.match(orchestrator, /if \(!failureLayer\) \{/);
+  assert.match(orchestrator, /resolveProxy\(settings, \{ force: true \}\)/);
+  assert.match(orchestrator, /暂不重启 Tunnel/);
+  assert.match(orchestrator, /restartTunnel\(\{ automatic: true \}\)/);
+});
+
+test('chat transient recovery never force-reloads an active conversation', () => {
+  const controller = read('electron/chatViewController.js');
+  assert.match(controller, /function isChatConversationUrl/);
+  assert.match(controller, /if \(isChatConversationUrl\(url\)\)/);
+  assert.match(controller, /保留对话上下文并交由页面自身恢复，不自动重载/);
+  assert.match(controller, /reloadIgnoringCache/);
+});
+
+
+test('tunnel diagnostics read only the local admin status and expose main channel identity', () => {
+  const tunnel = read('electron/services/tunnelService.js');
+  const orchestrator = read('electron/services/runtimeOrchestrator.js');
+  const main = read('electron/main.js');
+  const preload = read('electron/preload.js');
+  assert.match(tunnel, /readLocalJson\(settings\.healthPort, '\/api\/status'\)/);
+  assert.match(tunnel, /client_instance_id/);
+  assert.match(tunnel, /mainChannelProbe/);
+  assert.match(tunnel, /mainChannelReady/);
+  assert.match(orchestrator, /tunnelDiagnostics: tunnelState/);
+  assert.match(main, /chat:state/);
+  assert.match(main, /chatController\?\.getState\(\)/);
+  assert.match(preload, /onChatState/);
 });

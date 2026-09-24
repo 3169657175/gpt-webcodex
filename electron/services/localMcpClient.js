@@ -155,6 +155,65 @@ class LocalMcpClient {
     });
   }
 
+  async controlPost(pathname, payload = {}, options = {}) {
+    if (!Number.isInteger(this.port) || this.port < 1) throw new Error('本地 MCP 端口无效。');
+    if (!this.token) throw new Error('本地 MCP 认证 Token 未配置。');
+    const body = JSON.stringify(payload && typeof payload === 'object' ? payload : {});
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 10000));
+    return new Promise((resolve, reject) => {
+      const request = http.request({
+        host: '127.0.0.1', port: this.port, path: String(pathname || '/'), method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json', Accept: 'application/json',
+          'X-Coding-Tools-Origin': 'desktop', 'Content-Length': Buffer.byteLength(body)
+        },
+        timeout: timeoutMs
+      }, (response) => {
+        let text = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => { if (Buffer.byteLength(text) < 1024 * 1024) text += chunk; });
+        response.on('end', () => {
+          let parsed = {};
+          try { parsed = text ? JSON.parse(text) : {}; }
+          catch { reject(new Error('本地 MCP 控制接口返回了无法解析的响应。')); return; }
+          if ((response.statusCode || 500) >= 400 || parsed?.ok === false) {
+            const error = new Error(parsed?.error || parsed?.message || `本地 MCP 控制请求失败（HTTP ${response.statusCode}）。`);
+            error.code = String(parsed?.code || '');
+            error.details = parsed?.details && typeof parsed.details === 'object' ? parsed.details : null;
+            reject(error);
+            return;
+          }
+          resolve(parsed);
+        });
+      });
+      request.on('timeout', () => request.destroy(new Error(`本地 MCP 控制请求超时（${timeoutMs} ms）。`)));
+      request.on('error', reject);
+      request.end(body);
+    });
+  }
+
+  historySearch(options = {}) {
+    return this.controlPost('/__control/history', {
+      action: 'search',
+      query: String(options.query || '').slice(0, 1000),
+      scope: options.scope === 'session' ? 'session' : 'project',
+      limit: Math.max(1, Math.min(Number(options.limit || 30), 100))
+    }, { timeoutMs: 10000 });
+  }
+
+  prepareHistoryResume(historyId) {
+    return this.controlPost('/__control/history', { action: 'prepare_resume', history_id: String(historyId || '').slice(0, 160) }, { timeoutMs: 10000 });
+  }
+
+  compactLocalSession() {
+    return this.controlPost('/__control/compact', {}, { timeoutMs: 10000 });
+  }
+
+  memoryControl(payload = {}) {
+    return this.controlPost('/__control/memory', payload && typeof payload === 'object' ? payload : {}, { timeoutMs: 30000 });
+  }
+
   async discoverTools() {
     const previousIdentity = this.runtimeIdentityKey;
     // Discovery is deliberately stateless. A runtime restarted on the same port

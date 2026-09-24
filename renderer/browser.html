@@ -21,6 +21,7 @@
         <span id="downloadState" class="download-state"></span>
         <span id="mcpState" title="Coding Tools MCP 本地服务状态"><i></i>本地工具</span>
         <span id="tunnelState" title="OpenAI Tunnel 连接状态"><i></i><em id="connectionStateLabel">连接通道</em></span>
+        <span id="schemaRefreshHint" hidden>工具已升级 · 建议新聊天</span>
         <button id="managerButton" class="manager-button">设置</button>
       </div>
     </div>
@@ -35,20 +36,27 @@
           <div><span>最近检查</span><strong id="workspaceHealthTime">-</strong></div>
         </div>
       </div>
-      <div class="task-strip" id="taskStrip">
-        <i></i><b id="taskTitle">暂无任务</b><small id="taskStep"></small>
-        <span class="task-progress" aria-hidden="true"><span id="taskProgressBar"></span></span><span id="taskProgressText" class="task-progress-text"></span>
-        <button id="pauseTask">暂停</button><button id="resumeTask">继续</button><button id="stopTask">停止</button>
+      <div class="task-strip idle" id="taskStrip" title="当前没有运行中的本地任务">
+        <i></i><b id="taskStatusLabel">空闲</b><small id="taskTitle">暂无任务</small>
+        <button id="stopTask" type="button" hidden>停止</button>
       </div>
-      <select id="workspaceSelect" class="workspace-select" aria-label="全部工作区"><option value="">全部工作区</option></select>
+      <div class="workspace-picker" id="workspacePicker">
+        <button id="workspacePickerButton" class="workspace-select" type="button" aria-expanded="false" title="打开独立工作区中心">全部工作区</button>
+      </div>
       <div id="switchState" class="switch-state"></div>
       <button id="addAuthorizedRootQuick" class="add-workspace secondary-action" title="授权一个额外目录，无需切换主工作区">＋ 授权目录</button>
       <button id="addWorkspace" class="add-workspace">＋ 添加工作区</button>
+    </div>
+    <div class="progress-band" id="progressBand" role="status" aria-live="polite">
+      <span class="progress-band-icon" id="progressIcon"></span>
+      <div class="progress-band-copy"><b id="progressMessage">正在读取任务进度…</b><small id="progressDetail">本地任务状态会持续更新</small></div>
+      <time id="progressElapsed"></time>
     </div>
   </header>
   <main class="loading-stage">
     <div class="loading-card"><div class="spinner"></div><h1>正在打开 ChatGPT</h1><p>聊天页面与本地工作区权限相互隔离。</p></div>
   </main>
+  <script src="progressPresentation.js"></script>
   <script src="browser.js"></script>
 </body>
 </html>

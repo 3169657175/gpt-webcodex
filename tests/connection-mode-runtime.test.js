@@ -47,5 +47,7 @@ test('runtime orchestrator has no DOM Bridge channel', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '..', 'electron/services/runtimeOrchestrator.js'), 'utf8');
   assert.match(source, /this\.tunnel\.start/);
   assert.doesNotMatch(source, /this\.bridge|bridgeRunning|bridge-start|bridge-local/);
-  assert.match(source, /fullyReady: runtimeRunning && tunnelRunning/);
+  assert.match(source, /connectionStatus/);
+  assert.match(source, /const connectionRunning = tunnelRunning/);
+  assert.match(source, /fullyReady: runtimeRunning && connectionRunning/);
 });

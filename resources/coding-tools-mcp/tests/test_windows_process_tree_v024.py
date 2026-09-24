@@ -78,6 +78,10 @@ class WindowsProcessTreeTests(unittest.TestCase):
                     check=False,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
+            if parent.stdout is not None:
+                parent.stdout.close()
+            if parent.stderr is not None:
+                parent.stderr.close()
 
 
 if __name__ == "__main__":

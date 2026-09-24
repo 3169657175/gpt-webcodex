@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -19,17 +20,40 @@ from coding_tools_mcp.server import Runtime
 from coding_tools_mcp.task_state import TaskStateStore
 
 
+def run_hidden(*args, **kwargs):
+    flag = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if flag and "creationflags" not in kwargs:
+        kwargs["creationflags"] = flag
+    return subprocess.run(*args, **kwargs)
+
 class RuntimeScenarioTests(unittest.TestCase):
+    def test_worktree_apply_and_discard_reject_queued_operation_for_same_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            runtime = Runtime(Path(temp), permission_mode="dangerous")
+            runtime.background_operations["queued-op"] = {
+                "operation_id": "queued-op",
+                "run_id": "run-busy",
+                "event": threading.Event(),
+                "execution_lifecycle_state": "queued",
+            }
+            for action in ("worktree_apply", "worktree_discard"):
+                with self.assertRaises(ToolFailure) as raised:
+                    runtime.task_control({"action": action, "run_id": "run-busy"})
+                self.assertEqual(raised.exception.code, "WORKTREE_BUSY")
+                self.assertEqual(raised.exception.details["lifecycle_state"], "queued")
+            runtime.background_operations.clear()
+            runtime.close()
+
     def _git_repo(self, root: Path) -> None:
         git = shutil.which("git")
         self.assertTrue(git)
         for args in [
             ["init"], ["config", "user.email", "tests@example.invalid"], ["config", "user.name", "Runtime Tests"],
         ]:
-            completed = subprocess.run([git, "-C", str(root), *args], capture_output=True, text=True, check=False)
+            completed = run_hidden([git, "-C", str(root), *args], capture_output=True, text=True, check=False)
             self.assertEqual(completed.returncode, 0, completed.stderr)
-        subprocess.run([git, "-C", str(root), "add", "-A"], check=True)
-        subprocess.run([git, "-C", str(root), "commit", "-m", "base"], check=True, capture_output=True)
+        run_hidden([git, "-C", str(root), "add", "-A"], check=True)
+        run_hidden([git, "-C", str(root), "commit", "-m", "base"], check=True, capture_output=True)
 
     def test_execute_auto_isolation_keeps_dirty_primary_workspace_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -38,7 +62,7 @@ class RuntimeScenarioTests(unittest.TestCase):
             self._git_repo(root)
             (root / "app.txt").write_text("base\nuser dirty\n", encoding="utf-8")
             git = shutil.which("git")
-            before_status = subprocess.run([git, "-C", str(root), "status", "--porcelain=v1"], capture_output=True, text=True, check=True).stdout
+            before_status = run_hidden([git, "-C", str(root), "status", "--porcelain=v1"], capture_output=True, text=True, check=True).stdout
             runtime = Runtime(root, permission_mode="dangerous")
             result = runtime.agent_workflow({
                 "workflow": "feature", "phase": "execute", "objective": "isolated edit",
@@ -53,7 +77,7 @@ class RuntimeScenarioTests(unittest.TestCase):
             self.assertEqual((worktree / "app.txt").read_text(encoding="utf-8"), "base\nuser dirty\nagent change\n")
             self.assertIn("+agent change", result["execution"]["git_diff"]["diff"])
             self.assertNotIn("+user dirty", result["execution"]["git_diff"]["diff"])
-            after_status = subprocess.run([git, "-C", str(root), "status", "--porcelain=v1"], capture_output=True, text=True, check=True).stdout
+            after_status = run_hidden([git, "-C", str(root), "status", "--porcelain=v1"], capture_output=True, text=True, check=True).stdout
             self.assertEqual(before_status, after_status)
             runtime.worktrees.discard(result["task"]["run_id"])
             runtime.close()
@@ -79,7 +103,7 @@ class RuntimeScenarioTests(unittest.TestCase):
             (root / "app.txt").write_text("base\n", encoding="utf-8")
             self._git_repo(root)
             git = shutil.which("git")
-            before_status = subprocess.run([git, "-C", str(root), "status", "--porcelain=v1"], capture_output=True, text=True, check=True).stdout
+            before_status = run_hidden([git, "-C", str(root), "status", "--porcelain=v1"], capture_output=True, text=True, check=True).stdout
             runtime = Runtime(root, permission_mode="dangerous")
             first = runtime.agent_workflow({
                 "workflow": "bugfix", "phase": "execute", "objective": "resume isolated edit",
@@ -114,7 +138,7 @@ class RuntimeScenarioTests(unittest.TestCase):
                 Path(worktree_path).joinpath("app.txt").read_text(encoding="utf-8"),
                 "base\nfirst isolated change\nsecond isolated change\n",
             )
-            after_status = subprocess.run([git, "-C", str(root), "status", "--porcelain=v1"], capture_output=True, text=True, check=True).stdout
+            after_status = run_hidden([git, "-C", str(root), "status", "--porcelain=v1"], capture_output=True, text=True, check=True).stdout
             self.assertEqual(before_status, after_status)
             runtime.worktrees.discard(run_id)
             runtime.close()

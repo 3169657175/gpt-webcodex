@@ -4,6 +4,10 @@ let switching = false;
 let activeWorkspace = '';
 let lastRuntimeState = null;
 let lastRuntimeCheckAt = 0;
+let workspaceHubState = { workspaces: [] };
+let lastApprovalRequestId = '';
+let lastStreamState = { status: 'unknown', updatedAt: 0 };
+let progressInput = { task: null, operation: null, available: true };
 
 function unwrap(result) {
   if (!result?.ok) throw new Error(result?.error || '操作失败');
@@ -14,84 +18,31 @@ function baseName(value) {
   return String(value || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || value || '未选择';
 }
 
-function formatDuration(milliseconds) {
-  const seconds = Math.max(0, Math.floor(Number(milliseconds || 0) / 1000));
-  if (seconds < 60) return `${seconds}秒`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  if (minutes < 60) return `${minutes}分${rest}秒`;
-  return `${Math.floor(minutes / 60)}小时${minutes % 60}分`;
-}
-
-function backgroundOperationStatus(operation) {
-  const status = String(operation?.status || '');
-  if (status === 'interrupted') return '后台任务已中断，可恢复';
-  if (status === 'failed') return '后台任务执行失败';
-  if (status === 'completed') return '后台任务已完成';
-  if (status !== 'running') return '';
-  const heartbeatAge = Number(operation?.heartbeat_age_seconds ?? 0);
-  if (heartbeatAge >= 15) return `后台任务心跳异常（${heartbeatAge}秒未更新）`;
-  return '后台任务运行正常';
-}
-
-function humanizeTaskText(value) {
-  const raw = String(value || '').trim();
-  const key = raw.toLowerCase();
-  const labels = {
-    'waiting for model': '等待模型继续处理',
-    'waiting for user': '等待你处理',
-    completed: '已完成',
-    'verification failed': '验证失败',
-    'requested check failed': '检查失败',
-    'running requested checks': '正在执行检查',
-    'run complete agent workflow': '正在执行完整任务',
-    'apply workspace changes': '正在修改项目',
-    'run requested checks': '正在验证修改',
-    'finalize verified result': '正在整理结果'
-  };
-  return labels[key] || raw;
-}
-
-function progressForTask(task, status) {
-  if (status === 'completed') return 100;
-  const steps = Array.isArray(task?.steps) ? task.steps : [];
-  if (steps.length) {
-    const completed = steps.filter((step) => String(step?.status || '') === 'completed').length;
-    const active = steps.filter((step) => ['in_progress', 'active', 'running'].includes(String(step?.status || ''))).length;
-    return Math.max(status === 'active' ? 5 : 0, Math.min(95, Math.round(((completed + active * 0.5) / steps.length) * 100)));
-  }
-  const kind = String(task?.current_command?.kind || '');
-  if (kind === 'build') return 85;
-  if (kind === 'test') return 72;
-  if (kind === 'command') return 52;
-  const step = String(task?.current_step || '').toLowerCase();
-  if (step.includes('completed')) return 100;
-  if (step.includes('build')) return 82;
-  if (step.includes('test') || step.includes('verify')) return 70;
-  if (step.includes('apply') || step.includes('modify') || step.includes('patch')) return 42;
-  if (status === 'waiting') return 62;
-  if (status === 'paused') return 50;
-  if (status === 'failed' || status === 'stopped') return 100;
-  return status === 'active' ? 18 : 0;
-}
-
-function progressLabelForTask(task, status, runningOperation, command) {
-  if (runningOperation || (command && String(command.status || '') === 'running')) return '运行中';
-  if (status === 'completed') return '100%';
-  if (status === 'failed') return '失败';
-  if (status === 'stopped') return '已停止';
-  if (status === 'paused') return '已暂停';
-  if (status === 'waiting') return '等待';
-  const steps = Array.isArray(task?.steps) ? task.steps : [];
-  if (steps.length) {
-    const completed = steps.filter((step) => String(step?.status || '') === 'completed').length;
-    return `${completed}/${steps.length}`;
-  }
-  return status === 'active' ? '进行中' : '';
+function taskPresentation(task, runningOperation) {
+  const lifecycle = String(task?.lifecycle_state || '');
+  const rawStatus = String(task?.status || '');
+  const running = Boolean(runningOperation)
+    || ['active', 'running', 'created', 'preparing'].includes(rawStatus)
+    || ['created', 'preparing', 'running'].includes(lifecycle);
+  const needsUser = ['needs_user', 'waiting_user', 'waiting_approval', 'paused'].includes(lifecycle)
+    || rawStatus === 'paused'
+    || (rawStatus === 'waiting' && lifecycle !== 'waiting_model');
+  const failed = lifecycle === 'failed' || rawStatus === 'failed';
+  const stopped = lifecycle === 'cancelled' || rawStatus === 'stopped';
+  const completed = lifecycle === 'completed' || rawStatus === 'completed';
+  if (running) return { key: 'active', label: '执行中', detail: task?.objective || '正在处理本地开发任务', canStop: true };
+  if (lifecycle === 'waiting_model') return { key: 'waiting', label: '等待模型', detail: task?.current_step || task?.objective || '等待 ChatGPT 继续处理', canStop: false };
+  if (needsUser) return { key: 'waiting', label: '等待处理', detail: task?.next_step || task?.current_step || task?.objective || '任务正在等待你的处理', canStop: false };
+  if (failed) return { key: 'failed', label: '失败', detail: task?.failure || task?.objective || '任务执行失败', canStop: false };
+  if (stopped) return { key: 'stopped', label: '已停止', detail: task?.objective || '任务已停止', canStop: false };
+  if (completed) return { key: 'completed', label: '已完成', detail: task?.objective || '任务已完成', canStop: false };
+  return { key: 'idle', label: '空闲', detail: '暂无任务', canStop: false };
 }
 
 function renderChatState(state) {
   if (!state) return;
+  lastStreamState = state.streamState || lastStreamState;
+  renderProgress();
   $('#backButton').disabled = !state.canGoBack;
   $('#forwardButton').disabled = !state.canGoForward;
   const element = $('#pageState');
@@ -103,10 +54,24 @@ function renderChatState(state) {
     : state.loading ? '正在切换页面…' : 'ChatGPT 已就绪';
 }
 
+function renderProgress() {
+  const view = window.progressPresentation.describe(progressInput.task, progressInput.operation, lastStreamState, Date.now(), progressInput.available);
+  const band = $('#progressBand');
+  band.className = `progress-band ${view.key}`;
+  $('#progressMessage').textContent = view.message;
+  $('#progressDetail').textContent = view.detail;
+  $('#progressElapsed').textContent = view.elapsed ? `已运行 ${view.elapsed}` : '';
+}
+
 function renderServiceState(state) {
   lastRuntimeState = state || null;
   lastRuntimeCheckAt = Date.now();
   const connectionRunning = state?.tunnelRunning;
+  const schemaHint = $('#schemaRefreshHint');
+  if (schemaHint) {
+    schemaHint.hidden = !state?.chatSchemaRefreshRecommended;
+    schemaHint.title = state?.schemaRefreshNotice?.message || '如果当前聊天在工具升级前已经打开，请新建聊天刷新 MCP 工具参数。';
+  }
   const label = $('#connectionStateLabel');
   if (label) label.textContent = '连接通道';
   [['#mcpState', state?.mcpRunning], ['#tunnelState', connectionRunning]].forEach(([selector, value]) => {
@@ -136,92 +101,69 @@ async function refreshStatus() {
 }
 
 async function refreshTask() {
+  const strip = $('#taskStrip');
+  if (!strip) return;
   try {
     let runtime = null;
-    if (api.taskRuntime) {
-      try { runtime = unwrap(await api.taskRuntime()); } catch { runtime = null; }
+    try { runtime = unwrap(await api.taskRuntime({ detail: 'compact' })); } catch { runtime = null; }
+    let task = runtime?.state || null;
+    if (!task) {
+      try { task = unwrap(await api.taskState())?.state || null; } catch { task = null; }
     }
-    let fallbackPayload = null;
-    if (!runtime?.state) {
-      try { fallbackPayload = unwrap(await api.taskState()); } catch { fallbackPayload = null; }
-    }
-    let task = runtime?.state || fallbackPayload?.state || null;
-    const activeWorktree = runtime?.active_worktree && runtime.active_worktree.exists !== false ? runtime.active_worktree : null;
     const runningOperation = Array.isArray(runtime?.operations)
       ? runtime.operations.filter((item) => item?.status === 'running').slice(-1)[0]
       : null;
-    const now = Date.now();
-    let status = String(task?.status || (runningOperation ? 'active' : 'idle'));
-    if (task && ['completed', 'failed', 'stopped'].includes(status) && !runningOperation && !activeWorktree) {
-      const terminalUpdatedAt = Date.parse(task.updated_at || task.created_at || '') || now;
-      const keepVisibleMs = status === 'completed' ? 30000 : 120000;
-      if (now - terminalUpdatedAt > keepVisibleMs) {
-        task = null;
-        status = 'idle';
-      }
+    if (task && ['completed', 'failed', 'stopped'].includes(String(task.status || '')) && !runningOperation) {
+      const updatedAt = Date.parse(task.updated_at || task.created_at || '') || Date.now();
+      const keepVisibleMs = task.status === 'completed' ? 30000 : 120000;
+      const newerChatTurn = lastStreamState.status === 'generating' && Number(lastStreamState.updatedAt || 0) > updatedAt;
+      if (newerChatTurn || Date.now() - updatedAt > keepVisibleMs) task = null;
     }
-    const strip = $('#taskStrip');
-    strip.className = `task-strip ${status}`;
-    strip.classList.toggle('isolated', Boolean(activeWorktree));
-    $('#taskTitle').textContent = task?.objective || (runningOperation ? '后台任务运行中' : '暂无任务');
-    if ((!task || status === 'idle') && !runningOperation) {
-      $('#taskStep').textContent = '';
-      $('#taskProgressBar').style.width = '0%';
-      $('#taskProgressText').textContent = '';
-      strip.title = '';
+    progressInput = { task, operation: runningOperation, available: Boolean(runtime || task) || lastRuntimeState?.mcpRunning === false };
+    renderProgress();
+    const view = taskPresentation(task, runningOperation);
+    strip.className = `task-strip ${view.key}`;
+    $('#taskStatusLabel').textContent = view.label;
+    $('#taskTitle').textContent = view.detail;
+    $('#taskTitle').title = view.detail;
+    $('#stopTask').hidden = !view.canStop;
+    strip.title = view.canStop ? '任务正在后台执行；需要时可以停止' : view.detail;
+  } catch {
+    progressInput = { task: null, operation: null, available: false };
+    renderProgress();
+    strip.className = 'task-strip idle';
+    $('#taskStatusLabel').textContent = '空闲';
+    $('#taskTitle').textContent = '暂无任务';
+    $('#stopTask').hidden = true;
+  }
+}
+
+async function refreshApprovals() {
+  if (!api.approvalList || !api.openApprovalWindow) return;
+  try {
+    const payload = unwrap(await api.approvalList());
+    const pending = Array.isArray(payload?.pending) ? payload.pending : [];
+    const newest = pending[0]?.request_id || '';
+    if (!newest) {
+      lastApprovalRequestId = '';
       return;
     }
-    const createdAt = Date.parse(task.created_at || task.updated_at || '') || now;
-    const updatedAt = Date.parse(task.updated_at || task.created_at || '') || createdAt;
-    const elapsed = formatDuration(now - createdAt);
-    const idleFor = now - updatedAt;
-    const progress = progressForTask(task, status);
-    const parts = [humanizeTaskText(task?.current_step || task?.next_step) || '任务处理中'];
-    if (activeWorktree) parts.unshift('安全隔离中');
-    if (runningOperation) {
-      const operationStartedAt = Date.parse(runningOperation.started_at || '') || (now - Number(runningOperation.elapsed_seconds || 0) * 1000);
-      const heartbeatAt = Date.parse(runningOperation.heartbeat_at || '');
-      const heartbeatAge = Number.isFinite(heartbeatAt)
-        ? Math.max(0, Math.floor((now - heartbeatAt) / 1000))
-        : Number(runningOperation.heartbeat_age_seconds || 0);
-      const heartbeatText = heartbeatAge >= 15 ? `心跳偏慢 ${heartbeatAge}秒前` : `心跳 ${heartbeatAge}秒前`;
-      parts.unshift(`${backgroundOperationStatus({ ...runningOperation, heartbeat_age_seconds: heartbeatAge })} · 已运行 ${formatDuration(now - operationStartedAt)} · ${heartbeatText}`);
-    }
-    const command = task?.current_command && typeof task.current_command === 'object' ? task.current_command : null;
-    if (command && String(command.status || '') === 'running') {
-      const commandStartedAt = Date.parse(command.started_at || '') || now;
-      const kind = { build: '构建', test: '测试', command: '命令' }[String(command.kind || '')] || '命令';
-      parts.unshift(`${kind} ${formatDuration(now - commandStartedAt)}`);
-    }
-    if (['active', 'paused'].includes(status)) parts.push(`已运行 ${elapsed}`);
-    if (status === 'active' && idleFor >= 30000 && !runningOperation) parts.push(`最近活动 ${formatDuration(idleFor)}前`);
-    if (status === 'active' && idleFor >= 120000 && !runningOperation) parts.push('较长时间没有新的任务状态，正在等待下一次更新');
-    $('#taskStep').textContent = parts.filter(Boolean).join(' · ');
-    $('#taskProgressBar').style.width = `${progress}%`;
-    $('#taskProgressText').textContent = progressLabelForTask(task, status, runningOperation, command);
-    strip.title = `状态：${status}；阶段进度：${progress}%；最后更新：${new Date(updatedAt).toLocaleString('zh-CN')}`;
-  } catch { /* no active workspace/task yet */ }
+    if (newest === lastApprovalRequestId) return;
+    lastApprovalRequestId = newest;
+    await api.openApprovalWindow();
+  } catch { /* approval polling must never disturb ChatGPT */ }
 }
 
 function renderWorkspace(hub) {
+  workspaceHubState = hub || { workspaces: [] };
   activeWorkspace = hub.activeWorkspace || '';
   $('#activeWorkspace').textContent = activeWorkspace || '未选择';
   $('#activeWorkspace').title = activeWorkspace;
   renderWorkspaceHealth();
-  const select = $('#workspaceSelect');
-  select.replaceChildren();
-  const placeholder = document.createElement('option');
-  placeholder.value = '';
-  placeholder.textContent = `\u5168\u90e8\u5de5\u4f5c\u533a（${(hub.recentWorkspaces || []).length}）`;
-  select.appendChild(placeholder);
-  (hub.recentWorkspaces || []).filter(Boolean).forEach((workspace) => {
-    const option = document.createElement('option');
-    option.value = workspace;
-    option.textContent = workspace === activeWorkspace ? `\u5f53\u524d：${baseName(workspace)}` : baseName(workspace);
-    option.title = workspace;
-    select.appendChild(option);
-  });
-  select.value = '';
+  const workspaces = Array.isArray(hub.workspaces)
+    ? hub.workspaces
+    : (hub.recentWorkspaces || []).filter(Boolean).map((workspace) => ({ path: workspace, name: baseName(workspace), active: workspace === activeWorkspace, status: 'ready' }));
+  $('#workspacePickerButton').textContent = `全部工作区（${workspaces.length}）${Number(hub.invalidCount || 0) ? ` · ⚠ ${hub.invalidCount}` : ''}`;
 }
 
 async function refreshWorkspace() {
@@ -271,10 +213,15 @@ document.addEventListener('click', (event) => {
   }
 });
 $('#managerButton').onclick = () => api.openManager();
-$('#workspaceSelect').onchange = () => { const workspace = $('#workspaceSelect').value; $('#workspaceSelect').value = ''; if (workspace) switchWorkspace(workspace, true); };
-$('#pauseTask').onclick = async () => { try { unwrap(await api.pauseTask()); await refreshTask(); } catch (error) { $('#switchState').textContent = error.message; } };
-$('#resumeTask').onclick = async () => { try { unwrap(await api.resumeTask()); await refreshTask(); } catch (error) { $('#switchState').textContent = error.message; } };
-$('#stopTask').onclick = async () => { try { unwrap(await api.stopTask()); await refreshTask(); } catch (error) { $('#switchState').textContent = error.message; } };
+$('#workspacePickerButton').onclick = (event) => {
+  event.stopPropagation();
+  api.openWorkspaceWindow?.().catch((error) => { $('#switchState').textContent = error.message; });
+};
+$('#stopTask').onclick = async () => {
+  if (!window.confirm('停止当前正在执行的本地任务？')) return;
+  try { unwrap(await api.stopTask()); await refreshTask(); }
+  catch (error) { $('#switchState').textContent = error.message; }
+};
 $('#addAuthorizedRootQuick').onclick = async () => {
   if (switching) return;
   switching = true;
@@ -309,6 +256,7 @@ $('#addWorkspace').onclick = async () => {
 
 api.onChatState(renderChatState);
 api.onHeartbeat(renderServiceState);
+api.onWorkspaceChanged?.(renderWorkspace);
 api.onDownload((item) => {
   const node = $('#downloadState');
   if (item.status === 'completed') node.textContent = `已保存：${baseName(item.path)}`;
@@ -319,5 +267,8 @@ api.chatStatus().then((result) => renderChatState(unwrap(result))).catch(() => {
 refreshStatus();
 refreshWorkspace();
 refreshTask();
+refreshApprovals();
 setInterval(refreshWorkspace, 15000);
 setInterval(refreshTask, 3000);
+setInterval(renderProgress, 1000);
+setInterval(refreshApprovals, 3000);

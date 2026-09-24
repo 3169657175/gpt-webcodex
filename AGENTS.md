@@ -18,6 +18,7 @@
 ## 修改规则
 
 - 主工作区可能长期存在未提交修改。复杂修改优先使用 run-scoped Git Worktree；应用回主工作区前必须做冲突检查，禁止自动 merge/rebase/reset 用户工作区。
+- 本项目开发必须持续 dogfooding：当 ChatGPT/Agent 在真实调用本 MCP 时发现中断、误判、重复工作、参数易错、状态不清、路径/工作目录不符合直觉等体验问题，应先区分“调用错误 / 可用性缺陷 / Runtime Bug / 回归”，属于工具自身且能低风险修复的，直接补入当前计划、增加回归测试并修复后再继续原阶段；不要把真实使用反馈拖到版本最后统一处理。
 - 不要提交或交付测试生成的 `__pycache__` / `.pyc` 变化。Python 测试应设置 `PYTHONDONTWRITEBYTECODE=1`。
 - `current_command` 只表示当前仍在执行的命令。任务进入 `completed` / `failed` / `cancelled` 后必须结算到历史字段并清空当前命令。
 - ChatGPT 页面、OpenAI Tunnel、本地 MCP Runtime 是三个故障层。页面或 Tunnel 异常不得无条件重启健康的 MCP Runtime。
@@ -43,3 +44,12 @@
 - 构建安装包：`npm run dist`；构建前必须先保证全量测试和 Schema 契约通过。
 - 涉及 Runtime 重启、Schema、Tunnel 或长任务时，除单元测试外还要验证：旧进程退出、新进程身份变化、同端口同 Token 重新 discovery、后台任务状态可恢复、主 Git index 未被 Worktree 流程改动。
 - 不要因为某个测试命令的工作目录或依赖环境配置错误就把代码判定为失败；先确认命令实际运行目录和内置 Python/vendor 环境。
+- `agent_workflow` 的显式 `commands` 默认按本次请求的 `path` 解释；自动测试/构建按自动识别的 `project_root` 执行。显式命令确实需要在子项目中执行时，应明确传 `workdir`，避免让自动项目识别偷偷改变调用者写下的相对路径含义。
+
+## 正式发布与 Git 基线规则
+
+- 每个正式版本在宣告“发布完成”前，必须同时完成：版本号更新、完整测试、发行构建、安装包校验、Git 正式源码提交、版本 tag、最终 git status 检查。
+- 不允许出现“磁盘/安装包已经是新版本，但 Git 基线仍停在旧版本”的状态；如果 Git 写入因权限策略被阻止，必须明确标记发布尚未完成，并优先解决 Git 基线后再宣布完成。
+- Python 缓存、pyc、临时 index、缓存、构建中间物等不得进入正式 Git baseline；历史上已经跟踪的生成物应在最近一次基线整理时移出版本控制。
+- 发布前必须确认未跟踪文件中没有意外的大文件、临时垃圾或用户本地数据。
+- Worktree 只有在相对 snapshot 无任何差异，或变更已经安全应用回主工作区后才允许自动清理；存在未应用修改时必须保留。

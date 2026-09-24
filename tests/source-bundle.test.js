@@ -29,6 +29,14 @@ test('private runtime state is not bundled from the source checkout', () => {
   assert.equal(fs.existsSync(path.join(root, 'resources/coding-tools-mcp/.coding-tools')), false);
 });
 
+test('release resources exclude Python test caches', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const bundled = pkg.build.extraResources.find((entry) => entry.from === 'resources');
+  assert.ok(bundled);
+  assert.ok(bundled.filter.includes('!coding-tools-mcp/**/__pycache__/**'));
+  assert.ok(bundled.filter.includes('!coding-tools-mcp/**/*.pyc'));
+});
+
 test('portable Python does not contain a second stale coding_tools_mcp implementation', () => {
   const duplicate = path.join(root, 'resources/native-python/Lib/site-packages/coding_tools_mcp');
   assert.equal(fs.existsSync(path.join(duplicate, '__init__.py')), false);

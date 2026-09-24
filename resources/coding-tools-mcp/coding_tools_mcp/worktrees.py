@@ -146,8 +146,13 @@ class WorktreeManager:
         updated = self._run(["-C", str(directory), "add", "-u", "--", "."], env=env)
         if updated.returncode != 0:
             raise ToolFailure(error_code, updated.stderr.strip() or "git add -u failed", category="runtime")
+        # Tracked modifications/deletions are already fully handled by git add -u.
+        # The second pass only needs genuinely new, non-ignored files. Including
+        # --cached here re-feeds historically tracked paths that may now be
+        # ignored (for example old __pycache__ entries) and can make Git reject
+        # an otherwise valid snapshot.
         candidates = self._run([
-            "-C", str(directory), "ls-files", "--cached", "--others", "--exclude-standard", "-z",
+            "-C", str(directory), "ls-files", "--others", "--exclude-standard", "-z",
         ])
         if candidates.returncode != 0:
             raise ToolFailure(error_code, candidates.stderr.strip() or "git ls-files failed", category="runtime")
@@ -340,12 +345,15 @@ class WorktreeManager:
             return []
         if not isinstance(raw, list):
             return []
-        return [item for item in raw if isinstance(item, dict)][-MAX_WORKTREES:]
+        # Never forget still-existing worktrees merely because the metadata
+        # list crossed a display limit. Orphaned Git worktrees can otherwise
+        # accumulate gigabytes while becoming invisible to the cleanup UI.
+        return [item for item in raw if isinstance(item, dict)]
 
     def _write_metadata(self, records: list[dict[str, Any]]) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         temp = self.metadata_path.with_name(f".{self.metadata_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-        temp.write_text(json.dumps(records[-MAX_WORKTREES:], ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(temp, self.metadata_path)
 
     def _refresh_record(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -385,6 +393,26 @@ class WorktreeManager:
             existing = next((item for item in reversed(self._read_metadata()) if str(item.get("run_id") or "") == run_id), None)
             if existing and Path(str(existing.get("path") or "")).is_dir():
                 return self._refresh_record(existing)
+            # A large untracked tree cannot be snapshotted safely. Check before
+            # creating a branch/worktree or staging the temporary snapshot index.
+            untracked_count = len(self._untracked_paths())
+            if untracked_count > MAX_SNAPSHOT_FILES:
+                raise ToolFailure(
+                    "SNAPSHOT_TOO_LARGE",
+                    f"当前工作区有 {untracked_count} 个未跟踪文件，隔离快照上限为 {MAX_SNAPSHOT_FILES} 个。"
+                    "请先忽略生成文件，或明确选择 isolation=off 直接工作区流程；尚未创建 Worktree。",
+                    category="validation",
+                    details={"untracked_count": untracked_count, "max_files": MAX_SNAPSHOT_FILES, "worktree_created": False},
+                )
+            self.cleanup(retention_days=7, keep=5)
+            live_records = [item for item in self._read_metadata() if Path(str(item.get("path") or "")).is_dir()]
+            if len(live_records) >= MAX_WORKTREES:
+                raise ToolFailure(
+                    "WORKTREE_LIMIT",
+                    "Too many isolated worktrees are retained. Apply or discard old tasks before starting another isolated run.",
+                    category="validation",
+                    details={"count": len(live_records), "limit": MAX_WORKTREES},
+                )
             self._ensure_excluded()
             base = self._run(["-C", str(self.workspace), "rev-parse", "--verify", f"{base_ref}^{{commit}}"])
             if base.returncode != 0:
@@ -716,6 +744,69 @@ class WorktreeManager:
             self._write_metadata(records)
             self._run(["-C", str(self.workspace), "worktree", "prune"])
             return {"run_id": run_id, "discarded": True, "path": str(path), "branch": branch}
+
+    def cleanup(self, *, retention_days: int = 7, keep: int = 5) -> dict[str, Any]:
+        """Remove only worktrees that are provably disposable.
+
+        Dirty unapplied worktrees are always retained. Applied worktrees are
+        safe to remove because their delta has already been copied back.
+        """
+        with self._lock:
+            try:
+                self._repo_root()
+            except ToolFailure:
+                return {"removed": [], "retained": [], "reason": "not_git_repository"}
+            records = self._read_metadata()
+            now = datetime.now(timezone.utc)
+            keep_count = max(1, min(int(keep or 5), MAX_WORKTREES))
+            days = max(1, min(int(retention_days or 7), 365))
+            refreshed = [self._refresh_record(item) for item in records]
+            refreshed.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+            removed: list[dict[str, Any]] = []
+            retained: list[dict[str, Any]] = []
+            for index, record in enumerate(refreshed):
+                path = Path(str(record.get("path") or ""))
+                if not record.get("exists"):
+                    removed.append({"run_id": record.get("run_id"), "path": str(path), "reason": "missing"})
+                    continue
+                created = None
+                try:
+                    created = datetime.fromisoformat(str(record.get("created_at") or "").replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+                old = bool(created and (now - created).total_seconds() >= days * 86400)
+                applied = str(record.get("status") or "").lower() == "applied"
+                snapshot_commit = str(record.get("snapshot_commit") or "")
+                head_result = self._run(["-C", str(path), "rev-parse", "HEAD"])
+                head_commit = head_result.stdout.strip() if head_result.returncode == 0 else ""
+                baseline_unchanged = bool(snapshot_commit and head_commit == snapshot_commit)
+                # A clean worktree can still contain committed-but-unapplied work.
+                # Only an unchanged snapshot baseline is eligible for age/count GC.
+                disposable_clean = bool(record.get("clean")) and baseline_unchanged and (old or index >= keep_count)
+                if not (applied or disposable_clean):
+                    retained.append(record)
+                    continue
+                branch = str(record.get("branch") or "")
+                result = self._run(["-C", str(self.workspace), "worktree", "remove", "--force", str(path)], timeout=60)
+                if result.returncode != 0:
+                    retained.append(record)
+                    continue
+                if branch:
+                    self._run(["-C", str(self.workspace), "branch", "-D", branch])
+                removed.append({
+                    "run_id": str(record.get("run_id") or ""),
+                    "path": str(path),
+                    "reason": "applied" if applied else "clean_expired",
+                })
+            retained_ids = {str(item.get("run_id") or "") for item in retained}
+            self._write_metadata([item for item in records if str(item.get("run_id") or "") in retained_ids])
+            self._run(["-C", str(self.workspace), "worktree", "prune"])
+            return {
+                "removed": removed,
+                "retained": retained,
+                "removed_count": len(removed),
+                "retained_count": len(retained),
+            }
 
     def recover(self) -> list[dict[str, Any]]:
         """Reconcile persisted metadata with Git after a runtime restart."""

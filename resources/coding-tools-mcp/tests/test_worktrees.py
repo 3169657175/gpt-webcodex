@@ -19,8 +19,14 @@ from coding_tools_mcp.worktrees import WorktreeManager
 GIT = shutil.which("git")
 
 
+def run_hidden(*args, **kwargs):
+    flag = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if flag and "creationflags" not in kwargs:
+        kwargs["creationflags"] = flag
+    return subprocess.run(*args, **kwargs)
+
 def run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run_hidden(
         [GIT or "git", "-C", str(root), *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -85,6 +91,21 @@ class WorktreeManagerTests(unittest.TestCase):
             self.assertEqual(first["path"], second["path"])
             self.assertEqual(first["branch"], second["branch"])
             manager.discard("run_same")
+
+    def test_too_many_untracked_files_fail_before_creating_a_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = self.make_repo(Path(temp))
+            (root / "generated-a.txt").write_text("a", encoding="utf-8")
+            (root / "generated-b.txt").write_text("b", encoding="utf-8")
+            manager = WorktreeManager(root)
+            index_before = (root / ".git" / "index").read_bytes()
+            with patch("coding_tools_mcp.worktrees.MAX_SNAPSHOT_FILES", 1):
+                with self.assertRaises(ToolFailure) as raised:
+                    manager.create("run_large")
+            self.assertEqual(raised.exception.code, "SNAPSHOT_TOO_LARGE")
+            self.assertEqual(raised.exception.details["untracked_count"], 2)
+            self.assertFalse((root / ".coding-tools" / "worktrees" / "run_large").exists())
+            self.assertEqual((root / ".git" / "index").read_bytes(), index_before)
 
     def test_dirty_primary_workspace_is_snapshotted_without_mutating_primary_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -192,6 +213,29 @@ class WorktreeManagerTests(unittest.TestCase):
             root = self.make_repo(Path(temp)); (root / "binary.bin").write_bytes(b"\x00\x01base\xff"); (root / "crlf.txt").write_bytes(b"one\r\ntwo\r\n"); self.assertEqual(run_git(root, "add", "binary.bin", "crlf.txt").returncode, 0); self.assertEqual(run_git(root, "commit", "-m", "binary-crlf").returncode, 0)
             manager = WorktreeManager(root); worktree = Path(manager.create("run_bytes")["path"]); (worktree / "binary.bin").write_bytes(b"\x00\x02agent\xfe"); (worktree / "crlf.txt").write_bytes(b"one\r\ntwo\r\nagent\r\n")
             manager.apply_back("run_bytes"); self.assertEqual((root / "binary.bin").read_bytes(), b"\x00\x02agent\xfe"); self.assertEqual((root / "crlf.txt").read_bytes(), b"one\r\ntwo\r\nagent\r\n"); manager.discard("run_bytes")
+
+    def test_cleanup_preserves_clean_committed_but_unapplied_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = self.make_repo(Path(temp))
+            manager = WorktreeManager(root)
+            created = manager.create("run_committed")
+            worktree = Path(created["path"])
+            (worktree / "app.txt").write_text("base\ncommitted agent change\n", encoding="utf-8")
+            self.assertEqual(run_git(worktree, "add", "app.txt").returncode, 0)
+            committed = run_git(worktree, "commit", "-m", "agent change")
+            self.assertEqual(committed.returncode, 0, committed.stderr)
+            self.assertTrue(manager.get("run_committed")["clean"])
+
+            metadata = manager._read_metadata()
+            for item in metadata:
+                if item.get("run_id") == "run_committed":
+                    item["created_at"] = "2020-01-01T00:00:00.000Z"
+            manager._write_metadata(metadata)
+
+            cleanup = manager.cleanup(retention_days=1, keep=1)
+            self.assertEqual(cleanup["removed_count"], 0)
+            self.assertTrue(worktree.exists())
+            manager.discard("run_committed")
 
 
 if __name__ == "__main__":

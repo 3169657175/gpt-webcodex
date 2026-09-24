@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;">
+  <title>工作区中心</title>
+  <link rel="stylesheet" href="workspace.css">
+</head>
+<body>
+  <header class="window-bar">
+    <div><span class="window-mark"></span><b>工作区中心</b></div>
+    <button id="closeWindow" type="button" aria-label="关闭">×</button>
+  </header>
+
+  <main class="shell">
+    <section class="overview">
+      <div class="overview-copy">
+        <span class="eyebrow">Workspace Center</span>
+        <h1>工作区</h1>
+        <p>切换项目与管理额外目录授权。两类内容分开显示，不再互相挤占空间。</p>
+      </div>
+      <div class="current-compact">
+        <div class="current-icon">W</div>
+        <div class="current-copy">
+          <span>当前工作区</span>
+          <b id="currentName">正在读取…</b>
+          <code id="currentPath">-</code>
+        </div>
+        <span class="current-state">使用中</span>
+      </div>
+    </section>
+
+    <nav class="view-tabs" aria-label="工作区中心分类">
+      <button class="view-tab active" type="button" data-workspace-tab="workspaces" aria-selected="true">
+        <span>工作区</span><b id="workspaceCount">0</b>
+      </button>
+      <button class="view-tab" type="button" data-workspace-tab="authorized" aria-selected="false">
+        <span>授权目录</span><b id="authorizedCount">0</b>
+      </button>
+    </nav>
+
+    <section class="content-frame">
+      <div class="workspace-view active" data-workspace-view="workspaces">
+        <header class="view-header">
+          <div>
+            <h2>工作区列表</h2>
+            <p>搜索、切换、收藏和清理最近使用的项目目录。</p>
+          </div>
+          <div class="view-actions">
+            <button id="cleanupInvalid" class="button danger-quiet" type="button" hidden>清理失效</button>
+            <button id="inspectWorkspaces" class="button secondary" type="button">检测目录</button>
+            <button id="addWorkspace" class="button primary" type="button">＋ 添加工作区</button>
+          </div>
+        </header>
+
+        <div class="search-row">
+          <label class="search-box">
+            <span>⌕</span>
+            <input id="workspaceSearch" type="search" placeholder="搜索工作区名称或路径" autocomplete="off">
+          </label>
+        </div>
+
+        <div id="workspaceList" class="workspace-list" aria-live="polite"></div>
+      </div>
+
+      <div class="workspace-view" data-workspace-view="authorized" hidden>
+        <header class="view-header">
+          <div>
+            <h2>额外授权目录</h2>
+            <p>允许本地开发工具访问主工作区之外的目录，不会切换当前项目。</p>
+          </div>
+          <div class="view-actions">
+            <button id="clearAuthorizedRoots" class="button danger-quiet" type="button" hidden>清空授权</button>
+            <button id="authorizeRootInline" class="button primary" type="button">＋ 授权目录</button>
+          </div>
+        </header>
+
+        <div class="access-note">
+          <span>只授予文件访问范围</span>
+          <small>取消授权不会删除磁盘文件，也不会影响当前主工作区。</small>
+        </div>
+
+        <div id="authorizedRootList" class="authorized-list" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <footer class="footer-bar">
+      <div class="footer-status"><span class="status-dot"></span><span id="statusText">工作区数据已就绪</span></div>
+      <div class="storage-actions">
+        <span id="storageText">正在检测缓存…</span>
+        <button id="cleanupStorage" type="button">清理缓存</button>
+      </div>
+    </footer>
+  </main>
+
+  <script src="workspace.js"></script>
+</body>
+</html>

@@ -12,8 +12,10 @@ from typing import Any
 
 MAX_RECENT = 100
 MAX_IDLE_GAP_MS = 30 * 60 * 1000
-TRACE_VERSION = 2
+TRACE_VERSION = 3
 TRACE_ORIGINS = frozenset({"external", "desktop", "system", "internal"})
+TRACE_WORKLOAD_KINDS = frozenset({"general", "command", "diff", "history"})
+LARGE_PAYLOAD_BYTES = 256 * 1024
 
 
 def utc_now() -> str:
@@ -51,12 +53,16 @@ class PerformanceTraceStore:
         deduplicated: bool = False,
         origin: str = "external",
         context_visible: bool | None = None,
+        workload_kind: str = "general",
     ) -> dict[str, Any]:
         with self._lock:
             normalized_origin = str(origin or "external").strip().lower()
             if normalized_origin not in TRACE_ORIGINS:
                 normalized_origin = "external"
             visible = normalized_origin == "external" if context_visible is None else bool(context_visible)
+            normalized_workload = str(workload_kind or "general").strip().lower()
+            if normalized_workload not in TRACE_WORKLOAD_KINDS:
+                normalized_workload = "general"
             wait_before_ms = 0
             if visible and self._last_finished_monotonic is not None:
                 gap = max(0, int((started_monotonic - self._last_finished_monotonic) * 1000))
@@ -78,6 +84,7 @@ class PerformanceTraceStore:
                 "request_bytes": max(0, int(request_bytes)),
                 "response_bytes": max(0, int(response_bytes)),
                 "files_read": max(0, int(files_read)),
+                "workload_kind": normalized_workload,
                 "cache_hit": bool(cache_hit),
                 "deduplicated": bool(deduplicated),
                 "ok": bool(ok),
@@ -93,6 +100,17 @@ class PerformanceTraceStore:
                 state["request_bytes"] += event["request_bytes"]
                 state["response_bytes"] += event["response_bytes"]
                 state["files_read"] += event["files_read"]
+                if event["response_bytes"] >= LARGE_PAYLOAD_BYTES:
+                    state["large_payloads"] += 1
+                if normalized_workload == "command":
+                    state["command_calls"] += 1
+                    state["command_response_bytes"] += event["response_bytes"]
+                elif normalized_workload == "diff":
+                    state["diff_calls"] += 1
+                    state["diff_response_bytes"] += event["response_bytes"]
+                elif normalized_workload == "history":
+                    state["history_calls"] += 1
+                    state["history_response_bytes"] += event["response_bytes"]
             else:
                 state["internal_events"] += 1
                 if normalized_origin == "desktop":
@@ -138,6 +156,13 @@ class PerformanceTraceStore:
             "request_bytes": 0,
             "response_bytes": 0,
             "files_read": 0,
+            "large_payloads": 0,
+            "command_calls": 0,
+            "command_response_bytes": 0,
+            "diff_calls": 0,
+            "diff_response_bytes": 0,
+            "history_calls": 0,
+            "history_response_bytes": 0,
             "current_session_id": self.session_id,
             "session_started_at": self.session_started_at,
             "last_finished_at": None,

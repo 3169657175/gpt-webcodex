@@ -64,12 +64,16 @@ function isAlive(pid) {
 }
 
 function runtimeFingerprint(settings, sourceFingerprint = runtimeSourceFingerprint()) {
+  const toolPermissions = Object.fromEntries(Object.entries(settings.toolPermissions || {}).sort(([left], [right]) => left.localeCompare(right)));
   return crypto.createHash('sha256').update(JSON.stringify({
     workspace: path.resolve(String(settings.workspace || '')).toLowerCase(),
     authorizedRoots: (settings.authorizedRoots || []).map((item) => path.resolve(String(item)).toLowerCase()).sort(),
     port: Number(settings.mcpPort),
     permissionMode: settings.permissionMode || 'safe',
     toolMode: 'smart',
+    agentMode: settings.agentMode || 'code',
+    toolPermissions,
+    permissionPatterns: settings.permissionPatterns || { paths: [], commands: [] },
     runtimeSource: sourceFingerprint
   })).digest('hex');
 }
@@ -78,7 +82,7 @@ function currentRuntimeState(input = {}) {
   const allowed = new Set([
     'manualStop', 'tunnelPid', 'tunnelStartedAt',
     'nativePid', 'nativeFingerprint', 'nativeWorkspace', 'nativePort',
-    'nativePermissionMode', 'nativeToolMode', 'nativeCommand', 'startedAt',
+    'nativePermissionMode', 'nativeToolMode', 'nativeAgentMode', 'nativeCommand', 'startedAt',
     'nativeInstanceId', 'nativeSourceFingerprint'
   ]);
   return Object.fromEntries(Object.entries(input).filter(([key]) => allowed.has(key)));
@@ -122,9 +126,12 @@ class NativeService {
       CODING_TOOLS_MCP_AUTH_TOKEN: token,
       CODING_TOOLS_MCP_TELEMETRY: 'off',
       CODING_TOOLS_MCP_TOOL_MODE: 'smart',
+      CODING_TOOLS_MCP_AGENT_MODE: settings.agentMode || 'code',
+      CODING_TOOLS_MCP_TOOL_PERMISSIONS: JSON.stringify(settings.toolPermissions || {}),
+      CODING_TOOLS_MCP_PERMISSION_PATTERNS: JSON.stringify(settings.permissionPatterns || { paths: [], commands: [] }),
       CODING_TOOLS_MCP_AUTHORIZED_ROOTS: JSON.stringify(settings.authorizedRoots || []),
       CODING_TOOLS_MCP_LONG_TOOL_HANDOFF_SECONDS: '8',
-      CODING_TOOLS_MCP_PROGRESS_REPORT_SECONDS: String(settings.progressReportSeconds || 90),
+      CODING_TOOLS_MCP_PROGRESS_REPORT_SECONDS: String(settings.progressReportSeconds || 30),
       CODING_TOOLS_MCP_LAUNCH_ID: launchId,
       CODING_TOOLS_MCP_SOURCE_FINGERPRINT: sourceFingerprint
     };
@@ -161,6 +168,7 @@ class NativeService {
       nativePort: Number(settings.mcpPort),
       nativePermissionMode: settings.permissionMode,
       nativeToolMode: 'smart',
+      nativeAgentMode: settings.agentMode || 'code',
       nativeCommand: command,
       startedAt: new Date().toISOString(),
       nativeInstanceId: launchId,
@@ -190,6 +198,7 @@ class NativeService {
       nativeWorkspace: '',
       nativePort: null,
       nativePermissionMode: '',
+      nativeAgentMode: '',
       nativeInstanceId: '',
       nativeSourceFingerprint: ''
     }));
@@ -203,7 +212,8 @@ class NativeService {
       nativeWorkspace: path.resolve(settings.workspace),
       nativePort: Number(settings.mcpPort),
       nativePermissionMode: settings.permissionMode,
-      nativeToolMode: 'smart'
+      nativeToolMode: 'smart',
+      nativeAgentMode: settings.agentMode || 'code'
     }));
     return true;
   }

@@ -1,334 +1,460 @@
 # 网页 MCP 助手（GPT-WebCodex）
 
-让网页版 ChatGPT 直接连接 Windows 本地开发环境，把网页聊天变成一个可以读取项目、修改代码、执行命令、跑测试和构建安装包的桌面开发助手。
+让网页版 ChatGPT 连接 Windows 本地开发环境，把网页聊天变成一个可以理解项目、修改代码、执行命令、跑测试、构建安装包，并在新对话或切换 ChatGPT 账号后继续同一开发工作的桌面开发助手。
 
-当前桌面版本：**v0.2.4**  
-内置 Coding Tools MCP Runtime：**v0.4.9**  
-平台：**Windows**
+当前版本：
 
-> 适合在 Codex / Cursor 额度不足时继续使用网页版 ChatGPT 操作本地工程，也可以作为独立的轻量桌面 Coding Agent 使用。普通用户无需安装 Docker 或单独配置 Python。
+- 网页 MCP 助手 Desktop：**v0.5.6**
+- Coding Tools MCP Runtime：**v0.5.3**
+- MCP Tool Schema：**v9 / 9 tools**
+- Schema hash：`cb44f23fd265c4a7d10c801ca9ef88ee0fa4228b7a73151b02ff693f23757949`
+- Electron：**43.2.0**
+- 平台：**Windows**
 
----
-
-## ✨ v0.2.4 主要更新
-
-v0.2.4 的重点不是单纯增加按钮，而是把底层任务执行、Git 隔离和 Runtime 生命周期做得更稳定、更适合长时间开发。
-
-- **新增 Git / Worktree 安全隔离**：代码任务可以先在独立 Git Worktree 中修改和验证，再查看 Diff、应用或丢弃，尽量避免直接污染主工作区。
-- **主 Git 暂存区保护**：应用 Worktree 结果时不主动改动主工作区暂存区；如果主工作区同一文件在任务快照后又发生变化，会拒绝直接覆盖。
-- **长任务后台执行**：测试、构建和复杂 Agent 工作流可以转入后台运行，不再因为一次调用时间较长就表现成“卡死”。
-- **真实心跳与进度状态**：后台任务保存 operation、heartbeat、当前步骤、下一步、正在执行的命令、测试结果和构建结果。
-- **任务恢复能力增强**：刷新页面、切换聊天或本地 Runtime 重启后，任务状态仍可读取；支持暂停、继续、停止和历史记录。
-- **Runtime 生命周期更稳定**：ChatGPT 页面、OpenAI Tunnel、本地 MCP Runtime 分层处理，页面或 Tunnel 异常不会无条件重启健康的 MCP Runtime。
-- **Runtime / Schema 一致性校验**：重启时核对进程 ID、launch ID、runtime instance、源码指纹、Schema version/hash 和工作区，减少“旧进程 / 旧 Schema”问题。
-- **MCP 调用恢复更稳**：只读状态类调用支持重新 discovery 后安全重试，降低 Runtime 重启后工具失效的概率。
-- **Windows 桌面任务通知**：任务完成、失败、中断或等待用户处理时可弹出系统通知，并支持点击回到 ChatGPT。
-- **性能与状态可观测性增强**：可以区分本机执行时间与模型 / 连接等待时间，查看后台任务、运行心跳和性能时间线。
-- **中文界面进一步整理**：管理中心、任务状态、错误信息、设置项和接入说明尽量使用中文展示。
+> 核心路线：**ChatGPT Web 负责模型能力，本地 Electron + Coding Tools MCP 负责项目、工具、安全、任务、执行、索引、Checkpoint、Session、History、Rules、Recipes、Skills 和长期 Memory。** 项目不额外维护第二套 OpenAI 模型 API。
 
 ---
 
-## 🧩 目前已经支持的功能
+# 0.5.0：Workspace / Agent Runtime / Context / Permission V2
 
-### 1. 网页 ChatGPT 直接操作本地项目
+0.5.0 聚焦“更像 Codex 地持续工作”，不引入第二套 Codex 平台。主要升级：
 
-连接完成后，ChatGPT 可以通过 Coding Tools MCP：
+- Workspace Manager V2：失效目录检测、单项移除、收藏、搜索、批量清理；工作区与额外授权目录继续分离。
+- 磁盘治理：Worktree 安全 GC、dist/build 与 Python 缓存清理；不会清理存在未应用修改或提交差异的隔离 Worktree。
+- Agent Runtime V2：execution / model / process / connection / recovery / workspace 分层状态。
+- Event Log + Trace：任务、run、operation、execution、process、local session 关联信息进入紧凑持久事件。
+- 长任务与 Checkpoint V2：后台 operation 可查询/恢复，checkpoint 自动裁剪旧实体文件。
+- Context Engine / Compaction：继续复用 Repo Map、符号/依赖图与上下文压力预算，并在高压力时推荐 continuation checkpoint / output refs。
+- Tool Registry V2：核心工具稳定暴露，提供 workspace-scoped registry generation、工具组、side-effect 与 retry-safe 元数据。
+- Permission V2：增加路径/命令 pattern allow/ask/deny 规则，并纳入 Runtime fingerprint；设置页可直接配置。
+- MCP Schema 升级到 v8。
 
-- 读取文件、目录和项目结构
-- 搜索代码、定位函数、错误或关键字
-- 新建文件、修改文件、应用补丁
-- 执行命令和管理长时间运行的命令会话
-- 查看 Git 状态、Diff、日志、提交记录和文件历史
-- 查看项目内图片
-- 处理 Markdown、文本、PDF、DOCX 等文档工作流
-- 自动运行测试、构建并检查产物
+# 0.4.3：ChatGPT 浏览器壳与连接稳定化
 
-### 2. 项目上下文自动识别
+0.4.3 继续针对真实 dogfooding 中最头疼的现象：长回复或多次 MCP 调用期间，ChatGPT 页面偶尔显示“连接已中断。正在等待完整回复”，或者某一条已经生成的回复显示“出错了，无法显示此消息”，切换到其它 conversation 再回来后消息又立即正常出现。
 
-`workspace_context` 会一次返回当前工作区的核心信息，包括：
+这类问题不能简单等同于“本地 MCP 挂了”。0.4.3 将 ChatGPT 页面、浏览器网络、OpenAI Tunnel、本地 Runtime 继续拆成独立故障层，并优先修正 Electron 内嵌网页本身的浏览器行为与局部渲染失步。
 
-- 项目类型、名称、版本和入口文件
-- 根目录主要文件
-- Git 分支和修改状态
-- 可用测试 / 构建命令
-- 当前任务状态
-- `AGENTS.md` / `CLAUDE.md` 等项目指令
-- 当前模型上下文压力
+## 标准浏览器身份
 
-这样 ChatGPT 不需要每次都从头大量扫描项目。
+项目继续使用 Electron 官方现代嵌入方式 `WebContentsView`，并继续使用：
 
-### 3. Agent 自动工作流
+`persist:chatgpt-session`
 
-内置 `agent_workflow`，适合一次完成完整开发任务：
+保存 ChatGPT 登录态。
 
-- Bug 诊断与修复
-- 新功能开发
-- 重构
-- 测试失败修复
-- 构建 / 发布验证
-- 项目创建
-- 文档工作流
-- 中断任务恢复
+实际探针曾显示原始 User-Agent 为：
 
-工作流会尽量把“读取上下文 → 修改 → 测试 → 构建 → 汇总结果”合并完成，减少低级工具重复调用。
+`Chrome/150.0.7871.129 Electron/43.2.0`
 
-### 4. Git / Worktree 安全开发
+0.4.3 不引入随机浏览器指纹，也不伪造另一套 Chrome 版本，而是保留当前 Electron 内置 Chromium 的真实版本，只移除 `Electron/<version>` / 应用标记，使网站看到内部一致的普通 Chrome UA。
 
-复杂代码任务支持 run-scoped Git Worktree：
+同时对 ChatGPT 主页面和登录弹窗设置：
 
-- 每个任务创建独立隔离工作区
-- 记录任务开始时的主工作区快照
-- 在隔离区修改和验证代码
-- 查看 Worktree Diff
-- 一键应用到主工作区
-- 一键丢弃隔离任务
-- 检测主工作区后续冲突，避免静默覆盖
-- 尽量保持主 Git index / 暂存区不被任务流程改变
+- `backgroundThrottling: false`
+- `webContents.setBackgroundThrottling(false)`
 
-这套机制主要解决长任务修改到一半、多个任务并行或主工作区本身有未提交内容时的安全问题。
+避免窗口隐藏、切后台或长时间工具任务期间 Chromium 对 ChatGPT 页面定时器和流式状态进行后台节流。
 
-### 5. 可恢复的长任务系统
+实机 Electron 探针验证：
 
-任务中心会记录：
+- persistent session：通过
+- normalized UA：保留真实 Chrome 150，移除 Electron 标记
+- background throttling：`false`
 
-- 当前目标
-- Task ID / Run ID
-- 当前步骤与下一步
-- 任务步骤完成情况
-- 正在运行的命令
-- 最近测试结果
-- 修改过的文件
-- 最近构建报告
-- 后台 operation 与真实 heartbeat
-- Worktree 隔离状态
-- 历史任务
+## 浏览器与 Tunnel 代理路径
 
-并支持：
+0.4.3 使用 Electron `Session.setProxy()` / `resolveProxy()` 管理 ChatGPT persistent session 的网络策略，并与 Tunnel 使用的软件代理配置进行对照。
 
-- 暂停
-- 继续
-- 停止
-- 清除状态
-- Runtime 重启后重新读取状态
-- 长任务定时主动汇报进度
+代理语义：
 
-### 6. Windows 桌面任务通知
+- `direct`：ChatGPT 浏览器明确直连。
+- `manual`：ChatGPT 浏览器明确使用用户填写的 HTTP/HTTPS 代理。
+- `system`：继续使用 Chromium/Electron 系统代理模式。
+- `auto`：浏览器保留系统代理语义，同时记录浏览器实际 route 与 Tunnel route 是否一致，不在正在生成回复时突然切换出口。
 
-支持系统级任务提醒：
+`chat:status` 现在包含 `browserNetwork`：
 
-- 任务完成提醒
-- 任务失败提醒
-- 任务中断提醒
-- 等待用户确认 / 输入提醒
-- 通知声音开关
-- 点击通知回到 ChatGPT
-- 设置页可直接发送测试通知
+- `mode`
+- `browserRoute`
+- `tunnelRoute`
+- `aligned`
+- `source`
+- `updatedAt`
 
-### 7. 工作区与权限控制
+用户主动修改代理设置时才刷新 ChatGPT Session 的 proxy policy，并关闭旧连接池；不会清 Cookie、LocalStorage 或 ChatGPT 登录态。
 
-本地文件访问以用户明确授权的目录为边界：
+## ChatGPT Stream Observer
 
-- 一个主工作区
-- 可添加额外授权目录
-- 未授权路径会被权限策略拒绝
-- 切换工作区后自动更新 MCP 访问范围
-- 支持不同命令权限模式
-- 高风险系统修改仍可以要求额外确认
+0.4.3 新增只读 Stream Observer，识别页面已经显示的：
 
-### 8. 本地 Runtime 与连接管理
+- `连接已中断`
+- `正在等待完整回复`
+- `出错了，无法显示此消息`
+- 对应英文 interruption / waiting / message display error 状态
 
-安装包内已经集成运行环境：
+普通 Stream 状态会上报：
 
-- 内置便携 Python 3.12
-- 内置 Coding Tools MCP Runtime
-- 不依赖系统 Python
-- 不需要 Docker
-- 本地 MCP 默认绑定 `127.0.0.1`
-- 自动管理 OpenAI Tunnel
-- 支持启动、停止、重启和健康检查
-- Runtime 状态通过心跳持续同步到桌面界面
+- `page-stream-interrupted`
+- `page-stream-recovered`
 
-### 9. 更稳的 Runtime / Schema 生命周期
+消息渲染失步会上报：
 
-v0.2.4 对旧进程、旧工具定义和异常重启做了额外处理：
+- `page-message-render-error`
+- `page-message-render-recovered`
 
-- Runtime 重启前确认旧 PID 退出
-- 检查端口释放
-- 生成并校验新的 process / launch / runtime instance 身份
-- 运行时代码变化会反映到 source fingerprint
-- `server/discover` 与健康端点校验相同 Runtime / Schema 身份
-- 公共工具 Schema 使用 version / hash 契约校验
-- 页面、Tunnel、Runtime 分成三个故障层，避免互相误伤
+并把状态放入 `chat:status.streamState`。
 
-### 10. 自动测试、构建与产物验证
+### 严重热修：撤回自动 message render reload
 
-“构建验证”页面会先识别项目，再自动选择可用方案：
+0.4.3 曾尝试在检测到“消息已生成但无法显示”后自动执行受保护的 `webContents.reload()`。真实使用发现这一策略仍可能被隐藏 DOM、历史节点或页面内部瞬时状态误触发，表现为**没有明显错误提示时界面也会莫名刷新**。
 
-- 自动识别 Node.js / Electron / Python 等项目
-- 自动识别测试命令
-- 自动识别构建命令
-- 测试失败时阻止后续构建
-- 检查构建产物目录
-- 输出版本和产物信息
-- 生成 / 展示 SHA-256
-- 也可以在高级设置中手动覆盖命令
+最新 0.4.3 已彻底撤回这条自动 reload 路径：
 
-### 11. 系统诊断与修复
+- Stream Observer **只能观测和上报状态，不能刷新页面**。
+- `message render error` 不再携带 `safeToReload`，不存在 1.8 秒自动恢复计时器，也不存在 45 秒自动 reload 冷却逻辑。
+- 错误识别不再扫描整个 `main.innerText`，只检查当前页面中**可见、结构化的错误候选节点**，例如 `role="alert"`、`aria-live="assertive"` 或明确的 error 容器。
+- 主动 `reload()` 仅保留在用户手动点击刷新按钮的导航动作中。
+- 用户手动刷新会记录 `user-navigation-reload`；其它页面开始加载会记录不包含 conversation URL 或聊天正文的 reason，便于继续追踪异常刷新来源。
 
-“诊断与修复”可以检查：
+明确不会：
 
-- 当前工作区
-- 便携运行环境
-- 本地 MCP 服务
-- 端口状态
-- OpenAI Tunnel / 连接状态
-- 部分常见配置问题
+- 因 Stream Observer 自动 reload conversation。
+- 因 message render error 自动 reload conversation。
+- 自动重发消息。
+- 重启健康的 Runtime。
+- 重启健康的 Tunnel。
+- 把聊天正文写进 stream/reload 诊断日志。
 
-能够安全自动处理的问题可以执行一键修复。
+这样可以区分：
 
-### 12. 网络与代理
+`ChatGPT response stream 中断 ≠ 单条消息渲染失步 ≠ Renderer 崩溃 ≠ Tunnel 中断 ≠ Runtime 中断`
 
-支持自动选择：
+## 网络与 Renderer 诊断
 
-- 直连
-- Windows 系统代理
-- 常见本地代理
+新增 ChatGPT 网络错误观测和 renderer `unresponsive/responsive` 事件。
 
-连接异常时会进行诊断和重连，不再固定依赖某个代理软件或固定端口。
-
-### 13. 本地安全与密钥保护
-
-- Runtime API Key 使用 Electron `safeStorage` / Windows DPAPI 在本机加密保存
-- MCP Bearer Token 随机生成并加密保存
-- 渲染进程不直接读取密钥明文
-- 普通日志会隐藏 key / token / authorization / secret 等敏感字段
-- 管理页面启用 `contextIsolation`，关闭 `nodeIntegration`
-- 本地 MCP 和管理接口默认只监听本机地址
-- 匿名遥测默认关闭，不上传聊天内容
-
-### 14. 中文桌面管理中心
-
-目前管理中心包括：
-
-- 总览
-- 运行与连接
-- 工作区与权限
-- 任务状态
-- 构建验证
-- 诊断与修复
-- 接入指南
-- 运行日志
-- 偏好设置
-
-同时支持：
-
-- 浅色 / 深色主题
-- Windows 开机启动
-- 打开助手时自动启动服务
-- 关闭窗口后继续后台运行
-- 系统托盘
-- 清除 ChatGPT 登录数据并重新登录
-- 重新生成 MCP Token
-- 清理运行日志
-
-### 15. ChatGPT 接入向导
-
-内置中文接入步骤，覆盖：
-
-1. 创建 OpenAI Tunnel
-2. 创建 Runtime API Key
-3. 在助手中选择工作目录并部署
-4. 在 ChatGPT 中创建自定义 MCP / 连接器
-5. 完成第一次只读工具测试
-
-同时提供可复制的 Coding Tools MCP 自定义指令。
+日志只记录 host、resource type、网络错误类型、路由状态和页面加载 reason 等元数据，不记录 ChatGPT conversation URL 或聊天正文。
 
 ---
 
-## 🛠 当前公开 MCP 工具
+# 0.4.3：本地记忆页 UI 微调
 
-v0.2.4 内置 Runtime 对 ChatGPT 暴露的核心工具包括：
+根据真实界面截图继续调整 Manager V2：
+
+- 新增候选表单字段间距收紧。
+- 正文区默认高度降低，仍支持手动纵向拉伸。
+- “置顶”和“加入候选”进入统一底部 action row。
+- 底部使用轻量分隔线建立动作层级。
+- 小屏自动纵向堆叠，提交按钮全宽。
+- 右侧无候选时继续保持内容自适应，不强制与左栏等高。
+- 记忆库容器、卡片和标题区域统一增加 `min-width: 0` / `max-width: 100%` 约束。
+- 长中文、长英文、路径和无空格长 token 使用 `overflow-wrap:anywhere` / `word-break:break-word` 在卡片内部断行。
+- 记忆正文保留 `pre-wrap`，只允许纵向滚动，禁止长文本把整个页面横向撑出边界。
+
+本次针对用户真实的超长记忆内容增加专项回归测试，确认标题、元信息和正文都不会再撑破卡片。
+
+---
+
+# 0.4.2：自动本地记忆
+
+0.4.2 将之前只有配置开关的 Memory 自动模式补成完整执行链。
+
+普通 ChatGPT 对话即使没有主动调用 MCP，Electron 也可以只读观察已经显示完成的 user / assistant turn，并通过本机私有 Memory ingest 路径提取短记忆。
+
+原则：
+
+- 除明显闲聊/寒暄外，默认视为可能有长期价值。
+- 可保存个人偏好、工作习惯、长期目标、计划、项目背景、项目决策、任务结论、反复问题等，不局限于技术规范。
+- 不保存整段聊天原文。
+- 页面 console 只发送 ready 信号，正文通过瞬时内存队列读取后清空。
+- 密码、API Key、Token、Cookie、验证码、私钥、支付凭证永久拒绝。
+- 敏感个人信息不静默自动写入。
+- 重复内容不重复写。
+- 冲突内容不会偷偷覆盖旧记忆。
+
+自动模式：非闲聊、非敏感、非秘密内容可直接写入长期 Memory。
+
+建议模式：自动提取后进入候选区等待确认。
+
+默认目录：
+
+`%LOCALAPPDATA%\GPT-WebCodex\memory-v1\`
+
+---
+
+# 0.4.1：Manager V2
+
+0.4.1 重做桌面管理/设置中心的视觉系统：
+
+- 208px 稳定窄侧栏，导航拆分“工作台 / 系统”。
+- Runtime 状态降级为侧栏底部轻量状态区。
+- 统一按钮、输入框、Select、Toggle、Checkbox、间距和页面宽度。
+- 减少渐变、厚阴影和卡片套卡片。
+- 设置页改成单列设置清单 + 右侧控件。
+- 工作区、任务、记忆、诊断统一 Design Tokens。
+- 提供浅色/深色和小屏响应式布局。
+
+---
+
+# 0.4.0：Stable Execution Kernel
+
+0.4.0 把长期任务围绕本地持久状态组织：
+
+```text
+ChatGPT / agent_workflow
+        ↓
+Run Supervisor
+        ↓
+Step Scheduler
+        ↓
+Execution Ledger
+        ↓
+Command / Patch / Build / Test / Git Executors
+        ↓
+Recovery Policy
+        ↓
+Checkpoint + Local Session + History
+```
+
+核心包括：
+
+- Run / Step / Execution identity。
+- exactly-once / duplicate reuse。
+- `unknown_outcome + side_effect_possible` 禁止盲目自动重跑。
+- Heartbeat / Lease / Stuck Detector。
+- bounded Recovery Policy / backoff / circuit breaker。
+- ChatGPT / Tunnel / Runtime 三层解耦。
+- Model Handoff Gate。
+- Worktree 安全应用。
+- Crash / Restart Recovery。
+- 发布级 bounded electron-builder retry。
+
+0.4.0 正式 Soak：**150 cycles / 约 30 分 43 秒**，Git index 全程保持不变。
+
+---
+
+# 当前公开 MCP 工具
 
 | 工具 | 用途 |
 | --- | --- |
-| `coding_tools_guide` | 返回 Coding Tools MCP 使用建议 |
-| `workspace_context` | 快速读取项目、Git 和任务概况 |
-| `agent_workflow` | 一次完成诊断、修改、测试、构建等完整开发任务 |
-| `task_control` | 查看、暂停、继续、停止任务及管理 Worktree |
-| `document_workflow` | PDF / DOCX / Markdown / 文本处理 |
-| `exec_command` | 执行聚焦的工作区命令 |
-| `command_control` | 管理正在运行的命令会话 |
-| `request_permissions` | 请求额外命令 / 文件操作权限 |
+| `coding_tools_guide` | Coding Tools MCP 使用建议 |
+| `workspace_context` | 项目、Repo Map、Git、任务、Memory 与上下文概况 |
+| `agent_workflow` | 完整诊断、修改、测试、构建与 Resume 工作流 |
+| `task_control` | 任务、后台 operation、Worktree 管理 |
+| `document_workflow` | PDF / DOCX / Markdown / 文本工作流 |
+| `exec_command` | 聚焦的本地命令执行 |
+| `command_control` | 管理运行中的命令会话 |
+| `request_permissions` | 请求本地额外权限 |
 | `view_image` | 查看工作区图片 |
 
-底层还包含 Git、文件读写、搜索、补丁、构建验证等能力，并由上述高层工具统一编排。
+公共 Schema 继续保持 **v7 / 9 tools**。
 
 ---
 
-## 📦 下载和安装
+# 项目结构
 
-普通使用不需要配置开发环境：
+```text
+electron/                    Electron 主进程、ChatGPT WebContents、Runtime/Tunnel 编排
+renderer/                    桌面管理界面
+resources/coding-tools-mcp/  内置 Coding Tools MCP Python Runtime
+resources/native-python/     Windows 便携 Python
+scripts/                     测试、Schema、Soak、发布辅助脚本
+tests/                       Node/Electron 回归
+.coding-tools/               本地任务、Checkpoint、History、Worktree 等运行状态
+```
 
-1. 打开 GitHub 页面右侧 **[Releases](../../releases)**。
-2. 下载最新安装包：`web-mcp-assistant-setup-0.2.4.exe`。
-3. 双击安装。
-4. 打开助手，选择工作目录。
-5. 按“接入指南”配置 OpenAI Tunnel 和 ChatGPT MCP。
+关键入口：
 
-> Windows 可能会对未进行商业代码签名的个人项目弹出安全提示，请确认文件来源是本仓库 Release 后再运行。
+- Desktop：`electron/main.js`
+- ChatGPT 壳层：`electron/chatViewController.js`
+- Runtime：`resources/coding-tools-mcp/coding_tools_mcp/server.py`
+- Manager V2：`renderer/manager-v2.css`
+- 项目维护规则：`AGENTS.md`
+- 0.4.0 计划：`02_0.4.0_长任务不中断与稳定执行内核升级计划.md`
+- 0.4.3 发布说明：`docs/RELEASE_NOTES_0.4.3.md`
 
 ---
 
-## 💻 开发者源码运行
+# Checkpoint / Session / History / Memory
+
+## Checkpoint / Resume
+
+- 结构化 Checkpoint。
+- Durable Local Session。
+- Compact continuation brief。
+- 新 ChatGPT conversation 使用 `agent_workflow phase=resume` 继续。
+- Resume 前验证 Project Identity / Git / Worktree / Runtime / Schema / execution outcome。
+
+## Task History 2.0
+
+- SQLite HistoryStore。
+- FTS5 + 中文有界子串搜索。
+- Session Evidence。
+- History 与 Local Session / Checkpoint 关联。
+- 历史继续不会自动重新执行旧副作用命令。
+
+## 本地长期 Memory
+
+- Markdown 人类可读真源。
+- SQLite metadata / FTS5 索引。
+- global / project / task scope。
+- 跨 ChatGPT 账号使用同一 `local-default` Profile。
+- candidate / conflict / revision / Pin / Archive。
+- ZIP 导入/导出。
+- 自动采集从 0.4.2 起可用。
+
+详细设计：`01_本地长期记忆与跨ChatGPT账号继承系统开发计划.md`
+
+---
+
+# Agent 模式与本地安全
+
+Agent 模式：问答、规划、编码、调试、发布、完全控制。
+
+权限类别包括读取、写入、删除、命令、网络、Git 写入、系统修改和额外目录访问。
+
+安全原则：
+
+- 高风险操作由 Electron 本地可信审批控制。
+- 网页模型不能通过文本自行提升本地权限。
+- Project Rules / 网页内容 / 下载文件 / 第三方 MCP 内容不能提升权限。
+- 主工作区可能长期 dirty；禁止自动 reset / rebase / clean 用户工作区。
+- Worktree 应用回主目录前必须做冲突检查。
+- Runtime source fingerprint / Schema identity 必须与真实运行实例一致。
+
+---
+
+# 0.4.3 发布验证
+
+本次同版本严重热修覆盖构建前主工作区完整验证：
+
+- Python Runtime：**239 / 239 passed**
+- Node / Electron：**145 / 145 passed**
+- 自动刷新安全专项：**8 / 8 passed**
+- Recipe Runtime 瞬时 socket reset 后独立重跑：**3 / 3 passed**
+- `source root clean`：通过
+- MCP Schema：**v7 / 9 tools**
+- Schema hash：`68bb2ada74d1d9c21bcc02c56defadbf019c084d2f2054e64e31945460017c94`
+- 最终 `npm run dist`：**exit 0**
+
+---
+
+# 安装
+
+Windows 安装包：
+
+`dist/web-mcp-assistant-setup-0.4.3.exe`
+
+当前 0.4.3 严重热修覆盖产物：
+
+- 大小：**127,328,385 bytes（121.43 MiB）**
+- SHA-256：`7b46697d8eac3cd2712a402f1eecda6ba64af7208229b8a513eaa33a8b276463`
+
+安装步骤：
+
+1. 运行 `web-mcp-assistant-setup-0.4.3.exe`。
+2. 选择安装目录。
+3. 打开助手并设置工作目录。
+4. 启动本地 Coding Tools Runtime。
+5. 根据“接入指南”建立 OpenAI Secure MCP Tunnel 并在 ChatGPT Developer Mode 配置 MCP。
+
+Windows 可能对未商业代码签名的个人项目显示安全提示，请确认安装包来源后再运行。
+
+---
+
+# 开发者运行
 
 ```powershell
-# 克隆项目
-git clone https://github.com/3169657175/gpt-webcodex.git
-cd gpt-webcodex
-
-# 安装依赖
 npm install
-
-# 开发运行
 npm start
 
-# 全量测试
-npm test
-
-# 构建 Windows NSIS 安装包
+npm run test
+npm run soak:quick
+npm run soak
 npm run dist
 ```
 
-构建产物默认位于 `dist/`。
+构建产物位于 `dist/`。
 
 ---
 
-## 🔐 安全边界说明
+# 已知上游边界
 
-这个工具具备真实的本地文件写入和命令执行能力，因此它不是纯聊天插件。
+## ChatGPT Developer MCP 后续轮次 namespace / attachment 消失
 
-建议：
+仍可能遇到 ChatGPT 上游 Developer MCP attachment/namespace 在后续 turn 消失的问题。本项目不再使用强制自动 `@Coding Tools MCP` 或文本 Bridge 绕过，因为这会破坏普通聊天发送并制造新的不稳定性。
 
-- 只授权确实需要 AI 操作的项目目录
-- 重要项目保留 Git 提交或其他备份
-- 普通使用保持安全权限模式
-- ChatGPT 请求执行高风险命令时先检查具体操作
-- 不要把 Runtime Key、MCP Token 或其他密钥粘贴到聊天消息中
+当前原则：上游 attachment 故障不连带重启健康 Runtime/Tunnel，等待 OpenAI 修复。
 
-Git Worktree 隔离能降低复杂任务直接修改主工作区的风险，但不能替代 Git 提交和正常备份。
+## ChatGPT 网页回答流/消息渲染异常
+
+0.4.3 已增强浏览器层行为和诊断，但网页 response stream 最终仍由 ChatGPT/OpenAI 服务端与 Chromium 网络链路共同决定，因此不能保证完全消除上游或互联网瞬时中断。
+
+本地原则：
+
+- 普通页面 stream 异常不自动重启健康 Runtime/Tunnel。
+- 后台 execution / Run 继续以本地持久状态为真源。
+- “连接已中断/等待完整回复”只记录 interrupted/recovered，不在生成过程中强刷 conversation。
+- “出错了，无法显示此消息”只作为独立 message render error 观测，不再自动 reload。
+- 正常使用期间程序不得因 Stream/Message Observer 自行刷新 ChatGPT；主动 reload 仅允许用户手动导航刷新。
+- 若再次出现页面自己重新加载，通过 `page-or-browser-navigation` / `user-navigation-reload` 等 reason 诊断继续区分是 ChatGPT/Chromium 自身导航还是本程序主动动作。
 
 ---
 
-## 📜 开源协议
+# 关于“指纹浏览器”
 
-- 本项目使用 [MIT License](LICENSE)。
-- 内置的 Coding Tools MCP 来源于 [xyTom/coding-tools-mcp](https://github.com/xyTom/coding-tools-mcp)，其许可与来源说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+0.4.3 没有引入独立指纹浏览器内核。
+
+当前 Electron 已使用现代 `WebContentsView` 和持久 Session。连接稳定性问题首先通过真实 Chromium 版本一致的 Chrome-like UA、关闭后台节流、标准 Session 代理、网络路径对齐诊断、Stream Observer 和 message render 只读观测处理。
+
+完整指纹浏览器更偏向多账号隔离、反自动化检测和身份伪装，会额外引入浏览器内核、指纹一致性、Cookie/登录迁移、升级与安全维护成本。只有在 0.4.3 实机长期测试仍证明普通 Chromium 嵌入本身是主要故障来源时，才值得进入独立 Browser Profile / Browser Companion 的实验阶段。
 
 ---
 
-## 📌 版本信息
+# 版本简史
 
-- 网页 MCP 助手：**0.2.4**
-- Coding Tools MCP Runtime：**0.4.9**
-- Electron：**43.2.0**
-- Windows 安装包：`web-mcp-assistant-setup-0.2.4.exe`
+## v0.4.3
+
+ChatGPT 浏览器壳标准化、Chrome-like UA、关闭后台节流、浏览器/Tunnel 代理路径诊断、Stream interruption observer、message render 只读观测且禁止自动 reload、本地记忆 UI 与长文本溢出修复。
+
+## v0.4.2
+
+普通 ChatGPT 对话自动 Memory ingest；除闲聊/敏感/秘密内容外可自动记住长期有用信息。
+
+## v0.4.1
+
+Manager V2 设置中心视觉系统重构。
+
+## v0.4.0
+
+Stable Execution Kernel：Run Supervisor、Execution Ledger 2.0、heartbeat/lease/stuck detector、Recovery Policy、Model Handoff Gate、Chaos/Soak 和发布级 bounded retry。
+
+## v0.3.1
+
+取消强制自动 `@Coding Tools MCP` / send interception。
+
+## v0.3.0
+
+本地长期 Memory、Rules、Recipes、Skills。
+
+---
+
+# 后续优先方向
+
+继续按真实 dogfooding 排优先级，而不是扩张 Tool Surface：
+
+- 收集 0.4.3 的 `streamState + browserNetwork + Tunnel/Runtime health + page load reason` 真实中断样本。
+- 将“ChatGPT 回答流中断，但本地任务仍健康”更直观地展示在管理界面。
+- 如果仍出现非用户触发的页面重新加载，优先根据 `page-or-browser-navigation` 诊断来源，不再新增自动 reload 绕过。
+- deterministic change set 偶发错误进入 `waiting_model` 的状态机问题。
+- Worktree 对未纳入 Git 的便携工具路径解析。
+- Runtime/Schema 暴露与已连接客户端之间的漂移检测。
+- Manager V2 长期使用中的密度和小屏微调。
+
+---
+
+# 开源协议
+
+- 本项目：MIT License。
+- 内置 Coding Tools MCP 来源于 `xyTom/coding-tools-mcp`，第三方许可见 `THIRD_PARTY_NOTICES.md`。

@@ -4,12 +4,13 @@ const { runtimeFingerprint, runtimeSourceFingerprint, currentRuntimeState } = re
 const { normalizeProxyValue } = require('../electron/services/proxyService');
 
 test('native runtime identity changes with workspace and port while tool mode stays smart', () => {
-  const base = { workspace: 'C:\\work\\one', mcpPort: 18765, permissionMode: 'safe' };
+  const base = { workspace: 'C:\\work\\one', mcpPort: 18765, permissionMode: 'safe', agentMode: 'code' };
   assert.equal(runtimeFingerprint(base), runtimeFingerprint({ ...base }));
   assert.notEqual(runtimeFingerprint(base), runtimeFingerprint({ ...base, workspace: 'C:\\work\\two' }));
   assert.notEqual(runtimeFingerprint(base), runtimeFingerprint({ ...base, mcpPort: 18766 }));
   assert.notEqual(runtimeFingerprint(base), runtimeFingerprint({ ...base, authorizedRoots: ['D:\\shared'] }));
   assert.equal(runtimeFingerprint(base), runtimeFingerprint({ ...base, toolMode: 'readonly' }));
+  assert.notEqual(runtimeFingerprint(base), runtimeFingerprint({ ...base, agentMode: 'plan' }));
 });
 
 test('proxy values from Windows settings are normalized', () => {

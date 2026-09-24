@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tomllib
 from datetime import datetime, timezone
@@ -55,7 +56,7 @@ def detect_project(root: Path) -> dict[str, Any]:
         except (OSError, ValueError):
             parsed = {}
         project = parsed.get("project") if isinstance(parsed.get("project"), dict) else {}
-        return {"type": "python", "name": project.get("name", root.name), "version": project.get("version", ""), "package_manager": "pip", "test_command": "python -m pytest" if any((root / name).exists() for name in ("tests", "pytest.ini")) else "", "build_command": "python -m build", "artifact_paths": ["dist"]}
+        return {"type": "python", "name": project.get("name", root.name), "version": project.get("version", ""), "requires_python": str(project.get("requires-python") or ""), "package_manager": "pip", "test_command": "python -m pytest" if any((root / name).exists() for name in ("tests", "test", "pytest.ini")) else "", "build_command": "python -m build", "artifact_paths": ["dist"]}
     cargo = root / "Cargo.toml"
     if cargo.is_file():
         try:
@@ -142,6 +143,37 @@ def _node_framework(script: str) -> str:
     return "package-script"
 
 
+def _python_requirement_met(requirement: str, version: tuple[int, int]) -> bool:
+    """Check the lower bound needed for choosing an interpreter, not full PEP 440 resolution."""
+    for major, minor in re.findall(r">=\s*(\d+)\.(\d+)", requirement):
+        if version < (int(major), int(minor)):
+            return False
+    return True
+
+
+def _project_python(root: Path) -> tuple[str, tuple[int, int], bool, bool]:
+    candidates = (
+        root / ".venv" / "Scripts" / "python.exe",
+        root / "venv" / "Scripts" / "python.exe",
+        root / ".venv" / "bin" / "python",
+        root / "venv" / "bin" / "python",
+    )
+    for executable in candidates:
+        if not executable.is_file():
+            continue
+        try:
+            probe = subprocess.run(
+                [str(executable), "-I", "-c", "import importlib.util,json,sys;print(json.dumps([sys.version_info.major,sys.version_info.minor,bool(importlib.util.find_spec('pytest')),bool(importlib.util.find_spec('build'))]))"],
+                cwd=str(root), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5, check=False,
+            )
+            if probe.returncode == 0:
+                major, minor, pytest_ok, build_ok = json.loads(probe.stdout.strip())
+                return str(executable), (int(major), int(minor)), bool(pytest_ok), bool(build_ok)
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+            continue
+    return sys.executable, sys.version_info[:2], importlib.util.find_spec("pytest") is not None, importlib.util.find_spec("build") is not None
+
+
 def profile_project_execution(root: Path, target_paths: list[str] | None = None) -> dict[str, Any]:
     """Describe executable tests/builds without running them; unavailable means do not guess-and-run."""
     workspace_root = root.resolve()
@@ -178,21 +210,27 @@ def profile_project_execution(root: Path, target_paths: list[str] | None = None)
                 reason=f"package.json 已声明 {build_name} 脚本，且包管理器可用。" if available else f"package.json 有 {build_name} 脚本，但当前环境找不到 {manager}。",
             )
     elif kind == "python":
-        tests_dir = project_root / "tests"
-        pytest_configured = any((project_root / name).exists() for name in ("pytest.ini", "conftest.py")) or tests_dir.exists()
-        pytest_available = importlib.util.find_spec("pytest") is not None
-        if pytest_configured and pytest_available:
-            command = f'"{sys.executable}" -m pytest'
-            test = _profile_command(command, status="verified", framework="pytest", confidence="high", reason="检测到测试目录/配置，并确认当前 Python 可导入 pytest。")
-        elif tests_dir.is_dir() and any(tests_dir.rglob("test*.py")):
-            command = f'"{sys.executable}" -m unittest discover -s tests'
-            test = _profile_command(command, status="verified", framework="unittest", confidence="medium", reason="pytest 不可用，但检测到 unittest 风格 test*.py，可使用 Python 内置 unittest。")
-        elif pytest_configured:
-            test = _profile_command(status="unavailable", framework="pytest", confidence="high", reason="检测到测试目录/配置，但当前 Python 环境没有 pytest，且没有可确认的 unittest 测试入口。")
-        if importlib.util.find_spec("build") is not None:
-            build = _profile_command(f'"{sys.executable}" -m build', status="verified", framework="python-build", confidence="high", reason="当前 Python 可导入 build 模块。")
+        python, version, pytest_available, build_available = _project_python(project_root)
+        requires = str(project.get("requires_python") or "")
+        if not _python_requirement_met(requires, version):
+            reason = f"项目要求 Python {requires}，当前可用环境为 {version[0]}.{version[1]}；请先配置项目自己的兼容虚拟环境。内置 MCP Python 不负责安装业务依赖。"
+            test = _profile_command(status="unavailable", framework="pytest", confidence="high", reason=reason)
+            build = _profile_command(status="unavailable", framework="python-build", confidence="high", reason=reason)
         else:
-            build = _profile_command(status="unavailable", framework="python-build", confidence="high", reason="当前 Python 环境没有 build 模块，不会盲目运行 python -m build。")
+            tests_dir = next((project_root / name for name in ("tests", "test") if (project_root / name).is_dir()), project_root / "tests")
+            pytest_configured = any((project_root / name).exists() for name in ("pytest.ini", "conftest.py")) or tests_dir.exists()
+            if pytest_configured and pytest_available:
+                command = f'"{python}" -m pytest'
+                test = _profile_command(command, status="verified", framework="pytest", confidence="high", reason="检测到测试目录/配置，并确认选用的项目 Python 可导入 pytest。需要 localhost 服务的集成测试仍须按项目配置显式启动。")
+            elif tests_dir.is_dir() and any(tests_dir.rglob("test*.py")) and tests_dir.name == "tests":
+                command = f'"{python}" -m unittest discover -s tests'
+                test = _profile_command(command, status="verified", framework="unittest", confidence="medium", reason="pytest 不可用，但检测到 unittest 风格 test*.py，可使用 Python 内置 unittest。")
+            elif pytest_configured:
+                test = _profile_command(status="unavailable", framework="pytest", confidence="high", reason="检测到测试目录/配置，但所选项目 Python 环境没有 pytest，且没有可确认的 unittest 测试入口。")
+            if build_available:
+                build = _profile_command(f'"{python}" -m build', status="verified", framework="python-build", confidence="high", reason="所选项目 Python 可导入 build 模块。")
+            else:
+                build = _profile_command(status="unavailable", framework="python-build", confidence="high", reason="所选项目 Python 环境没有 build 模块，不会盲目运行 python -m build。")
     else:
         specs = {
             "rust": ("cargo", "cargo test", "cargo build --release", "cargo"),
@@ -276,24 +314,37 @@ def verify_build(root: Path, args: dict[str, Any], runner: CommandRunner) -> dic
     test_result = None
     build_result = None
     failure = ""
+    failure_kind = ""
     if run_tests:
         if not test_command:
             test_result = {"status": "unavailable", "command": "", "summary": str(profile["test"].get("reason") or "未检测到可用测试命令。")}
         else:
             test_result = runner(test_command, root if project_root != root and args.get("test_command") else project_root, timeout)
             if test_result.get("status") != "passed":
-                failure = "Tests failed."
+                if test_result.get("status") == "environment_failed":
+                    failure = "测试命令未能启动；请检查运行环境或命令路径。"
+                    failure_kind = "environment"
+                else:
+                    failure = "Tests failed."
+                    failure_kind = "test"
     if run_build and not failure:
         if not build_command:
             build_result = {"status": "unavailable", "command": "", "summary": str(profile["build"].get("reason") or "未检测到可用构建命令。")}
             failure = "未检测到经过验证的构建命令。"
+            failure_kind = "environment"
         else:
             build_result = runner(build_command, root if project_root != root and args.get("build_command") else project_root, timeout)
             if build_result.get("status") != "passed":
-                failure = "Build failed."
+                if build_result.get("status") == "environment_failed":
+                    failure = "构建命令未能启动；请检查运行环境或命令路径。"
+                    failure_kind = "environment"
+                else:
+                    failure = "Build failed."
+                    failure_kind = "build"
     patterns = [str(item) for item in args.get("artifact_paths", [])] or list(project["artifact_paths"])
     artifacts = collect_artifacts(project_root, patterns, algorithm, started_ns) if not failure else []
     if run_build and build_result and build_result.get("status") == "passed" and not artifacts:
         failure = "Build command passed, but no newly generated artifact was found."
+        failure_kind = "artifact"
     overall = "passed" if not failure else "failed"
-    return {"project": project, "project_root": project_root.relative_to(root).as_posix() if project_root != root else ".", "execution_profile": profile, "commands": {"test": test_command, "build": build_command}, "test_result": test_result, "build_result": build_result, "artifacts": artifacts, "hash_algorithm": algorithm, "overall_status": overall, "failure": failure or None, "report_generated_at": _now()}
+    return {"project": project, "project_root": project_root.relative_to(root).as_posix() if project_root != root else ".", "execution_profile": profile, "commands": {"test": test_command, "build": build_command}, "test_result": test_result, "build_result": build_result, "artifacts": artifacts, "hash_algorithm": algorithm, "overall_status": overall, "failure": failure or None, "failure_kind": failure_kind or None, "report_generated_at": _now()}

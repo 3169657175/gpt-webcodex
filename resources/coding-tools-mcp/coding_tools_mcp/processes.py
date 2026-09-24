@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import codecs
+import hashlib
 import os
 import signal
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, BinaryIO
 
 from .errors import ToolFailure
@@ -14,6 +17,100 @@ from .textutils import DEFAULT_MAX_LINES, TextTruncation, truncate_text_tail
 
 SESSION_BUFFER_BYTES = 524_288
 HARD_KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
+
+
+@dataclass(frozen=True)
+class DecodedCommandOutput:
+    text: str
+    encoding: str
+    consumed_bytes: int
+    pending_bytes: int
+    had_replacement: bool
+    newline_normalized: bool
+
+
+def _normalize_output_newlines(text: str) -> tuple[str, bool]:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized, normalized != text
+
+
+def _utf16_encoding_hint(data: bytes) -> str | None:
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return "utf-16"
+    sample = data[:256]
+    if len(sample) < 4:
+        return None
+    pairs = len(sample) // 2
+    even_nuls = sum(1 for index in range(0, pairs * 2, 2) if sample[index] == 0)
+    odd_nuls = sum(1 for index in range(1, pairs * 2, 2) if sample[index] == 0)
+    if odd_nuls >= max(2, pairs // 3) and even_nuls <= max(1, pairs // 8):
+        return "utf-16-le"
+    if even_nuls >= max(2, pairs // 3) and odd_nuls <= max(1, pairs // 8):
+        return "utf-16-be"
+    return None
+
+
+def _decode_strict_incremental(data: bytes, encoding: str, *, final: bool) -> DecodedCommandOutput | None:
+    try:
+        decoder = codecs.getincrementaldecoder(encoding)(errors="strict")
+        text = decoder.decode(data, final=final)
+        pending = b"" if final else bytes(decoder.getstate()[0])
+    except (LookupError, UnicodeDecodeError):
+        return None
+    normalized, changed = _normalize_output_newlines(text)
+    return DecodedCommandOutput(
+        normalized,
+        encoding,
+        len(data) - len(pending),
+        len(pending),
+        False,
+        changed,
+    )
+
+
+def decode_command_output(data: bytes, *, final: bool = True) -> DecodedCommandOutput:
+    """Decode command output without corrupting Windows encodings or split characters.
+
+    Offsets remain raw-byte based.  While a process is running, an incomplete
+    trailing code unit is intentionally left unconsumed so the next poll can
+    decode it together with the next chunk.
+    """
+    if not data:
+        return DecodedCommandOutput("", "utf-8", 0, 0, False, False)
+
+    if not final and data in {b"\xef", b"\xef\xbb", b"\xff", b"\xfe"}:
+        return DecodedCommandOutput("", "pending", 0, len(data), False, False)
+
+    if data.startswith(codecs.BOM_UTF8):
+        candidate = _decode_strict_incremental(data, "utf-8-sig", final=final)
+        if candidate is not None:
+            return candidate
+
+    utf16_hint = _utf16_encoding_hint(data)
+    if utf16_hint:
+        candidate = _decode_strict_incremental(data, utf16_hint, final=final)
+        if candidate is not None:
+            return candidate
+
+    candidate = _decode_strict_incremental(data, "utf-8", final=final)
+    if candidate is not None:
+        return candidate
+
+    candidate = _decode_strict_incremental(data, "cp936", final=final)
+    if candidate is not None:
+        return candidate
+
+    # Malformed terminal output must still be observable. Prefer UTF-8's
+    # replacement behavior as the final deterministic fallback.
+    text = data.decode("utf-8", errors="replace")
+    normalized, changed = _normalize_output_newlines(text)
+    return DecodedCommandOutput(normalized, "utf-8-replace", len(data), 0, True, changed)
+
+
+def _iso_timestamp(value: float | None) -> str:
+    if value is None:
+        return ""
+    return datetime.fromtimestamp(value, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _windows_taskkill_tree(process: subprocess.Popen[bytes], *, force: bool) -> None:
@@ -158,6 +255,20 @@ def spawn_process(
 class ExecSession:
     session_id: str
     process: subprocess.Popen[bytes]
+    execution_id: str = ""
+    task_id: str = ""
+    run_id: str = ""
+    command: str = ""
+    workdir: str = ""
+    worktree: str = ""
+    action_fingerprint: str = ""
+    input_fingerprint: str = ""
+    command_hash: str = ""
+    side_effect_class: str = "process"
+    retry_policy: str = "never_after_start"
+    attempt: int = 1
+    retry_safe: bool = False
+    side_effect_possible: bool = True
     timeout_at: float | None = None
     warnings: list[str] = field(default_factory=list)
     stdout: bytearray = field(default_factory=bytearray)
@@ -170,6 +281,8 @@ class ExecSession:
     stderr_total_bytes: int = 0
     stdout_dropped_bytes: int = 0
     stderr_dropped_bytes: int = 0
+    stdout_hasher: Any = field(default_factory=hashlib.sha256, repr=False)
+    stderr_hasher: Any = field(default_factory=hashlib.sha256, repr=False)
     buffer_limit: int = SESSION_BUFFER_BYTES
     lock: threading.Lock = field(default_factory=threading.Lock)
     reader_threads: list[threading.Thread] = field(default_factory=list)
@@ -190,6 +303,7 @@ class ExecSession:
 
     def append_stdout(self, chunk: bytes) -> None:
         with self.lock:
+            self.stdout_hasher.update(chunk)
             self.stdout.extend(chunk)
             self.stdout_total_bytes += len(chunk)
             self.stdout_dropped_bytes += _trim_buffer(
@@ -201,6 +315,7 @@ class ExecSession:
 
     def append_stderr(self, chunk: bytes) -> None:
         with self.lock:
+            self.stderr_hasher.update(chunk)
             self.stderr.extend(chunk)
             self.stderr_total_bytes += len(chunk)
             self.stderr_dropped_bytes += _trim_buffer(
@@ -236,17 +351,27 @@ class ExecSession:
 
     def snapshot_since_cursor(self, max_output_bytes: int) -> dict[str, Any]:
         self.refresh_status()
+        final_output = self.process.poll() is not None
         with self.lock:
             stdout_omitted = max(0, self.stdout_start_offset - self.stdout_cursor)
             stderr_omitted = max(0, self.stderr_start_offset - self.stderr_cursor)
-            stdout_start = max(0, self.stdout_cursor - self.stdout_start_offset)
-            stderr_start = max(0, self.stderr_cursor - self.stderr_start_offset)
+            stdout_absolute_start = max(self.stdout_cursor, self.stdout_start_offset)
+            stderr_absolute_start = max(self.stderr_cursor, self.stderr_start_offset)
+            stdout_start = max(0, stdout_absolute_start - self.stdout_start_offset)
+            stderr_start = max(0, stderr_absolute_start - self.stderr_start_offset)
             stdout_bytes = bytes(self.stdout[stdout_start:])
             stderr_bytes = bytes(self.stderr[stderr_start:])
-            self.stdout_cursor = self.stdout_total_bytes
-            self.stderr_cursor = self.stderr_total_bytes
-        stdout_truncation = truncate_output_bytes_tail(stdout_bytes, max_output_bytes)
-        stderr_truncation = truncate_output_bytes_tail(stderr_bytes, max_output_bytes)
+        stdout_decoded = decode_command_output(stdout_bytes, final=final_output)
+        stderr_decoded = decode_command_output(stderr_bytes, final=final_output)
+        with self.lock:
+            self.stdout_cursor = stdout_absolute_start + stdout_decoded.consumed_bytes
+            self.stderr_cursor = stderr_absolute_start + stderr_decoded.consumed_bytes
+        stdout_truncation = truncate_text_tail(
+            stdout_decoded.text, max_lines=DEFAULT_MAX_LINES, max_bytes=max_output_bytes
+        )
+        stderr_truncation = truncate_text_tail(
+            stderr_decoded.text, max_lines=DEFAULT_MAX_LINES, max_bytes=max_output_bytes
+        )
         if self.timed_out:
             status = "timeout"
         elif self.terminating and self.process.poll() is None:
@@ -255,6 +380,16 @@ class ExecSession:
             status = "terminated"
         else:
             status = "running" if self.process.poll() is None else "exited"
+        if self.timed_out:
+            execution_lifecycle = "timed_out"
+        elif self.process.poll() is None:
+            execution_lifecycle = "running"
+        elif self.signal_name is not None:
+            execution_lifecycle = "cancelled"
+        elif self.exit_code == 0:
+            execution_lifecycle = "completed"
+        else:
+            execution_lifecycle = "failed"
         payload: dict[str, Any] = {
             "session_id": self.session_id,
             "status": status,
@@ -263,6 +398,11 @@ class ExecSession:
             "timed_out": self.timed_out,
             "stdout": stdout_truncation.content,
             "stderr": stderr_truncation.content,
+            "stdout_encoding": stdout_decoded.encoding,
+            "stderr_encoding": stderr_decoded.encoding,
+            "stdout_pending_decode_bytes": stdout_decoded.pending_bytes,
+            "stderr_pending_decode_bytes": stderr_decoded.pending_bytes,
+            "newline_normalized": stdout_decoded.newline_normalized or stderr_decoded.newline_normalized,
             "stdout_truncated": stdout_truncation.truncated,
             "stderr_truncated": stderr_truncation.truncated,
             "stdout_truncated_by": stdout_truncation.truncated_by,
@@ -281,6 +421,25 @@ class ExecSession:
                 or stdout_omitted > 0
                 or stderr_omitted > 0
             ),
+            "execution": {
+                "execution_id": self.execution_id,
+                "lifecycle_state": execution_lifecycle,
+                "started_at": _iso_timestamp(self.started_at),
+                "finished_at": _iso_timestamp(self.completed_at),
+                "pid": self.process.pid,
+                "process_id": self.process.pid,
+                "child_process_ids": [],
+                "action_fingerprint": self.action_fingerprint,
+                "input_fingerprint": self.input_fingerprint,
+                "command_hash": self.command_hash,
+                "attempt": self.attempt,
+                "retry_policy": self.retry_policy,
+                "side_effect_class": self.side_effect_class,
+                "stdout_digest": self.stdout_hasher.hexdigest(),
+                "stderr_digest": self.stderr_hasher.hexdigest(),
+                "retry_safe": self.retry_safe,
+                "side_effect_possible": self.side_effect_possible,
+            },
             "ok": True,
         }
         warnings: list[str] = list(self.warnings)
@@ -334,6 +493,20 @@ class ExecSession:
                 sections.append(b"\n")
             sections.extend([b"--- stderr ---\n", stderr])
         return b"".join(sections)
+
+    def retained_output_text(self) -> str:
+        final_output = self.process.poll() is not None
+        with self.lock:
+            stdout = bytes(self.stdout)
+            stderr = bytes(self.stderr)
+        sections: list[str] = []
+        if stdout:
+            sections.extend(["--- stdout ---\n", decode_command_output(stdout, final=final_output).text])
+        if stderr:
+            if sections:
+                sections.append("\n")
+            sections.extend(["--- stderr ---\n", decode_command_output(stderr, final=final_output).text])
+        return "".join(sections)
 
     def retained_stream_bytes(self, stream: str) -> tuple[bytes, int, int, int]:
         with self.lock:
@@ -434,8 +607,9 @@ def _trim_buffer(
 
 
 def truncate_output_bytes_tail(data: bytes, max_bytes: int, max_lines: int = DEFAULT_MAX_LINES) -> TextTruncation:
+    decoded = decode_command_output(data, final=True)
     return truncate_text_tail(
-        data.decode("utf-8", errors="replace"),
+        decoded.text,
         max_lines=max_lines,
         max_bytes=max_bytes,
     )

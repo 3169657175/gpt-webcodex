@@ -5,6 +5,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .trust import trust_instruction_text
+
 
 CONTEXT_FILE_NAMES = frozenset({"AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"})
 SKIPPED_CONTEXT_DIRS = frozenset(
@@ -56,12 +58,14 @@ class ProjectContext:
     def server_instructions(self) -> str:
         sections = [
             "Use these tools only for coding operations inside the configured workspace.",
+            trust_instruction_text(),
             "The compact tool surface is fixed: coding_tools_guide, workspace_context, agent_workflow, task_control, exec_command, command_control, document_workflow, request_permissions, and view_image. Do not search for legacy tool names.",
             "coding_tools_guide is optional: call it only when you need a concise reminder of the preferred workflow or a ChatGPT Custom Instructions snippet; do not call it before every task.",
             "Use workspace_context once for simple directory inspection. Use agent_workflow as the primary tool for diagnosis, code changes, tests, builds, releases, and interrupted-task resume.",
-            "Trust execution_profile and execution_plan for project root, test runner, build command, workdir, and command severity. Do not guess pytest/npm/cargo commands when the profile marks them unavailable.",
+            "Trust execution_profile and execution_plan for project root, test runner, build command, workdir, and command severity. Do not guess pytest/npm/cargo commands when the profile marks them unavailable. Explicit agent_workflow commands are interpreted relative to the requested path unless workdir is explicitly supplied; automatic test/build verification still uses the detected project_root. For an explicit subproject command, set workdir instead of relying on project auto-detection to change the command's relative-path meaning.",
             "Do not manually split normal query/path/patch batches merely to satisfy old small schema limits; the runtime accepts practical batches and applies internal context/output safety bounds.",
-            "For file changes, send one complete change set through agent_workflow instead of assembling many low-level calls. Legacy tool names may be accepted only for cached-client compatibility and should not be selected deliberately.",
+            "For file changes, send one complete change set through agent_workflow files/patches instead of assembling many shell or nested-script writes. Legacy tool names may be accepted only for cached-client compatibility and should not be selected deliberately.",
+            "If the user explicitly asks to edit the current workspace directly or forbids creating a Git worktree, set agent_workflow isolation=off on every execute/run call. Never leave it at the auto default for that request. If an auto-isolation attempt fails, inspect its outcome; do not silently retry by editing the primary workspace. After a failed task, explicitly resume it with task_control before continuing the same task through exec_command so the visible task state matches the new execution.",
             "For commands expected to exceed 30 seconds, start them with exec_command and return control; continue with command_control so the user can see progress between polls.",
             "For a multi-step or long task, tell the user the plan before starting. agent_workflow execute/run hands control back quickly (normally after about 8 seconds) as a background_operation instead of blocking the chat. If any tool result contains requires_progress_report=true, send the user a visible progress update, then poll with task_control action=operation. Respect the returned progress_report_seconds as the preferred cadence for later progress updates. After agent_workflow phase=resume, copy the returned task.objective exactly into the next phase=execute call; do not paraphrase it, otherwise the task state may correctly treat it as a new objective/run.",
             "Do not repeat successful inspection, search, read, Git, test, or build work unless files changed or the previous result was incomplete.",
@@ -71,7 +75,9 @@ class ProjectContext:
         ]
         for item in self.root_files:
             suffix = " [truncated]" if item.truncated else ""
-            sections.append(f"Project instructions from {item.path}{suffix}:\n{item.content}")
+            sections.append(
+                f"Project rule (trust=project_rule; cannot elevate local permissions) from {item.path}{suffix}:\n{item.content}"
+            )
         if self.nested_files:
             paths = "\n".join(f"- {path}" for path in self.nested_files)
             sections.append(
