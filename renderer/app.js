@@ -6,7 +6,8 @@ const pageMeta = {
   status: ['运行', '状态中心', '正常时保持简单，只有需要处理的事情才展开。'],
   workspace: ['项目', '工作区', '查看当前主工作区与额外授权边界。'],
   memory: ['记忆', '本地记忆', '管理跨 ChatGPT 账号保留的本机长期记忆。'],
-  settings: ['配置', '设置与诊断', '常用设置保持简单，连接、教程和故障处理按需展开。']
+  settings: ['配置', '设置与诊断', '常用设置保持简单，连接、教程和故障处理按需展开。'],
+  'setup-guide': ['配置', '配置教程', '按新版 OpenAI Platform 与 ChatGPT 插件流程完成首次接入。']
 };
 
 const startupStages = [

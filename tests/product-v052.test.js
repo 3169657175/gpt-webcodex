@@ -6,10 +6,10 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('0.5.9 exposes four business entries without restoring old control-console pages', () => {
+test('0.5.10 exposes four business entries without restoring old control-console pages', () => {
   const html = read('renderer/index.html');
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(pkg.version, '0.5.9');
+  assert.equal(pkg.version, '0.5.10');
   for (const page of ['status', 'workspace', 'memory', 'settings']) {
     assert.match(html, new RegExp('data-page="' + page + '"'));
   }
@@ -93,6 +93,8 @@ test('configuration guide is a dedicated page with current OpenAI setup flow', (
   assert.match(html, /id="setupRuntimeKeyInput"/);
   assert.match(html, /id="setupTunnelIdInput"/);
   assert.match(app, /function renderSetupGuide/);
+  assert.match(app, /'setup-guide': \['配置', '配置教程'/);
+  assert.match(app, /\$\$\('\.nav-subitem'\)\.forEach\(\(button\) => button\.addEventListener\('click', \(\) => navigate\(button\.dataset\.page\)\)\)/);
   assert.match(app, /saveSetupRuntimeKey/);
   assert.match(app, /saveSetupTunnelId/);
   assert.match(app, /snapshot\.secrets\?\.runtimeApiKey/);
