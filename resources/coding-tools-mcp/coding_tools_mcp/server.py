@@ -319,9 +319,9 @@ SYSTEM_MODIFY_RE = re.compile(
 MAX_HTTP_REQUEST_BYTES = 1_048_576
 EXEC_PREVIEW_BYTES = 4096
 MAX_ACTIVE_EXEC_SESSIONS = 16
-MAX_RETAINED_OUTPUT_SESSIONS = 32
-COMPLETED_SESSION_TTL_SECONDS = 300
-MAX_RUNTIME_OUTPUT_BYTES = 16 * 1024 * 1024
+MAX_RETAINED_OUTPUT_SESSIONS = 128
+COMPLETED_SESSION_TTL_SECONDS = 24 * 60 * 60
+MAX_RUNTIME_OUTPUT_BYTES = 64 * 1024 * 1024
 SHELL_CONTROL_TOKENS = {"|", "||", "&", "&&", ";", "(", ")"}
 REDIRECTION_TOKENS = {">", ">>", "<", "<>", ">&", "<&", "&>", "&>>"}
 HEREDOC_TOKENS = {"<<", "<<<"}
@@ -2564,7 +2564,14 @@ class Runtime:
             if SYSTEM_MODIFY_RE.search(cmd):
                 categories.add("system_modify")
                 risk_level = "R4"
-            if re.search(r"(?i)(?:^|[;&|]\s*)git\s+(?:add|commit|checkout|switch|restore|reset|clean|rebase|merge|cherry-pick|revert|tag|push|branch\s+-[dD])(?:\s|$)", cmd):
+            git_write = re.search(r"(?i)(?:^|[;&|]\s*)git\s+(?:add|commit|checkout|switch|restore|reset|clean|rebase|merge|cherry-pick|revert|push|pull|fetch|init|clone|mv|rm)(?:\s|$)", cmd)
+            if not git_write:
+                git_write = re.search(r"(?i)(?:^|[;&|]\s*)git\s+tag\s+(?!--list(?:\s|$)|-l(?:\s|$)|--contains(?:=|\s)|--points-at(?:=|\s)|--merged(?:=|\s)|--no-merged(?:=|\s)|--sort(?:=|\s)|--format(?:=|\s)|--column(?:=|\s)|--color(?:=|\s)|--ignore-case(?:\s|$))\S+", cmd)
+            if not git_write:
+                git_write = re.search(r"(?i)(?:^|[;&|]\s*)git\s+branch\s+(?!--list(?:\s|$)|-l(?:\s|$)|--show-current(?:\s|$)|-a(?:\s|$)|--all(?:\s|$)|-r(?:\s|$)|--remotes(?:\s|$)|--contains(?:=|\s)|--merged(?:=|\s)|--no-merged(?:=|\s))\S+", cmd)
+            if not git_write:
+                git_write = re.search(r"(?i)(?:^|[;&|]\s*)git\s+worktree\s+(?:add|remove|prune|move|repair|lock|unlock)(?:\s|$)", cmd)
+            if git_write:
                 categories.add("git_write")
         elif name == "agent_workflow" and action in {"execute", "run", "resume"}:
             categories = {"write"}

@@ -446,6 +446,13 @@ class ChatViewController {
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
     contents.executeJavaScript(`(() => {
+      if (window.__mcpCompactToolObserver) { try { window.__mcpCompactToolObserver.disconnect(); } catch {} window.__mcpCompactToolObserver = null; }
+      if (window.__mcpCompactToolTimer) { clearTimeout(window.__mcpCompactToolTimer); window.__mcpCompactToolTimer = 0; }
+      document.querySelectorAll('[data-mcp-tool-summary="1"]').forEach((node) => node.remove());
+      document.querySelectorAll('.mcp-tool-call-hidden').forEach((node) => node.classList.remove('mcp-tool-call-hidden'));
+      document.querySelectorAll('.mcp-tool-call-row').forEach((node) => node.classList.remove('mcp-tool-call-row'));
+      document.querySelectorAll('[data-mcp-tools-expanded]').forEach((node) => delete node.dataset.mcpToolsExpanded);
+      document.getElementById('mcp-chat-compact-tools-style')?.remove();
       if (window.__mcpAutoMemoryObserver) { try { window.__mcpAutoMemoryObserver.disconnect(); } catch {} window.__mcpAutoMemoryObserver = null; }
       if (window.__mcpAutoMemoryTimer) { clearTimeout(window.__mcpAutoMemoryTimer); window.__mcpAutoMemoryTimer = 0; }
       if (window.__mcpStreamObserver) { try { window.__mcpStreamObserver.disconnect(); } catch {} window.__mcpStreamObserver = null; }
@@ -459,9 +466,117 @@ class ChatViewController {
   scheduleChatUiEnhancements() {
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
+    this.scheduleToolCallCompaction();
     this.scheduleMemoryObserver();
     this.scheduleStreamObserver();
     this.scheduleContinuousMcpMode();
+  }
+
+  scheduleToolCallCompaction() {
+    const contents = this.view?.webContents;
+    if (!contents || contents.isDestroyed()) return;
+    const enabled = this.settings.load().compactToolCalls !== false;
+    contents.executeJavaScript(`(() => {
+      const ENABLED = ${JSON.stringify(enabled)};
+      const STYLE_ID = 'mcp-chat-compact-tools-style';
+      const cleanup = () => {
+        if (window.__mcpCompactToolObserver) { try { window.__mcpCompactToolObserver.disconnect(); } catch {} window.__mcpCompactToolObserver = null; }
+        if (window.__mcpCompactToolTimer) { clearTimeout(window.__mcpCompactToolTimer); window.__mcpCompactToolTimer = 0; }
+        document.querySelectorAll('[data-mcp-tool-summary="1"]').forEach((node) => node.remove());
+        document.querySelectorAll('.mcp-tool-call-hidden').forEach((node) => node.classList.remove('mcp-tool-call-hidden'));
+        document.querySelectorAll('.mcp-tool-call-row').forEach((node) => node.classList.remove('mcp-tool-call-row'));
+        document.querySelectorAll('[data-mcp-tools-expanded]').forEach((node) => delete node.dataset.mcpToolsExpanded);
+        if (!ENABLED) document.getElementById(STYLE_ID)?.remove();
+      };
+      cleanup();
+      if (!ENABLED) return false;
+      if (!document.getElementById(STYLE_ID)) {
+        const style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = [
+          '.mcp-tool-call-row{margin-top:2px!important;margin-bottom:2px!important;min-height:0!important;}',
+          '.mcp-tool-call-hidden{display:none!important;}',
+          '.mcp-tool-call-summary{display:inline-flex!important;align-items:center!important;gap:7px!important;margin:7px 0 5px!important;padding:6px 10px!important;border:1px solid rgba(0,0,0,.09)!important;border-radius:10px!important;background:rgba(0,0,0,.035)!important;color:inherit!important;font:inherit!important;font-size:12px!important;line-height:1.2!important;cursor:pointer!important;}',
+          '.dark .mcp-tool-call-summary{border-color:rgba(255,255,255,.12)!important;background:rgba(255,255,255,.055)!important;}',
+          '.mcp-tool-call-summary:hover{background:rgba(0,0,0,.065)!important;}',
+          '.dark .mcp-tool-call-summary:hover{background:rgba(255,255,255,.09)!important;}'
+        ].join('');
+        document.head.appendChild(style);
+      }
+      const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+      const isToolLabel = (value) => {
+        const text = normalize(value).toLowerCase();
+        return text.includes('已调用工具') || text.includes('已使用工具') ||
+          text.includes('called tool') || text.includes('used tool') || text.includes('tool called');
+      };
+      const findRow = (button, host) => {
+        const existing = button.closest('.mcp-tool-call-row');
+        if (existing && host.contains(existing)) return existing;
+        let node = button;
+        for (let depth = 0; depth < 4; depth += 1) {
+          const parent = node.parentElement;
+          if (!parent || parent === host || parent.querySelector('[data-mcp-tool-summary="1"]')) break;
+          const text = normalize(parent.innerText || parent.textContent);
+          const controls = parent.querySelectorAll('button,[role="button"]').length;
+          if (text.length <= 140 && controls <= 3) node = parent;
+          else break;
+        }
+        return node;
+      };
+      const compactHost = (host) => {
+        if (!host) return;
+        const buttons = Array.from(host.querySelectorAll('button,[role="button"]')).filter((button) =>
+          button.dataset.mcpToolSummary !== '1' && isToolLabel(button.innerText || button.textContent)
+        );
+        const rows = [];
+        const seen = new Set();
+        for (const button of buttons) {
+          const row = findRow(button, host);
+          if (!row || seen.has(row)) continue;
+          seen.add(row);
+          row.classList.add('mcp-tool-call-row');
+          rows.push(row);
+        }
+        let summary = host.querySelector('[data-mcp-tool-summary="1"]');
+        if (!rows.length) {
+          summary?.remove();
+          delete host.dataset.mcpToolsExpanded;
+          return;
+        }
+        if (!summary) {
+          summary = document.createElement('button');
+          summary.type = 'button';
+          summary.dataset.mcpToolSummary = '1';
+          summary.className = 'mcp-tool-call-summary';
+          summary.addEventListener('click', () => {
+            host.dataset.mcpToolsExpanded = host.dataset.mcpToolsExpanded === '1' ? '0' : '1';
+            refresh();
+          });
+          rows[0].parentElement?.insertBefore(summary, rows[0]);
+        }
+        const expanded = host.dataset.mcpToolsExpanded === '1';
+        summary.textContent = expanded ? ('工具 × ' + rows.length + ' · 收起') : ('工具 × ' + rows.length);
+        summary.title = expanded ? '收起工具调用记录' : '展开查看全部工具调用记录';
+        rows.forEach((row) => row.classList.toggle('mcp-tool-call-hidden', !expanded));
+      };
+      const refresh = () => {
+        const turns = Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"]'));
+        if (turns.length) turns.forEach(compactHost);
+        else document.querySelectorAll('[data-message-author-role="assistant"]').forEach(compactHost);
+      };
+      const target = document.querySelector('main') || document.body;
+      const schedule = (delay = 900) => {
+        if (window.__mcpCompactToolTimer) clearTimeout(window.__mcpCompactToolTimer);
+        window.__mcpCompactToolTimer = setTimeout(() => {
+          window.__mcpCompactToolTimer = 0;
+          refresh();
+        }, delay);
+      };
+      window.__mcpCompactToolObserver = new MutationObserver(() => schedule(900));
+      if (target) window.__mcpCompactToolObserver.observe(target, { childList: true, subtree: true });
+      schedule(250);
+      return true;
+    })()`, true).catch(() => false);
   }
 
   scheduleMemoryObserver() {

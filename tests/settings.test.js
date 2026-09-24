@@ -14,6 +14,7 @@ test('0.5.1 fixes product modes to safe personal-development defaults', () => {
   assert.equal(result.proxyMode, 'auto');
   assert.equal(Object.hasOwn(result, 'toolMode'), false);
   assert.equal(result.continuousMcpMode, true);
+  assert.equal(result.compactToolCalls, true);
   assert.equal(result.progressReportSeconds, 30);
 });
 

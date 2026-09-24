@@ -686,7 +686,7 @@ function registerIpc() {
     return result.canceled ? '' : result.filePaths[0];
   }));
   secureHandle('settings:save', (_event, patch) => invokeSafely(async () => {
-    const allowed = ['mcpPort', 'healthPort', 'proxyMode', 'proxyUrl', 'tunnelId', 'tunnelProfile', 'startWithWindows', 'autoStartServices', 'keepRunningOnClose', 'taskNotifications', 'taskNotificationSound', 'theme'];
+    const allowed = ['mcpPort', 'healthPort', 'proxyMode', 'proxyUrl', 'tunnelId', 'tunnelProfile', 'startWithWindows', 'autoStartServices', 'keepRunningOnClose', 'taskNotifications', 'taskNotificationSound', 'compactToolCalls', 'theme'];
     const clean = Object.fromEntries(Object.entries(patch || {}).filter(([key]) => allowed.includes(key)));
     const previous = settings.load();
     const proxyChanged = (Object.hasOwn(clean, 'proxyMode') && String(clean.proxyMode || '') !== String(previous.proxyMode || 'auto'))
@@ -698,6 +698,7 @@ function registerIpc() {
     if (Object.hasOwn(clean, 'mcpPort')) taskNotificationService?.restartStream();
     clearProxyCache();
     if (proxyChanged && chatController) await chatController.applyBrowserProxyPolicy({ closeConnections: true, forceProbe: true });
+    if (Object.hasOwn(clean, 'compactToolCalls') && chatController) chatController.scheduleChatUiEnhancements();
     return saved;
   }));
   secureHandle('environment:detect-proxy', () => invokeSafely(async () => resolveProxy(settings.load(), { force: true })));

@@ -31,12 +31,19 @@ test('workspace picker opens a standalone Workspace Center without resizing Chat
   assert.doesNotMatch(main, /chat:workspace-panel/);
 });
 
-test('embedded ChatGPT no longer injects tool-call folding DOM or CSS', () => {
+test('embedded ChatGPT tool-call folding is optional and reversible', () => {
   const controller = read('electron/chatViewController.js');
+  const config = read('electron/services/config.js');
+  const manager = read('renderer/index.html');
+  const main = read('electron/main.js');
   assert.match(controller, /scheduleChatUiEnhancements/);
-  assert.doesNotMatch(controller, /mcp-tool-call-hidden|mcp-tool-call-summary|mcp-chat-compact-tools-style/);
-  assert.doesNotMatch(controller, /compactHost|mcpCompactToolObserver|mcpCompactToolTimer/);
-  assert.doesNotMatch(controller, /已调用工具|called tool|used tool|tool called/);
+  assert.match(controller, /scheduleToolCallCompaction/);
+  assert.match(controller, /mcp-tool-call-hidden|mcp-tool-call-summary|mcp-chat-compact-tools-style/);
+  assert.match(controller, /compactHost|__mcpCompactToolObserver|__mcpCompactToolTimer/);
+  assert.match(controller, /已调用工具/);
+  assert.match(config, /compactToolCalls:\s*true/);
+  assert.match(manager, /id="toolCallFoldingToggle"/);
+  assert.match(main, /'compactToolCalls'/);
 });
 
 test('Workspace Center owns authorized-root management instead of duplicating it in Manager', () => {
@@ -62,11 +69,11 @@ test('Workspace Center separates workspaces and authorized roots into secondary 
   assert.match(css, /\.workspace-list,.authorized-list\{[^}]*overflow:auto/);
 });
 
-test('package and Manager identify the 0.5.6 stability release', () => {
+test('package and Manager identify the 0.5.7 stability release', () => {
   const pkg = JSON.parse(read('package.json'));
   const manager = read('renderer/index.html');
-  assert.equal(pkg.version, '0.5.6');
-  assert.match(manager, /v0\.5\.5|0\.5\.5/);
+  assert.equal(pkg.version, '0.5.7');
+  assert.match(manager, /v0\.5\.7|0\.5\.7/);
   assert.match(manager, /data-page="status"/);
   assert.match(manager, /data-page="workspace"/);
   assert.doesNotMatch(manager, /data-page="task"|data-page="build"|data-page="guide"/);

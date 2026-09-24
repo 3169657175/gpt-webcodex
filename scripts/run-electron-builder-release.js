@@ -53,15 +53,32 @@ function resolveBuilderCli(projectRoot = root) {
   }
 }
 
+function resolveElectronDist(projectRoot = root) {
+  let cursor = path.resolve(projectRoot);
+  while (true) {
+    const candidate = path.join(cursor, 'node_modules', 'electron', 'dist');
+    if (fs.existsSync(path.join(candidate, 'electron.exe'))) return candidate;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  try {
+    const electronPackage = require.resolve('electron/package.json', { paths: [projectRoot, __dirname] });
+    const candidate = path.join(path.dirname(electronPackage), 'dist');
+    if (fs.existsSync(path.join(candidate, 'electron.exe'))) return candidate;
+  } catch {}
+  throw new Error('无法定位 Electron dist；请先在主工作区安装依赖。');
+}
+
 function runBuilder(projectRoot = root) {
   const cli = resolveBuilderCli(projectRoot);
-  return spawnSync(process.execPath, [cli, '--win', 'nsis'], {
+  const electronDist = resolveElectronDist(projectRoot);
+  return spawnSync(process.execPath, [cli, '--win', 'nsis', `--config.electronDist=${electronDist}`], {
     cwd: projectRoot,
     env: process.env,
     stdio: 'inherit',
   });
 }
-
 function runWithRetry({
   attempts = 2,
   delayMs = 1500,
@@ -98,6 +115,7 @@ if (require.main === module) main();
 
 module.exports = {
   resolveBuilderCli,
+  resolveElectronDist,
   currentBuildArtifacts,
   cleanCurrentBuildArtifacts,
   runWithRetry,

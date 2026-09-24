@@ -6,7 +6,7 @@ const test = require('node:test');
 const fs = require('node:fs');
 
 const root = path.resolve(__dirname, '..');
-const { currentBuildArtifacts, resolveBuilderCli, runWithRetry } = require('../scripts/run-electron-builder-release');
+const { currentBuildArtifacts, resolveBuilderCli, resolveElectronDist, runWithRetry } = require('../scripts/run-electron-builder-release');
 
 test('0.4.0 dist uses bounded electron-builder retry after tests', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -66,8 +66,12 @@ test('release builder resolves electron-builder from an ancestor node_modules fo
     const cli = path.join(mainRoot, 'node_modules', 'electron-builder', 'out', 'cli', 'cli.js');
     fs.mkdirSync(path.dirname(cli), { recursive: true });
     fs.mkdirSync(worktree, { recursive: true });
+    const electronDist = path.join(mainRoot, 'node_modules', 'electron', 'dist');
+    fs.mkdirSync(electronDist, { recursive: true });
     fs.writeFileSync(cli, '// fake electron-builder cli');
+    fs.writeFileSync(path.join(electronDist, 'electron.exe'), '');
     assert.equal(resolveBuilderCli(worktree), cli);
+    assert.equal(resolveElectronDist(worktree), electronDist);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

@@ -6,7 +6,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('conversation export and legacy ChatGPT tool folding are fully removed', () => {
+test('conversation export stays removed while optional tool folding is restored', () => {
   const files = [
     'electron/main.js',
     'electron/preload.js',
@@ -25,5 +25,8 @@ test('conversation export and legacy ChatGPT tool folding are fully removed', ()
 
   const chat = read('electron/chatViewController.js');
   assert.doesNotMatch(chat, /conversationPageExtractor|extractConversation/);
-  assert.doesNotMatch(chat, /compactHost|mcp-tool-call-summary|mcp-tool-call-hidden|mcp-tool-turn-hidden/);
+  assert.match(chat, /scheduleToolCallCompaction/);
+  assert.match(chat, /mcp-tool-call-summary|mcp-tool-call-hidden/);
+  assert.match(read('electron/services/config.js'), /compactToolCalls:\s*true/);
+  assert.match(read('renderer/index.html'), /id="toolCallFoldingToggle"/);
 });

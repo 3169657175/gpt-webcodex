@@ -153,6 +153,7 @@ function populateForms(snapshot, force = false) {
   $('#startWithWindowsToggle').checked = Boolean(settings.startWithWindows);
   $('#autoStartToggle').checked = Boolean(settings.autoStartServices);
   $('#keepRunningToggle').checked = settings.keepRunningOnClose !== false;
+  $('#toolCallFoldingToggle').checked = settings.compactToolCalls !== false;
   $('#taskNotificationsToggle').checked = settings.taskNotifications !== false;
   $('#taskNotificationSoundToggle').checked = settings.taskNotificationSound !== false;
   $('#tunnelIdInput').value = settings.tunnelId || '';
@@ -638,6 +639,7 @@ async function saveCommonSettings() {
     startWithWindows: $('#startWithWindowsToggle').checked,
     autoStartServices: $('#autoStartToggle').checked,
     keepRunningOnClose: $('#keepRunningToggle').checked,
+    compactToolCalls: $('#toolCallFoldingToggle').checked,
     taskNotifications: $('#taskNotificationsToggle').checked,
     taskNotificationSound: $('#taskNotificationSoundToggle').checked
   }));
@@ -1053,7 +1055,7 @@ function bindEvents() {
     applyTheme($('#themeSelect').value);
     try { await saveCommonSettings(); } catch (error) { toast('设置保存失败', error.message, 'error'); }
   };
-  ['#startWithWindowsToggle', '#autoStartToggle', '#keepRunningToggle', '#taskNotificationsToggle', '#taskNotificationSoundToggle'].forEach((selector) => {
+  ['#startWithWindowsToggle', '#autoStartToggle', '#keepRunningToggle', '#toolCallFoldingToggle', '#taskNotificationsToggle', '#taskNotificationSoundToggle'].forEach((selector) => {
     $(selector).onchange = () => saveCommonSettings().catch((error) => toast('设置保存失败', error.message, 'error'));
   });
   $('#proxyModeSelect').onchange = () => { $('#manualProxyField').hidden = $('#proxyModeSelect').value !== 'manual'; };
