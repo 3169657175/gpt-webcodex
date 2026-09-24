@@ -6,10 +6,10 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('0.5.8 exposes four business entries without restoring old control-console pages', () => {
+test('0.5.9 exposes four business entries without restoring old control-console pages', () => {
   const html = read('renderer/index.html');
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(pkg.version, '0.5.8');
+  assert.equal(pkg.version, '0.5.9');
   for (const page of ['status', 'workspace', 'memory', 'settings']) {
     assert.match(html, new RegExp('data-page="' + page + '"'));
   }
@@ -77,20 +77,34 @@ test('startup progress uses actual orchestrator stages and not a fake percentage
   assert.doesNotMatch(html, /startupProgressBar|启动百分比|progress="\d+"/);
 });
 
-test('configuration guide derives completion from real settings and service state', () => {
+test('configuration guide is a dedicated page with current OpenAI setup flow', () => {
   const html = read('renderer/index.html');
   const app = read('renderer/app.js');
+  const preload = read('electron/preload.js');
+  const main = read('electron/main.js');
 
-  assert.match(html, /id="guideBackdrop"/);
-  assert.match(html, /id="guideList"/);
-  assert.match(html, /配置教程/);
-  assert.match(app, /function guideSteps\(\)/);
+  assert.match(html, /data-page-view="setup-guide"/);
+  assert.match(html, /class="nav-subitem" data-page="setup-guide"/);
+  assert.match(html, /创建 Tunnel 和 API Key/);
+  assert.match(html, /开启开发者人员模式/);
+  assert.match(html, /创建 MCP 应用/);
+  assert.match(html, /Coding Tools MCP/);
+  assert.match(html, /无身份认证/);
+  assert.match(html, /id="setupRuntimeKeyInput"/);
+  assert.match(html, /id="setupTunnelIdInput"/);
+  assert.match(app, /function renderSetupGuide/);
+  assert.match(app, /saveSetupRuntimeKey/);
+  assert.match(app, /saveSetupTunnelId/);
   assert.match(app, /snapshot\.secrets\?\.runtimeApiKey/);
   assert.match(app, /settings\.tunnelId/);
-  assert.match(app, /proxy\.reachable/);
   assert.match(app, /status\.runtimeRunning/);
   assert.match(app, /mcpAttachment/);
-  assert.doesNotMatch(html, /guideProgress|接入完成度|type="checkbox"[^>]*guide/);
+  assert.match(preload, /openSetupLink/);
+  assert.match(main, /chatgpt-developer-mode/);
+  assert.match(main, /https:\/\/chatgpt\.com\/plugins#settings\/Security\?section=developer-mode/);
+  assert.match(main, /https:\/\/platform\.openai\.com\/settings\/organization\/tunnels/);
+  assert.match(main, /https:\/\/platform\.openai\.com\/settings\/organization\/api-keys/);
+  assert.doesNotMatch(html, /id="guideBackdrop"/);
 });
 
 test('status center restores useful task detail but keeps internal IDs folded', () => {

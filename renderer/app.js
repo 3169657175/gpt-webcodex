@@ -133,7 +133,8 @@ function applyTheme(theme) {
 function navigate(page) {
   if (!pageMeta[page]) return;
   state.currentPage = page;
-  $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.page === page));
+  $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.page === page || (page === 'setup-guide' && item.dataset.page === 'settings')));
+  $$('.nav-subitem').forEach((item) => item.classList.toggle('active', item.dataset.page === page));
   $$('.page').forEach((item) => item.classList.toggle('active', item.dataset.pageView === page));
   const [eyebrow, title, subtitle] = pageMeta[page];
   $('#pageEyebrow').textContent = eyebrow;
@@ -144,6 +145,7 @@ function navigate(page) {
   if (page === 'workspace') refreshWorkspaceHub();
   if (page === 'memory') loadMemoryPage();
   if (page === 'settings') loadLogs();
+  if (page === 'setup-guide') renderSetupGuide();
 }
 
 function populateForms(snapshot, force = false) {
@@ -157,6 +159,7 @@ function populateForms(snapshot, force = false) {
   $('#taskNotificationsToggle').checked = settings.taskNotifications !== false;
   $('#taskNotificationSoundToggle').checked = settings.taskNotificationSound !== false;
   $('#tunnelIdInput').value = settings.tunnelId || '';
+  if ($('#setupTunnelIdInput')) $('#setupTunnelIdInput').value = settings.tunnelId || '';
   $('#proxyModeSelect').value = settings.proxyMode || 'auto';
   $('#proxyUrlInput').value = settings.proxyUrl || '';
   $('#mcpPortInput').value = Number(settings.mcpPort || 18765);
@@ -164,6 +167,68 @@ function populateForms(snapshot, force = false) {
   $('#manualProxyField').hidden = $('#proxyModeSelect').value !== 'manual';
   applyTheme(settings.theme);
   state.formsReady = true;
+}
+
+
+function renderSetupGuide(snapshot = state.snapshot) {
+  if (!snapshot || !$('#setupOverallState')) return;
+  const settings = snapshot.settings || {};
+  const status = snapshot.status || {};
+  const attachment = snapshot.chat?.mcpAttachment || {};
+  const hasKey = Boolean(snapshot.secrets?.runtimeApiKey);
+  const hasTunnel = Boolean(settings.tunnelId);
+  const runtimeOk = Boolean(status.runtimeRunning);
+  const tunnelOk = Boolean(status.tunnelRunning && status.connectionRunning);
+  const attachOk = ['attached', 'available'].includes(String(attachment.status || ''));
+  const configured = hasKey && hasTunnel;
+
+  $('#setupApiKeyState').textContent = hasKey ? '已使用 Windows 安全存储保存' : '尚未保存';
+  $('#setupTunnelState').textContent = hasTunnel ? '已保存：' + settings.tunnelId : '尚未保存';
+  $('#setupTunnelEcho').textContent = settings.tunnelId || '尚未保存 Tunnel ID';
+  $('#setupPlatformState').textContent = configured ? '已完成' : '需要配置';
+  $('#setupPlatformState').className = 'soft-badge ' + (configured ? 'positive' : 'warning');
+
+  $('#setupRuntimeStatus').textContent = runtimeOk ? '正常' : '未启动';
+  $('#setupTunnelStatus').textContent = tunnelOk ? '已连接' : status.tunnelRunning ? '等待上游' : '未启动';
+  $('#setupAttachmentStatus').textContent = attachOk ? '已识别' : '等待识别';
+
+  const serviceReady = runtimeOk && tunnelOk && attachOk;
+  $('#setupServiceState').textContent = serviceReady ? '全部就绪' : runtimeOk && tunnelOk ? '等待 ChatGPT MCP' : '等待启动';
+  $('#setupServiceState').className = 'soft-badge ' + (serviceReady ? 'positive' : runtimeOk ? 'warning' : 'neutral');
+
+  const readyCount = [hasKey, hasTunnel, runtimeOk, tunnelOk, attachOk].filter(Boolean).length;
+  $('#setupOverallState').textContent = readyCount === 5 ? '配置完成' : '已就绪 ' + readyCount + '/5';
+  $('#setupOverallState').className = 'soft-badge ' + (readyCount === 5 ? 'positive' : 'neutral');
+
+  if (!$('#setupTunnelIdInput').value) $('#setupTunnelIdInput').value = settings.tunnelId || '';
+}
+
+async function saveSetupTunnelId() {
+  const tunnelId = $('#setupTunnelIdInput').value.trim();
+  if (!tunnelId) return toast('请先填写 Tunnel ID', '通常以 tunnel_ 开头。', 'error');
+  try {
+    unwrap(await api.saveSettings({ tunnelId }));
+    $('#tunnelIdInput').value = tunnelId;
+    toast('Tunnel ID 已保存');
+    await refreshSnapshot({ force: true, forceForms: true, quiet: true });
+    renderSetupGuide();
+  } catch (error) {
+    toast('Tunnel ID 保存失败', error.message, 'error');
+  }
+}
+
+async function saveSetupRuntimeKey() {
+  const value = $('#setupRuntimeKeyInput').value.trim();
+  if (!value) return toast('请先粘贴 API Key', '创建后请立即复制并保存。', 'error');
+  try {
+    unwrap(await api.saveRuntimeKey(value));
+    $('#setupRuntimeKeyInput').value = '';
+    toast('API Key 已安全保存', '密钥已写入 Windows 安全存储。');
+    await refreshSnapshot({ force: true, forceForms: true, quiet: true });
+    renderSetupGuide();
+  } catch (error) {
+    toast('API Key 保存失败', error.message, 'error');
+  }
 }
 
 function serviceState(card, valueNode, metaNode, status, value, meta) {
@@ -249,7 +314,7 @@ function renderSnapshot(snapshot, forceForms = false) {
   renderDiagnostics(snapshot);
   renderWorkspaceSummary();
   syncStartupFromSnapshot(snapshot);
-  renderGuide();
+  renderSetupGuide();
 }
 
 async function refreshSnapshot(options = {}) {
@@ -269,7 +334,7 @@ async function refreshWorkspaceHub() {
   try {
     state.workspaceHub = unwrap(await api.workspaceHub());
     renderWorkspaceSummary();
-    renderGuide();
+    renderSetupGuide();
     return state.workspaceHub;
   } catch (error) {
     if (state.currentPage === 'workspace') toast('工作区状态读取失败', error.message, 'error');
@@ -789,94 +854,6 @@ async function loadLogs() {
   }
 }
 
-function guideSteps() {
-  const snapshot = state.snapshot || {};
-  const settings = snapshot.settings || {};
-  const status = snapshot.status || {};
-  const proxy = snapshot.environment?.proxy || {};
-  const attachment = snapshot.chat?.mcpAttachment || {};
-  return [
-    { id: 'workspace', title: '选择主工作区', detail: settings.workspace || '选择你当前要开发的项目目录', done: Boolean(settings.workspace), action: 'workspace', button: '选择工作区' },
-    { id: 'key', title: '保存 Runtime API Key', detail: snapshot.secrets?.runtimeApiKey ? '已使用 Windows 安全存储保存' : '需要先保存 Runtime API Key', done: Boolean(snapshot.secrets?.runtimeApiKey), action: 'key', button: '填写密钥' },
-    { id: 'tunnel', title: '配置 Tunnel ID', detail: settings.tunnelId || '填写 OpenAI Tunnel ID', done: Boolean(settings.tunnelId), action: 'tunnel', button: '填写 Tunnel ID' },
-    { id: 'network', title: '检查网络路径', detail: proxy.reachable === true ? (proxy.resolvedUrl || proxy.source || '网络可用') : '自动检测直连或代理', done: proxy.reachable === true, action: 'network', button: '检测网络' },
-    { id: 'services', title: '启动 Runtime 与 Tunnel', detail: status.runtimeRunning && status.tunnelRunning && status.connectionRunning ? '本地服务与 OpenAI 通道已就绪' : '启动后可在状态中心查看真实阶段', done: Boolean(status.runtimeRunning && status.tunnelRunning && status.connectionRunning), action: 'services', button: status.runtimeRunning ? '重启验证' : '启动服务' },
-    { id: 'chat', title: '验证 ChatGPT MCP', detail: ['attached', 'available'].includes(String(attachment.status || '')) ? (attachment.detail || 'Coding Tools MCP 已识别') : '返回 ChatGPT，确认 Coding Tools MCP 可以调用', done: ['attached', 'available'].includes(String(attachment.status || '')), action: 'chat', button: '返回 ChatGPT' }
-  ];
-}
-
-function renderGuide() {
-  const target = $('#guideList');
-  if (!target) return;
-  const steps = guideSteps();
-  target.replaceChildren();
-  for (const [index, item] of steps.entries()) {
-    const row = document.createElement('div');
-    row.className = `guide-step ${item.done ? 'done' : ''}`;
-    const indexNode = document.createElement('span');
-    indexNode.className = 'guide-index';
-    indexNode.textContent = item.done ? '✓' : String(index + 1);
-    const copy = document.createElement('div');
-    const title = document.createElement('b'); title.textContent = item.title;
-    const detail = document.createElement('small'); detail.textContent = item.detail;
-    copy.append(title, detail);
-    const button = document.createElement('button');
-    button.className = item.done ? 'secondary-button' : 'primary-button';
-    button.textContent = item.done ? '已完成' : item.button;
-    button.disabled = item.done;
-    button.dataset.guideAction = item.action;
-    row.append(indexNode, copy, button);
-    target.appendChild(row);
-  }
-  const done = steps.filter((item) => item.done).length;
-  $('#guideSummary').textContent = done === steps.length ? '配置完整，可以直接使用。' : `还有 ${steps.length - done} 项需要完成；已完成的项目会自动识别。`;
-}
-
-function openGuide() {
-  $('#guideBackdrop').hidden = false;
-  renderGuide();
-}
-
-function closeGuide() {
-  $('#guideBackdrop').hidden = true;
-}
-
-async function handleGuideAction(action) {
-  if (action === 'workspace') {
-    closeGuide();
-    await api.openWorkspaceWindow();
-    return;
-  }
-  if (action === 'key') {
-    closeGuide();
-    navigate('settings');
-    $('#connectionSettings').open = true;
-    setTimeout(() => $('#runtimeKeyInput').focus(), 80);
-    return;
-  }
-  if (action === 'tunnel') {
-    closeGuide();
-    navigate('settings');
-    $('#connectionSettings').open = true;
-    setTimeout(() => $('#tunnelIdInput').focus(), 80);
-    return;
-  }
-  if (action === 'network') {
-    await detectProxy();
-    renderGuide();
-    return;
-  }
-  if (action === 'services') {
-    closeGuide();
-    navigate('status');
-    await runRuntime(state.snapshot?.status?.runtimeRunning ? 'restart' : 'start');
-    return;
-  }
-  if (action === 'chat') {
-    await api.closeManager();
-  }
-}
-
 function memoryDate(value) {
   const date = new Date(value || 0);
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false });
@@ -1026,6 +1003,7 @@ async function loadMemoryPage() {
 
 function bindEvents() {
   $$('.nav-item').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.page)));
+  $$('.nav-subitem').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.page)));
   $('#closeManager').onclick = () => api.closeManager();
   $('#refreshButton').onclick = async () => {
     await Promise.all([refreshSnapshot({ force: true, forceForms: true }), refreshWorkspaceHub(), refreshTaskRuntime(), loadLogs()]);
@@ -1035,15 +1013,32 @@ function bindEvents() {
   $('#statusWorkspaceButton').onclick = () => api.openWorkspaceWindow();
   $('#openWorkspacePageCenter').onclick = () => api.openWorkspaceWindow();
   $('#openWorkspaceAuth').onclick = () => api.openWorkspaceWindow();
-  $('#openGuideTop').onclick = openGuide;
-  $('#openGuideSettings').onclick = openGuide;
-  $('#closeGuide').onclick = closeGuide;
-  $('#guideRefresh').onclick = async () => { await Promise.all([refreshSnapshot({ force: true, quiet: true }), refreshWorkspaceHub()]); renderGuide(); };
-  $('#guideList').onclick = (event) => {
-    const button = event.target.closest('[data-guide-action]');
-    if (button) handleGuideAction(button.dataset.guideAction).catch((error) => toast('配置步骤失败', error.message, 'error'));
+  $('#openGuideTop').onclick = () => navigate('setup-guide');
+  $('#openGuideSettings').onclick = () => navigate('setup-guide');
+  $('#setupRefresh').onclick = async () => {
+    await refreshSnapshot({ force: true, forceForms: true, quiet: true });
+    renderSetupGuide();
   };
-  $('#guideBackdrop').onclick = (event) => { if (event.target === $('#guideBackdrop')) closeGuide(); };
+  $('#setupSaveTunnelId').onclick = saveSetupTunnelId;
+  $('#setupSaveRuntimeKey').onclick = saveSetupRuntimeKey;
+  $$('.setup-link').forEach((button) => {
+    button.onclick = async () => {
+      try { unwrap(await api.openSetupLink(button.dataset.setupLink)); }
+      catch (error) { toast('打开页面失败', error.message, 'error'); }
+    };
+  });
+  $$('.setup-copy').forEach((button) => {
+    button.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copyValue || '');
+        toast('已复制', button.dataset.copyValue || '');
+      } catch {
+        toast('复制失败', '请手动复制。', 'error');
+      }
+    };
+  });
+  $('#setupStartServices').onclick = () => runRuntime(state.snapshot?.status?.runtimeRunning ? 'restart' : 'start');
+  $('#setupBackToChat').onclick = () => api.closeManager();
 
   $('#startupDiagnose').onclick = runDiagnostics;
   $('#issueDiagnose').onclick = runDiagnostics;
@@ -1097,9 +1092,6 @@ function bindEvents() {
   $('#refreshLogs').onclick = loadLogs;
   $('#clearLogs').onclick = async () => { if (!confirm('清空助手运行日志？')) return; try { unwrap(await api.clearLogs()); state.logs = []; renderLogs(); } catch (error) { toast('清空失败', error.message, 'error'); } };
 
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !$('#guideBackdrop').hidden) closeGuide();
-  });
 }
 
 async function initialize() {

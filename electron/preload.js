@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('mcpAssistant', {
   restart: () => ipcRenderer.invoke('runtime:restart'),
   detectProxy: () => ipcRenderer.invoke('environment:detect-proxy'),
   clearChatSession: () => ipcRenderer.invoke('chat:clear-session'),
+  openSetupLink: (target) => ipcRenderer.invoke('shell:open', target),
 
   memoryStatus: () => ipcRenderer.invoke('memory:control', { action: 'status' }),
   memoryList: (options = {}) => ipcRenderer.invoke('memory:control', { ...options, action: 'list' }),

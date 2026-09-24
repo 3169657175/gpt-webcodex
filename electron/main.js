@@ -725,7 +725,7 @@ function registerIpc() {
     return result.stdout;
   }));
   secureHandle('shell:open', (_event, target) => invokeSafely(async () => {
-    const allowed = new Set(['chatgpt-connectors', 'openai-tunnels', 'openai-runtime-keys', 'tunnel-ui']);
+    const allowed = new Set(['chatgpt-connectors', 'chatgpt-developer-mode', 'chatgpt-plugins', 'openai-tunnels', 'openai-runtime-keys', 'tunnel-ui']);
     if (!allowed.has(target)) throw new Error('不允许打开该地址。');
     if (target === 'chatgpt-connectors' && chatController) {
       await chatController.openUrl('https://chatgpt.com/#settings/Connectors');
@@ -737,7 +737,9 @@ function registerIpc() {
     }
     const current = settings.load();
     const urls = {
-      'chatgpt-connectors': 'https://chatgpt.com/#settings/Connectors',
+      'chatgpt-connectors': 'https://chatgpt.com/plugins',
+      'chatgpt-developer-mode': 'https://chatgpt.com/plugins#settings/Security?section=developer-mode',
+      'chatgpt-plugins': 'https://chatgpt.com/plugins',
       'openai-tunnels': 'https://platform.openai.com/settings/organization/tunnels',
       'openai-runtime-keys': 'https://platform.openai.com/settings/organization/api-keys',
       'tunnel-ui': `http://127.0.0.1:${current.healthPort}/ui`

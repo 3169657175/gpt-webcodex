@@ -7,7 +7,7 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const { normalize, validateRuntimeSettings, mergeRecentWorkspaces } = require('../electron/services/config');
 
-test('0.5.8 fixes product mode to personal full permissions', () => {
+test('0.5.9 fixes product mode to personal full permissions', () => {
   const result = normalize({ permissionMode: 'safe', toolMode: 'dangerous', agentMode: 'full', proxyMode: 'dangerous' });
   assert.equal(result.permissionMode, 'dangerous');
   assert.equal(result.agentMode, 'code');
