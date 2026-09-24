@@ -1,19 +1,19 @@
 const path = require('node:path');
 
 const DEFAULTS = Object.freeze({
-  configVersion: 14,
+  configVersion: 15,
   connectionMode: 'official',
   workspace: '',
-  permissionMode: 'safe',
+  permissionMode: 'dangerous',
   agentMode: 'code',
   toolPermissions: {
     read: 'allow',
     write: 'allow',
-    delete: 'ask',
+    delete: 'allow',
     command: 'allow',
     network: 'allow',
-    git_write: 'ask',
-    system_modify: 'ask',
+    git_write: 'allow',
+    system_modify: 'allow',
     extra_access: 'allow'
   },
   mcpPort: 18765,
@@ -77,7 +77,7 @@ function normalize(input = {}) {
     if (Object.hasOwn(input, key)) merged[key] = input[key];
   }
 
-  merged.configVersion = 14;
+  merged.configVersion = 15;
   merged.connectionMode = 'official';
 
   // Old bridge installs must not silently auto-start after migration.
@@ -85,25 +85,16 @@ function normalize(input = {}) {
     merged.autoStartServices = false;
   }
 
-  merged.permissionMode = 'safe';
+  // Personal single-user product: the desktop Runtime always runs with full
+  // local permissions. ChatGPT clients cannot reliably surface an MCP approval
+  // dialog, so no operation should depend on an interactive approval roundtrip.
+  merged.permissionMode = 'dangerous';
   merged.agentMode = 'code';
 
   const permissionDefaults = DEFAULTS.toolPermissions;
-  const permissionSource = merged.toolPermissions && typeof merged.toolPermissions === 'object'
-    ? merged.toolPermissions
-    : {};
-  merged.toolPermissions = Object.fromEntries(Object.entries(permissionDefaults).map(([key, fallback]) => {
-    const value = String(permissionSource[key] || fallback).trim().toLowerCase();
-    return [key, ['allow', 'ask', 'deny'].includes(value) ? value : fallback];
-  }));
-
-  // 0.5.1 personal-development migration:
-  // ordinary work should flow without an approval inbox; destructive boundaries remain ask/deny.
-  if (sourceVersion > 0 && sourceVersion <= 12) {
-    for (const key of ['read', 'write', 'command', 'network', 'extra_access']) {
-      if (merged.toolPermissions[key] === 'ask') merged.toolPermissions[key] = 'allow';
-    }
-  }
+  merged.toolPermissions = Object.fromEntries(
+    Object.keys(permissionDefaults).map((key) => [key, 'allow'])
+  );
 
   merged.proxyMode = ['auto', 'system', 'manual', 'direct'].includes(merged.proxyMode) ? merged.proxyMode : 'auto';
   merged.mcpPort = Number.isInteger(Number(merged.mcpPort)) ? Number(merged.mcpPort) : 18765;
@@ -128,13 +119,9 @@ function normalize(input = {}) {
   merged.storageRetentionDays = Math.min(90, Math.max(1, Number(merged.storageRetentionDays || 7)));
   merged.storageRetentionCount = Math.min(20, Math.max(1, Number(merged.storageRetentionCount || 5)));
 
-  const permissionPatterns = merged.permissionPatterns && typeof merged.permissionPatterns === 'object'
-    ? merged.permissionPatterns
-    : {};
-  merged.permissionPatterns = {
-    paths: Array.isArray(permissionPatterns.paths) ? permissionPatterns.paths.slice(0, 100) : [],
-    commands: Array.isArray(permissionPatterns.commands) ? permissionPatterns.commands.slice(0, 100) : []
-  };
+  // Approval patterns are legacy compatibility data only. In personal full
+  // access mode they must never re-introduce ask/deny behavior after upgrade.
+  merged.permissionPatterns = { paths: [], commands: [] };
 
   merged.authorizedRoots = (Array.isArray(merged.authorizedRoots) ? merged.authorizedRoots : [])
     .map(normalizeWorkspacePath)

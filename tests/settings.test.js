@@ -7,9 +7,9 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const { normalize, validateRuntimeSettings, mergeRecentWorkspaces } = require('../electron/services/config');
 
-test('0.5.1 fixes product modes to safe personal-development defaults', () => {
-  const result = normalize({ permissionMode: 'dangerous', toolMode: 'dangerous', agentMode: 'full', proxyMode: 'dangerous' });
-  assert.equal(result.permissionMode, 'safe');
+test('0.5.8 fixes product mode to personal full permissions', () => {
+  const result = normalize({ permissionMode: 'safe', toolMode: 'dangerous', agentMode: 'full', proxyMode: 'dangerous' });
+  assert.equal(result.permissionMode, 'dangerous');
   assert.equal(result.agentMode, 'code');
   assert.equal(result.proxyMode, 'auto');
   assert.equal(Object.hasOwn(result, 'toolMode'), false);
@@ -18,10 +18,12 @@ test('0.5.1 fixes product modes to safe personal-development defaults', () => {
   assert.equal(result.progressReportSeconds, 30);
 });
 
-test('legacy approval-heavy defaults migrate ordinary development categories to allow', () => {
-  const result = normalize({ configVersion: 12, toolPermissions: { read:'ask', write:'ask', command:'ask', network:'ask', extra_access:'ask', delete:'ask', git_write:'ask', system_modify:'ask' } });
-  for (const key of ['read','write','command','network','extra_access']) assert.equal(result.toolPermissions[key], 'allow');
-  for (const key of ['delete','git_write','system_modify']) assert.equal(result.toolPermissions[key], 'ask');
+test('legacy approval-heavy settings migrate every category to allow', () => {
+  const result = normalize({ configVersion: 14, permissionMode:'safe', toolPermissions: { read:'deny', write:'ask', command:'ask', network:'deny', extra_access:'ask', delete:'ask', git_write:'ask', system_modify:'deny' }, permissionPatterns:{paths:[{pattern:'*',decision:'deny'}],commands:[{pattern:'git *',decision:'ask'}]} });
+  for (const key of ['read','write','delete','command','network','git_write','system_modify','extra_access']) {
+    assert.equal(result.toolPermissions[key], 'allow');
+  }
+  assert.deepEqual(result.permissionPatterns, { paths: [], commands: [] });
 });
 
 test('all installations use official mode and old Bridge users migrate safely', () => {

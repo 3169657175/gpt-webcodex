@@ -69,7 +69,7 @@ function runtimeFingerprint(settings, sourceFingerprint = runtimeSourceFingerpri
     workspace: path.resolve(String(settings.workspace || '')).toLowerCase(),
     authorizedRoots: (settings.authorizedRoots || []).map((item) => path.resolve(String(item)).toLowerCase()).sort(),
     port: Number(settings.mcpPort),
-    permissionMode: settings.permissionMode || 'safe',
+    permissionMode: settings.permissionMode || 'dangerous',
     toolMode: 'smart',
     agentMode: settings.agentMode || 'code',
     toolPermissions,
@@ -145,7 +145,7 @@ class NativeService {
       '--workspace', settings.workspace,
       '--host', '127.0.0.1',
       '--port', String(settings.mcpPort),
-      '--permission-mode', settings.permissionMode
+      '--permission-mode', settings.permissionMode || 'dangerous'
     ];
     const command = python.launchCommand || python.command;
     const child = spawn(command, args, {

@@ -69,11 +69,11 @@ test('Workspace Center separates workspaces and authorized roots into secondary 
   assert.match(css, /\.workspace-list,.authorized-list\{[^}]*overflow:auto/);
 });
 
-test('package and Manager identify the 0.5.7 stability release', () => {
+test('package and Manager identify the 0.5.8 personal-full-permission release', () => {
   const pkg = JSON.parse(read('package.json'));
   const manager = read('renderer/index.html');
-  assert.equal(pkg.version, '0.5.7');
-  assert.match(manager, /v0\.5\.7|0\.5\.7/);
+  assert.equal(pkg.version, '0.5.8');
+  assert.match(manager, /v0\.5\.8|0\.5\.8/);
   assert.match(manager, /data-page="status"/);
   assert.match(manager, /data-page="workspace"/);
   assert.doesNotMatch(manager, /data-page="task"|data-page="build"|data-page="guide"/);
