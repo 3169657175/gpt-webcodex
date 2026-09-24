@@ -19,3 +19,7 @@ resources/*.zip
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Local development plans / dogfooding notes.
+# Keep them locally instead of publishing them in the repository root.
+00_*.md
