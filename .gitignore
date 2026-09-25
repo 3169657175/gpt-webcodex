@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-*-release/
 build/
 out/
 .electron-builder-cache/

@@ -11,8 +11,8 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.5.8** |
-| Coding Tools MCP Runtime | **v0.5.8** |
+| 网页 MCP 助手 Desktop | **v0.6.0** |
+| Coding Tools MCP Runtime | **v0.6.0** |
 | MCP Tool Schema | **v10 / 9 tools** |
 | Schema Hash | `cb44f23fd265c4a7d10c801ca9ef88ee0fa4228b7a73151b02ff693f23757949` |
 | Electron | **43.2.0** |
@@ -29,30 +29,28 @@
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
 - **ChatGPT 页面增强**：支持工具调用折叠、连续 MCP 状态观察和页面异常恢复提示。
 
-## v0.5.8 重点更新
+## v0.6.0 重点更新
 
-0.5.8 主要完成权限模型与稳定性收口：
+0.6.0 是一次状态内核与管理中心的大版本收口，重点处理“任务已经结束但仍显示运行”“长任务看起来卡住”“旧失败状态反复复活”“空 Worktree 误报”和管理界面层级杂乱等问题：
 
-- 默认启用**个人完全权限模式**，不再依赖 ChatGPT 客户端无法弹出的二次审批窗口。
-- `read / write / delete / command / network / git_write / system_modify / extra_access` 八类开发权限统一按个人助手模式放行。
-- 工作区和授权目录仍用于本地文件工具的范围管理。
-- 恢复“已调用工具”折叠功能，并增加独立开关；关闭后恢复 ChatGPT 原生显示。
-- 优化 Git 只读/写入识别，避免普通 `git status`、`git log` 等命令被误判为高风险操作。
-- 已完成命令输出保留时间提升到 24 小时，便于长任务结束后继续查看结果。
-- 修复 Worktree 中构建安装包时 Electron 路径解析问题。
-- 完成 v0.5.6 → v0.5.7 → v0.5.8 的正式 Git 基线、Tag 与发布流程整理。
+- 重构任务终态结算、归档与恢复边界，已完成/失败任务不再被后续无关命令重新激活。
+- 强化长任务与命令状态汇总，让运行中、等待模型、失败和完成状态更容易区分。
+- 改进 ChatGPT stream recovery 与轮询边界，减少无响应、假运行和恢复超时带来的状态错位。
+- 收紧 Worktree 清理与回收判断：无差异自动收口，有未应用修改时继续保留。
+- 重构管理中心 UI，改为更清晰的侧栏、状态摘要、服务状态、任务详情和诊断层级。
+- 保持 Runtime / Schema / Desktop 版本同步，并增加 0.6.0 状态内核、ChatGPT stream、Worktree 与 UI 专项回归。
 
-详细变化见 [v0.5.8 发布说明](docs/RELEASE_NOTES_0.5.8.md)。
+详细变化见 [v0.6.0 发布说明](docs/RELEASE_NOTES_0.6.0.md)。
 
 ## 安装
 
 推荐直接从 GitHub Releases 下载最新版：
 
-**[下载 v0.5.8](https://github.com/3169657175/gpt-webcodex/releases/tag/v0.5.8)**
+**[下载 v0.6.0](https://github.com/3169657175/gpt-webcodex/releases/tag/v0.6.0)**
 
 安装包：
 
-`web-mcp-assistant-setup-0.5.8.exe`
+`web-mcp-assistant-setup-0.6.0.exe`
 
 安装后：
 
@@ -82,7 +80,7 @@ ChatGPT 页面与本地 Runtime、Tunnel、任务执行相互独立。页面短�
 
 ## 权限说明
 
-v0.5.8 面向**单用户个人开发场景**，默认采用完全权限模式：
+v0.6.0 面向**单用户个人开发场景**，默认采用完全权限模式：
 
 - 命令执行使用当前 Windows 用户本身拥有的权限。
 - Git 提交、Tag、构建、进程操作等正常开发流程不再等待聊天中的二次批准。
@@ -133,14 +131,14 @@ docs/                        正式版本发布说明
 
 - 完整 `npm run test`
 - Schema 契约一致性检查
-- `npm run dist`
-- 安装包、Runtime、Schema 与版本号核对
+- Windows NSIS 发行构建
+- 安装包、`app.asar`、Runtime、Schema 与版本号核对
 - Git commit / tag / clean 状态检查
 
-当前 v0.5.8 安装包 SHA-256：
+当前 v0.6.0 安装包 SHA-256：
 
 ```text
-542594E9BB4F4AA336A97F739EEBE45080C6F1FA575A11B87ED579F196FCCF5E
+F4C9853B826BF4A7C0C16256160ACDC1C51BDA35D62C80BC729AA6C685CA163A
 ```
 
 ## License
