@@ -223,8 +223,15 @@ def profile_project_execution(root: Path, target_paths: list[str] | None = None)
                 command = f'"{python}" -m pytest'
                 test = _profile_command(command, status="verified", framework="pytest", confidence="high", reason="检测到测试目录/配置，并确认选用的项目 Python 可导入 pytest。需要 localhost 服务的集成测试仍须按项目配置显式启动。")
             elif tests_dir.is_dir() and any(tests_dir.rglob("test*.py")) and tests_dir.name == "tests":
-                command = f'"{python}" -m unittest discover -s tests'
-                test = _profile_command(command, status="verified", framework="unittest", confidence="medium", reason="pytest 不可用，但检测到 unittest 风格 test*.py，可使用 Python 内置 unittest。")
+                bootstrap = (
+                    "import os,sys,unittest;"
+                    "sys.path.insert(0,os.getcwd());"
+                    "suite=unittest.defaultTestLoader.discover('tests',pattern='test*.py');"
+                    "result=unittest.TextTestRunner(verbosity=1).run(suite);"
+                    "raise SystemExit(0 if result.wasSuccessful() else 1)"
+                )
+                command = f'"{python}" -c "{bootstrap}"'
+                test = _profile_command(command, status="verified", framework="unittest", confidence="medium", reason="pytest 不可用，但检测到 unittest 风格 test*.py；测试入口会优先当前项目源码，避免便携 Python 误导入已安装 Runtime。")
             elif pytest_configured:
                 test = _profile_command(status="unavailable", framework="pytest", confidence="high", reason="检测到测试目录/配置，但所选项目 Python 环境没有 pytest，且没有可确认的 unittest 测试入口。")
             if build_available:

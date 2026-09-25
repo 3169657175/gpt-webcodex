@@ -23,13 +23,34 @@ class RuntimeV2Tests(unittest.TestCase):
                 "session_id": "cmd-1",
             },
         }
-        payload = layered_runtime_state(state, [{"status": "running", "operation_id": "op-1"}], workspace=str(Path.cwd()))
+        payload = layered_runtime_state(state, [{"status": "running", "operation_id": "op-1", "run_id": "run-1"}], workspace=str(Path.cwd()))
         self.assertEqual(payload["execution"]["state"], "waiting")
         self.assertEqual(payload["model"]["state"], "waiting")
         self.assertEqual(payload["process"]["state"], "running")
         self.assertEqual(payload["connection"]["state"], "connected")
         self.assertEqual(payload["correlation"]["operation_id"], "op-1")
         self.assertEqual(payload["correlation"]["process_id"], 42)
+
+    def test_layered_runtime_state_filters_other_runs_and_marks_stall(self) -> None:
+        from datetime import datetime, timedelta, timezone
+        old = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat().replace("+00:00", "Z")
+        state = {
+            "task_id": "task-a",
+            "run_id": "run-a",
+            "status": "active",
+            "lifecycle_state": "running",
+            "last_heartbeat_at": old,
+            "current_command": None,
+            "updated_at": old,
+        }
+        payload = layered_runtime_state(state, [
+            {"status": "running", "operation_id": "wrong", "run_id": "run-b", "heartbeat_at": datetime.now(timezone.utc).isoformat()},
+            {"status": "running", "operation_id": "right", "run_id": "run-a", "heartbeat_at": old},
+        ], workspace=str(Path.cwd()))
+        self.assertEqual(payload["correlation"]["operation_id"], "right")
+        self.assertEqual(payload["user"]["state"], "stalled")
+        self.assertTrue(payload["user"]["stalled"])
+        self.assertGreaterEqual(payload["user"]["heartbeat_age_seconds"], 90)
 
     def test_context_budget_recommends_checkpoint_before_hard_limit(self) -> None:
         normal = context_budget_snapshot({"response_bytes": 100_000}, hard_bytes=1_000_000)

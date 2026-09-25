@@ -20,37 +20,27 @@ from coding_tools_mcp.task_state import TaskStateStore
 
 
 class RuntimeV055RegressionTests(unittest.TestCase):
-    def test_successful_follow_up_command_resets_consecutive_recovery_state(self) -> None:
+    def test_terminal_failure_is_not_revived_by_follow_up_command(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             store = TaskStateStore(Path(temp))
-            store.ensure_started("recover once")
+            store.ensure_started("failed run stays terminal")
             store.update({"lifecycle_state": "failed", "failure": "old failure"})
             store.record_command_started(
                 "python -V",
-                "session-recover-v056",
+                "session-after-terminal",
                 ".",
                 execution={
-                    "execution_id": "exec-recover-v056",
+                    "execution_id": "exec-after-terminal",
                     "lifecycle_state": "running",
                     "retry_safe": False,
                     "side_effect_possible": True,
                 },
             )
-            recovering = store.get()
-            self.assertEqual(recovering["recovery_attempt"], 1)
-            self.assertEqual(recovering["last_recovery"]["reason"], "follow_up_command")
-            store.record_tool_result("exec_command", {"cmd": "python -V"}, {
-                "ok": True,
-                "status": "exited",
-                "exit_code": 0,
-                "elapsed_ms": 10,
-                "session_id": "session-recover-v056",
-                "execution": {"execution_id": "exec-recover-v056", "lifecycle_state": "completed"},
-            })
-            recovered = store.get()
-            self.assertEqual(recovered["recovery_attempt"], 0)
-            self.assertIsNone(recovered["last_recovery"])
-            self.assertEqual(recovered["safe_resume_point"], "")
+            state = store.get()
+            self.assertEqual(state["lifecycle_state"], "failed")
+            self.assertEqual(state["failure"], "old failure")
+            self.assertEqual(state["recovery_attempt"], 0)
+            self.assertIsNone(state["current_command"])
 
     def test_terminal_lifecycle_finalizes_stale_command_execution_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -130,10 +120,10 @@ class RuntimeV055RegressionTests(unittest.TestCase):
             self.assertNotIn(r'\"C:\Program Files\nodejs\npm.CMD\"', str(command))
             runtime.close()
 
-    def test_failed_task_auto_recovers_on_follow_up_command(self) -> None:
+    def test_failed_task_requires_explicit_new_run_or_resume(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             store = TaskStateStore(Path(temp))
-            store.ensure_started("recover failed workflow")
+            original = store.ensure_started("failed workflow")
             store.update({
                 "lifecycle_state": "failed",
                 "failure": "first check failed",
@@ -151,27 +141,21 @@ class RuntimeV055RegressionTests(unittest.TestCase):
                     "side_effect_possible": True,
                 },
             )
-            recovering = store.get()
-            self.assertEqual(recovering["lifecycle_state"], "recovering")
-            self.assertIsNone(recovering["failure"])
-            self.assertEqual(recovering["recovery_attempt"], 1)
-            self.assertEqual(recovering["last_recovery"]["reason"], "follow_up_command")
+            terminal = store.get()
+            self.assertEqual(terminal["run_id"], original["run_id"])
+            self.assertEqual(terminal["lifecycle_state"], "failed")
+            self.assertEqual(terminal["failure"], "first check failed")
+            self.assertIsNone(terminal["current_command"])
 
-            store.record_tool_result(
-                "exec_command",
-                {"cmd": "echo ok", "blocking": True},
-                {
-                    "ok": True,
-                    "status": "exited",
-                    "session_id": "session-recover",
-                    "exit_code": 0,
-                    "elapsed_ms": 1,
-                    "summary": "exit 0",
-                },
-            )
-            recovered = store.get()
-            self.assertEqual(recovered["lifecycle_state"], "waiting_model")
-            self.assertIsNone(recovered["failure"])
+            restarted = store.update({
+                "objective": "explicit retry",
+                "new_task": True,
+                "status": "active",
+                "failure": None,
+            }, event="task_started")
+            self.assertNotEqual(restarted["run_id"], original["run_id"])
+            self.assertEqual(restarted["lifecycle_state"], "running")
+            self.assertIsNone(restarted["failure"])
 
     def test_blocking_command_failure_keeps_its_real_failure_message(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

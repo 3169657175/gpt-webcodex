@@ -17,12 +17,14 @@
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-mark"><span></span><span></span><span></span></div>
-      <div><strong>网页 MCP 助手</strong><small>本地开发助手 · 0.5.10</small></div>
+      <div><strong>网页 MCP 助手</strong><small>本地开发助手 · 0.6.0</small></div>
     </div>
     <nav class="nav-list" aria-label="主导航">
-      <button class="nav-item active" data-page="status"><span class="nav-icon">●</span><span>状态中心</span></button>
+      <div class="nav-section-label">工作</div>
+      <button class="nav-item active" data-page="status"><span class="nav-icon">⌂</span><span>首页</span></button>
       <button class="nav-item" data-page="workspace"><span class="nav-icon">▣</span><span>工作区</span></button>
       <button class="nav-item" data-page="memory"><span class="nav-icon">◫</span><span>本地记忆</span></button>
+      <div class="nav-section-label">配置</div>
       <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span><span>设置与诊断</span></button>
       <div class="nav-sublist" aria-label="配置">
         <button class="nav-subitem" data-page="setup-guide"><span>配置教程</span></button>
@@ -37,7 +39,7 @@
 
   <main class="main-area">
     <header class="topbar">
-      <div><p class="eyebrow" id="pageEyebrow">运行</p><h1 id="pageTitle">状态中心</h1><p id="pageSubtitle">正常时保持简单，只有需要处理的事情才展开。</p></div>
+      <div><p class="eyebrow" id="pageEyebrow">运行</p><h1 id="pageTitle">首页</h1><p id="pageSubtitle">正常时保持简单，只有需要处理的事情才展开。</p></div>
       <div class="top-actions">
         <button class="secondary-button" id="openGuideTop">配置教程</button>
         <button class="secondary-button" id="refreshButton">重新检测</button>
@@ -272,7 +274,7 @@
         </div>
         <details class="panel diagnostic-details" id="doctorDetails"><summary><span><b>技术诊断详情</b><small>只有排查连接问题时需要展开</small></span><span>展开</span></summary><div class="diagnostic-detail-list" id="doctorResults"><span class="task-muted">运行一键诊断后显示详细证据。</span></div></details>
         <details class="panel diagnostic-details"><summary><span><b>运行日志</b><small>密钥、Token 和 Cookie 会自动脱敏</small></span><span>展开</span></summary><div class="compact-log-toolbar"><span id="logCount">0 条日志</span><div><button class="secondary-button" id="refreshLogs">刷新</button><button class="danger-button" id="clearLogs">清空</button></div></div><div class="log-output" id="logOutput"><div class="empty-state"><b>暂无日志</b><span>出现运行或连接异常时再查看。</span></div></div></details>
-        <article class="panel about-panel"><div class="brand-mark large"><span></span><span></span><span></span></div><div><h3>网页 MCP 助手 <span>v0.5.10</span></h3><p>自动完成日常开发流程，同时保留必要的查看、配置和异常处理能力。</p></div></article>
+        <article class="panel about-panel"><div class="brand-mark large"><span></span><span></span><span></span></div><div><h3>网页 MCP 助手 <span>v0.6.0</span></h3><p>自动完成日常开发流程，同时保留必要的查看、配置和异常处理能力。</p></div></article>
       </section>
     </div>
   </main>

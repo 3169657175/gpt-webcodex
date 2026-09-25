@@ -3,7 +3,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const pageMeta = {
-  status: ['运行', '状态中心', '正常时保持简单，只有需要处理的事情才展开。'],
+  status: ['运行', '首页', '运行状态、当前任务与最近异常集中在这里。'],
   workspace: ['项目', '工作区', '查看当前主工作区与额外授权边界。'],
   memory: ['记忆', '本地记忆', '管理跨 ChatGPT 账号保留的本机长期记忆。'],
   settings: ['配置', '设置与诊断', '常用设置保持简单，连接、教程和故障处理按需展开。'],
@@ -544,13 +544,28 @@ function taskStatusView(task, operation) {
   return ['空闲', 'neutral'];
 }
 
+function worktreeHasPendingChanges(worktree) {
+  if (!worktree || worktree.exists === false) return false;
+  const status = String(worktree.status || '').toLowerCase();
+  if (status.includes('conflict')) return true;
+  if (worktree.has_unapplied_changes === true) return true;
+  if (Number(worktree.changed_count || 0) > 0) return true;
+  if (worktree.clean === true && Number(worktree.changed_count || 0) === 0) return false;
+  return false;
+}
+
 function renderTaskRuntime() {
   const runtime = state.taskRuntime;
   const task = runtime?.state || null;
   const operation = Array.isArray(runtime?.operations)
     ? runtime.operations.filter((item) => ['running', 'queued'].includes(String(item?.status || ''))).slice(-1)[0]
     : null;
+  const unified = runtime?.runtime_layers?.user || {};
   let [label, tone] = taskStatusView(task, operation);
+  if (unified.state === 'stalled') {
+    label = '疑似卡住';
+    tone = 'danger';
+  }
   if (state.taskRuntimeError && task) {
     label = `${label} · 状态待确认`;
     tone = 'warning';
@@ -572,7 +587,9 @@ function renderTaskRuntime() {
   const lastActivity = relativeTime(task.last_heartbeat_at || task.updated_at);
   $('#taskActivity').textContent = state.taskRuntimeError
     ? `状态读取暂时失败，保留上次进度 · ${lastActivity}`
-    : lastActivity;
+    : unified.state === 'stalled'
+      ? `${Math.max(0, Number(unified.heartbeat_age_seconds || 0))} 秒无活动，建议查看诊断`
+      : lastActivity;
   $('#taskId').textContent = textOr(task.task_id);
   $('#taskRunId').textContent = textOr(task.run_id);
   $('#taskOperation').textContent = textOr(operation?.operation_id || runtime?.background_operation?.operation_id);
@@ -607,8 +624,12 @@ function unresolvedWorktree() {
   const terminal = ['completed', 'failed', 'stopped', 'paused', 'waiting'].includes(String(task.status || ''))
     || ['completed', 'failed', 'cancelled', 'needs_user', 'waiting_user'].includes(String(task.lifecycle_state || ''));
   const active = state.taskRuntime?.active_worktree;
-  if (active && terminal) return active;
-  return (state.worktrees || []).find((item) => !['applied', 'discarded', 'cleaned', 'removed'].includes(String(item?.status || '').toLowerCase()) && terminal) || null;
+  if (active && terminal && worktreeHasPendingChanges(active)) return active;
+  return (state.worktrees || []).find((item) =>
+    !['applied', 'discarded', 'cleaned', 'removed'].includes(String(item?.status || '').toLowerCase())
+    && terminal
+    && worktreeHasPendingChanges(item)
+  ) || null;
 }
 
 function renderWorktree() {

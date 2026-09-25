@@ -626,8 +626,28 @@ class ChatViewController {
           if(changed)report('render_error','page-message-render-error');
           return;
         }
-        const generating=Boolean(document.querySelector('button[data-testid="stop-button"],button[aria-label="Stop"],button[aria-label*="Stop generating"],button[aria-label*="停止生成"]'));
+        const stopSelector='button[data-testid="stop-button"],button[aria-label="Stop"],button[aria-label*="Stop generating"],button[aria-label*="停止生成"]';
+        const stopControls=Array.from(document.querySelectorAll(stopSelector));
+        const generating=stopControls.some((node)=>visible(node)&&!node.disabled&&node.getAttribute('aria-disabled')!=='true');
         const recoveryTimeout=recoveryTimedOut(text);
+        const now=Date.now();
+        if(generating){
+          window.__mcpStreamStableIdleSince=0;
+          window.__mcpStreamLastGeneratingAt=now;
+        }else if(window.__mcpStreamStatus==='generating'){
+          if(!window.__mcpStreamStableIdleSince){
+            window.__mcpStreamStableIdleSince=now;
+            schedule(1400);
+            return;
+          }
+          const quietFor=now-window.__mcpStreamStableIdleSince;
+          if(quietFor<1200){
+            schedule(Math.max(150,1200-quietFor));
+            return;
+          }
+        }else{
+          window.__mcpStreamStableIdleSince=0;
+        }
         const next=(recoveryTimeout||interrupted(text))?'interrupted':generating?'generating':'healthy';
         if(window.__mcpStreamStatus===next)return;
         const previous=window.__mcpStreamStatus;
@@ -636,7 +656,7 @@ class ChatViewController {
         else if(next==='generating')report(next,'page-response-generating');
         else if(previous==='interrupted')report(next,'page-stream-recovered');
         else if(previous==='render_error')report(next,'page-message-render-recovered');
-        else if(previous==='generating')report(next,'page-response-finished');
+        else if(previous==='generating')report(next,'page-response-finished',{settled_ms:Math.max(0,now-(window.__mcpStreamStableIdleSince||now))});
       };
       const schedule=(delay=500)=>{if(window.__mcpStreamTimer)clearTimeout(window.__mcpStreamTimer);window.__mcpStreamTimer=setTimeout(scan,delay);};
       const target=document.querySelector('main')||document.body;

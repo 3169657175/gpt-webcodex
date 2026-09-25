@@ -518,11 +518,15 @@ class BackgroundOperationTests(unittest.TestCase):
                 5: ("failed", "timed_out"),
                 6: ("not_started", "not_started"),
             }
+            current = runtime.task_state.ensure_started("summarize current run")
+            run_id = current["run_id"]
             for index in range(15):
                 status, lifecycle = lifecycle_by_index.get(index, ("completed", "completed"))
                 runtime.task_state.upsert_operation({
                     "operation_id": f"summary-{index}",
                     "execution_id": f"execution-{index}",
+                    "run_id": run_id,
+                    "task_id": current["task_id"],
                     "tool": "agent_workflow",
                     "status": status,
                     "lifecycle_state": lifecycle,
@@ -531,6 +535,15 @@ class BackgroundOperationTests(unittest.TestCase):
                         "lifecycle_state": lifecycle,
                     },
                 })
+            runtime.task_state.upsert_operation({
+                "operation_id": "foreign-run",
+                "execution_id": "foreign-execution",
+                "run_id": "other-run",
+                "task_id": "other-task",
+                "tool": "agent_workflow",
+                "status": "running",
+                "lifecycle_state": "running",
+            })
             result = runtime.task_control({"action": "get"})
             summary = result["background_operations_summary"]
             self.assertEqual(summary["total"], 15)
@@ -541,6 +554,7 @@ class BackgroundOperationTests(unittest.TestCase):
             self.assertEqual(summary["unknown_outcome"], 1)
             self.assertEqual(summary["not_started"], 1)
             self.assertEqual(summary["completed"], 8)
+            self.assertNotIn("foreign-run", {item.get("operation_id") for item in summary["items"]})
             self.assertEqual(len(summary["items"]), 12)
             self.assertEqual(summary["items_truncated"], 3)
             runtime.close()
@@ -771,7 +785,7 @@ class BuildVerificationTests(unittest.TestCase):
             profile = profile_project_execution(root)
             self.assertEqual(profile["test"]["status"], "verified")
             self.assertEqual(profile["test"]["framework"], "unittest")
-            self.assertIn("unittest discover", profile["test"]["command"])
+            self.assertIn("defaultTestLoader.discover", profile["test"]["command"])
 
     def test_unavailable_python_tests_do_not_guess_or_execute_runner(self) -> None:
         with tempfile.TemporaryDirectory() as temp, patch("coding_tools_mcp.build_verify.importlib.util.find_spec", return_value=None):

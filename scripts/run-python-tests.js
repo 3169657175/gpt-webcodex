@@ -49,7 +49,14 @@ const env = {
 console.log(`[Python 测试] ${python.label}: ${python.executable}`);
 try {
   run(python, ['-B', 'scripts/check-schema-contract.py'], env);
-  run(python, ['-B', '-m', 'unittest', 'discover', '-s', 'resources/coding-tools-mcp/tests', '-p', 'test*.py'], env);
+  const unittestBootstrap = [
+    'import os,sys,unittest',
+    `sys.path.insert(0, ${JSON.stringify(mcpRoot)})`,
+    `suite=unittest.defaultTestLoader.discover(${JSON.stringify(path.join(mcpRoot, 'tests'))}, pattern='test*.py')`,
+    'result=unittest.TextTestRunner(verbosity=1).run(suite)',
+    'raise SystemExit(0 if result.wasSuccessful() else 1)'
+  ].join(';');
+  run(python, ['-B', '-c', unittestBootstrap], env);
 } finally {
   fs.rmSync(testMemoryRoot, { recursive: true, force: true });
 }

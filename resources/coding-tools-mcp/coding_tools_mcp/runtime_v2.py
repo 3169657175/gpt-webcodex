@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,17 @@ def _text(value: Any, limit: int = 240) -> str:
     return str(value or "")[:limit]
 
 
+def _age_seconds(value: Any) -> int | None:
+    raw = str(value or "")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return max(0, int((datetime.now(timezone.utc) - parsed).total_seconds()))
+
+
 def layered_runtime_state(
     state: dict[str, Any] | None,
     operations: list[dict[str, Any]] | None = None,
@@ -33,6 +45,11 @@ def layered_runtime_state(
 ) -> dict[str, Any]:
     task = state if isinstance(state, dict) else {}
     items = [item for item in (operations or []) if isinstance(item, dict)]
+    run_id = str(task.get("run_id") or "")
+    if run_id:
+        items = [item for item in items if str(item.get("run_id") or "") == run_id]
+    elif str(task.get("status") or "idle") == "idle":
+        items = []
     running = [item for item in items if str(item.get("status") or "") in {"running", "queued"}]
     operation = (running[-1] if running else items[-1]) if items else {}
     lifecycle = str(task.get("lifecycle_state") or "idle")
@@ -66,9 +83,33 @@ def layered_runtime_state(
     last_command = task.get("last_command") if isinstance(task.get("last_command"), dict) else {}
     execution_id = str(operation.get("execution_id") or command.get("execution_id") or last_command.get("execution_id") or "")
     process_id = command.get("process_id") or command.get("pid") or operation.get("process_id")
+    heartbeat_at = (
+        operation.get("heartbeat_at")
+        or command.get("last_output_at")
+        or task.get("last_heartbeat_at")
+        or task.get("updated_at")
+    )
+    heartbeat_age = _age_seconds(heartbeat_at)
+    stalled = bool(execution == "running" and heartbeat_age is not None and heartbeat_age >= 90)
+    user_state = (
+        "stalled" if stalled
+        else "running" if execution == "running"
+        else "waiting_model" if lifecycle == "waiting_model"
+        else "waiting_user" if execution == "waiting"
+        else "failed" if execution == "failed"
+        else "cancelled" if execution in {"stopped", "cancelled"}
+        else "completed" if execution == "completed"
+        else "idle"
+    )
 
     return {
         "execution": {"state": execution, "lifecycle": lifecycle, "status": status},
+        "user": {
+            "state": user_state,
+            "stalled": stalled,
+            "heartbeat_at": _text(heartbeat_at, 100),
+            "heartbeat_age_seconds": heartbeat_age,
+        },
         "model": {"state": model, "wait_reason": _text(task.get("wait_reason"), 500)},
         "process": {"state": process, "process_id": process_id, "session_id": _text(command.get("session_id"), 200)},
         "connection": {"state": "connected" if mcp_connected else "disconnected", "transport": "mcp"},
@@ -80,7 +121,7 @@ def layered_runtime_state(
         "workspace": {"state": "ready" if workspace_ready else "missing", "path": str(workspace or "")},
         "correlation": {
             "task_id": _text(task.get("task_id"), 200),
-            "run_id": _text(task.get("run_id"), 200),
+            "run_id": _text(run_id, 200),
             "local_session_id": _text(task.get("local_session_id"), 200),
             "operation_id": _text(operation.get("operation_id"), 200),
             "execution_id": _text(execution_id, 200),

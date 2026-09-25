@@ -62,12 +62,17 @@ class WorktreeManagerTests(unittest.TestCase):
             self.assertEqual(created["run_id"], "run_1234")
             self.assertTrue(str(created["branch"]).startswith("coding-tools/run-"))
             self.assertTrue(created["clean"])
+            self.assertFalse(created["has_unapplied_changes"])
+            self.assertEqual(created["changed_count"], 0)
 
             (worktree / "app.txt").write_text("base\nchanged\n", encoding="utf-8")
             diff = manager.diff("run_1234")
             self.assertEqual(diff["changed_count"], 1)
             self.assertIn("+changed", diff["diff"])
-            self.assertFalse(manager.get("run_1234")["clean"])
+            refreshed = manager.get("run_1234")
+            self.assertFalse(refreshed["clean"])
+            self.assertTrue(refreshed["has_unapplied_changes"])
+            self.assertEqual(refreshed["changed_count"], 1)
             self.assertEqual(len(manager.list()), 1)
 
             reopened = WorktreeManager(root)

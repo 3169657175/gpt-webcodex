@@ -4598,8 +4598,22 @@ class Runtime:
                         "next_step": "执行修改与验证。",
                     })
                 except ToolFailure as exc:
-                    if exc.code in {"NOT_GIT_REPOSITORY", "WORKSPACE_NOT_GIT_ROOT", "GIT_NOT_FOUND"}:
-                        isolation = {"mode": "off", "reason": exc.code.lower(), "message": str(exc)}
+                    fallback_codes = {
+                        "NOT_GIT_REPOSITORY", "WORKSPACE_NOT_GIT_ROOT", "GIT_NOT_FOUND",
+                        "SNAPSHOT_TOO_LARGE", "WORKTREE_LIMIT",
+                    }
+                    if exc.code in fallback_codes:
+                        isolation = {
+                            "mode": "off",
+                            "reason": exc.code.lower(),
+                            "message": str(exc),
+                            "details": dict(exc.details or {}),
+                            "fallback": "direct-workspace",
+                        }
+                        self.task_state.update({
+                            "current_step": "隔离预检不适用，已切换当前工作区",
+                            "next_step": "直接在当前工作区执行修改与验证。",
+                        })
                     else:
                         raise
         elif isolation_mode == "auto" and not auto_isolation_needed:
@@ -4846,29 +4860,42 @@ class Runtime:
             live_ids = {str(item.get("operation_id") or "") for item in operations}
             persisted = [item for item in self.task_state.operation_records(16) if str(item.get("operation_id") or "") not in live_ids]
             all_operations = persisted + operations
-            operations_summary = self._background_operations_summary(all_operations)
+            run_id = str(state.get("run_id") or "").strip()
+            run_operations = [
+                item for item in all_operations
+                if run_id and str(item.get("run_id") or "") == run_id
+            ]
+            operations_summary = self._background_operations_summary(run_operations)
             if str(args.get("detail", "compact")).lower() == "full":
-                visible_operations = all_operations[-8:]
+                visible_operations = run_operations[-8:]
             else:
                 active_operations = [
-                    item for item in all_operations
+                    item for item in run_operations
                     if str(item.get("status") or "") in {"running", "queued"}
                 ]
-                visible_operations = active_operations[-1:] if active_operations else all_operations[-1:]
+                visible_operations = active_operations[-1:] if active_operations else run_operations[-1:]
             active_worktree = None
-            run_id = str(state.get("run_id") or "").strip()
             if run_id:
                 try:
                     active_worktree = self.worktrees.get(run_id)
+                    terminal = str(state.get("lifecycle_state") or "") in {"completed", "failed", "cancelled"}
+                    if terminal and not bool(active_worktree.get("has_unapplied_changes")):
+                        try:
+                            self.worktrees.discard(run_id)
+                        except ToolFailure:
+                            pass
+                        active_worktree = None
                 except ToolFailure as exc:
                     if exc.code != "NOT_FOUND":
                         raise
+            history = self.task_state.history(1)
             return {
                 "state": state,
                 "operations": visible_operations,
                 "background_operations_summary": operations_summary,
                 "active_worktree": active_worktree,
-                "runtime_layers": layered_runtime_state(state, all_operations, workspace=str(self.workspace.root)),
+                "recent_task": history[0] if history else None,
+                "runtime_layers": layered_runtime_state(state, run_operations, workspace=str(self.workspace.root)),
             }
         if action == "operation":
             operation_id = str(args.get("operation_id", "")).strip()

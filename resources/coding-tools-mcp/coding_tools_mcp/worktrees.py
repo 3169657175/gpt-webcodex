@@ -362,13 +362,35 @@ class WorktreeManager:
         result["exists"] = path.exists() and path.is_dir()
         if result["exists"]:
             status = self._run(["-C", str(path), "status", "--porcelain=v1", "-b"])
-            result["clean"] = status.returncode == 0 and not any(
-                line and not line.startswith("## ") for line in status.stdout.splitlines()
-            )
+            status_entries = [
+                line for line in status.stdout.splitlines()
+                if line and not line.startswith("## ")
+            ]
+            result["clean"] = status.returncode == 0 and not status_entries
             result["status_summary"] = status.stdout.strip()[:8000]
+            baseline = str(result.get("snapshot_commit") or result.get("base_commit") or "")
+            baseline_files: list[str] = []
+            if baseline:
+                changed = self._run([
+                    "-C", str(path), "diff", "--name-only", baseline, "--", ".",
+                    ":(exclude).coding-tools", ":(exclude).coding-tools/**",
+                ])
+                if changed.returncode == 0:
+                    baseline_files = [line.strip() for line in changed.stdout.splitlines() if line.strip()]
+            untracked = [
+                line[3:].strip() for line in status_entries
+                if line.startswith("?? ") and line[3:].strip()
+            ]
+            changed_paths = list(dict.fromkeys([*baseline_files, *untracked]))
+            result["changed_count"] = len(changed_paths)
+            result["changed_paths"] = changed_paths[:200]
+            result["has_unapplied_changes"] = bool(changed_paths or status_entries)
         else:
             result["clean"] = False
             result["status_summary"] = "worktree directory is missing"
+            result["changed_count"] = 0
+            result["changed_paths"] = []
+            result["has_unapplied_changes"] = False
         return result
 
     def list(self) -> list[dict[str, Any]]:

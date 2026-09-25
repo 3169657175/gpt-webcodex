@@ -18,7 +18,7 @@ test('chat toolbar stays Chinese-first and task strip is user-facing', () => {
 
 test('Manager primary navigation exposes four Chinese-first business entries', () => {
   const html = read('renderer/index.html');
-  assert.match(html, />状态中心<\/span>/);
+  assert.match(html, />首页<\/span>/);
   assert.match(html, />工作区<\/span>/);
   assert.match(html, />本地记忆<\/span>/);
   assert.match(html, />设置与诊断<\/span>/);

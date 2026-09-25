@@ -21,6 +21,7 @@ MAX_FILES = 500
 MAX_TEXT = 16_000
 STALE_ACTIVE_SECONDS = 90
 STALE_WAITING_SECONDS = 30 * 60
+TERMINAL_CURRENT_RETENTION_SECONDS = 20
 
 RUN_STATES = frozenset({
     "created", "planning", "ready", "running", "recovering", "waiting_model",
@@ -110,6 +111,52 @@ def _canonical_run_state(lifecycle_state: str) -> str:
     return canonical if canonical in RUN_STATES else "running"
 
 
+def _finalize_terminal_steps(state: dict[str, Any], lifecycle: str) -> None:
+    now = utc_now()
+    steps = state.get("steps") if isinstance(state.get("steps"), list) else []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        status = str(step.get("status") or "pending")
+        step_state = str(step.get("state") or "")
+        if status == "completed" or step_state == "completed":
+            continue
+        if lifecycle == "completed":
+            if status == "in_progress" or step_state in {"running", "verifying"}:
+                step["status"] = "completed"
+                step["state"] = "completed"
+            else:
+                step["status"] = "pending"
+                step["state"] = "cancelled"
+        elif lifecycle == "failed":
+            if status == "in_progress" or step_state in {"running", "verifying", "recovering"}:
+                step["status"] = "failed"
+                step["state"] = "failed"
+            else:
+                step["status"] = "pending"
+                step["state"] = "cancelled"
+        else:
+            step["status"] = "pending"
+            step["state"] = "cancelled"
+        step["finished_at"] = str(step.get("finished_at") or now)
+        step["last_progress_at"] = now
+        step["updated_at"] = now
+    if steps:
+        state["current_step_id"] = ""
+        state["resume_cursor"] = len(steps)
+
+
+def _terminal_state_expired(state: dict[str, Any]) -> bool:
+    if str(state.get("lifecycle_state") or "") not in TERMINAL_LIFECYCLE_STATES:
+        return False
+    raw = str(state.get("terminal_at") or state.get("updated_at") or "")
+    try:
+        terminal_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc) - terminal_at).total_seconds() >= TERMINAL_CURRENT_RETENTION_SECONDS
+
+
 MAX_TOOL_EVENT_STRING = 8_000
 MAX_TOOL_EVENT_ITEMS = 50
 MAX_TOOL_EVENT_DEPTH = 5
@@ -180,6 +227,12 @@ def _set_lifecycle(state: dict[str, Any], lifecycle_state: str, *, wait_reason: 
     ):
         state["last_heartbeat_at"] = utc_now()
     if lifecycle in {"completed", "failed", "cancelled"}:
+        state["terminal_at"] = _text(
+            state.get("terminal_at") or state.get("updated_at") or utc_now(),
+            100,
+        )
+        state["last_heartbeat_at"] = utc_now()
+        _finalize_terminal_steps(state, lifecycle)
         current = state.get("current_command")
         if isinstance(current, dict):
             finalized = copy.deepcopy(current)
@@ -204,6 +257,19 @@ def _set_lifecycle(state: dict[str, Any], lifecycle_state: str, *, wait_reason: 
                 finalized["exit_code"] = 0
             state["last_command"] = finalized
             state["current_command"] = None
+        last_command = state.get("last_command") if isinstance(state.get("last_command"), dict) else {}
+        latest_test = state.get("test_results")[-1] if isinstance(state.get("test_results"), list) and state.get("test_results") else {}
+        latest_build = state.get("build_results")[-1] if isinstance(state.get("build_results"), list) and state.get("build_results") else {}
+        state["completion_receipt"] = {
+            "lifecycle": lifecycle,
+            "terminal_at": state["terminal_at"],
+            "last_command_status": _text(last_command.get("status"), 100),
+            "last_execution_state": _text(last_command.get("execution_lifecycle_state"), 100),
+            "exit_code": last_command.get("exit_code"),
+            "modified_file_count": len(state.get("modified_files") or []),
+            "latest_test_status": _text(latest_test.get("status"), 100),
+            "latest_build_status": _text(latest_build.get("status"), 100),
+        }
 
 
 def _default_state() -> dict[str, Any]:
@@ -237,6 +303,8 @@ def _default_state() -> dict[str, Any]:
         "last_build_report": None,
         "modified_files": [],
         "failure": None,
+        "terminal_at": "",
+        "completion_receipt": None,
         "warnings": [],
         "next_step": "",
         "created_at": now,
@@ -268,7 +336,10 @@ class TaskStateStore:
 
     def get(self) -> dict[str, Any]:
         with self._lock:
-            return copy.deepcopy(self._read())
+            state = self._read()
+            if _terminal_state_expired(state):
+                return _default_state()
+            return copy.deepcopy(state)
 
     def event_snapshot(self) -> tuple[int, dict[str, Any]]:
         """Return the in-process revision and current state for local desktop subscribers."""
@@ -645,6 +716,12 @@ class TaskStateStore:
     def update(self, changes: dict[str, Any], *, event: str = "task_updated") -> dict[str, Any]:
         with self._lock:
             state = self._read()
+            if (
+                self._has_task(state)
+                and str(state.get("lifecycle_state") or "") in TERMINAL_LIFECYCLE_STATES
+                and not changes.get("new_task")
+            ):
+                return copy.deepcopy(state)
             if changes.get("objective") and not self._has_task(state):
                 # Discard anonymous tool traces left before a model explicitly started a task.
                 state = _default_state()
@@ -796,32 +873,10 @@ class TaskStateStore:
             if not self._has_task(state):
                 return
             lifecycle = str(state.get("lifecycle_state") or "")
-            if lifecycle in {"completed", "cancelled"}:
+            if lifecycle in TERMINAL_LIFECYCLE_STATES:
                 return
             started_at = utc_now()
-            if lifecycle == "failed":
-                state["recovery_attempt"] = max(0, int(state.get("recovery_attempt") or 0)) + 1
-                state["safe_resume_point"] = _text(
-                    state.get("current_step_id")
-                    or state.get("next_step")
-                    or state.get("current_step")
-                    or "follow_up_command",
-                    1000,
-                )
-                state["last_recovery"] = {
-                    "time": started_at,
-                    "reason": "follow_up_command",
-                    "execution_id": _text((execution or {}).get("execution_id"), 200),
-                    "execution_state": "running",
-                    "retry_safe": bool((execution or {}).get("retry_safe", False)),
-                    "side_effect_possible": bool((execution or {}).get("side_effect_possible", True)),
-                }
-                _set_lifecycle(state, "recovering")
-                state["failure"] = None
-                state["current_step"] = "正在从上一步失败中恢复"
-                self._event(state, "task_auto_recovering", copy.deepcopy(state["last_recovery"]))
-            else:
-                _set_lifecycle(state, "running")
+            _set_lifecycle(state, "running")
             kind = classify_command(command)
             state["current_command"] = {
                 "command": _text(command, 4000),
@@ -857,6 +912,9 @@ class TaskStateStore:
     def record_build_report(self, report: dict[str, Any]) -> None:
         with self._lock:
             state = self._read()
+            if self._has_task(state) and str(state.get("lifecycle_state") or "") in TERMINAL_LIFECYCLE_STATES:
+                self._archive(state, "superseded-by-build")
+                state = _default_state()
             if not self._has_task(state):
                 project = report.get("project") if isinstance(report.get("project"), dict) else {}
                 state["objective"] = f"Build and verify {_text(project.get('name') or 'project', 500)}"
@@ -888,6 +946,12 @@ class TaskStateStore:
         archived = copy.deepcopy(state)
         archived["archived_at"] = utc_now()
         archived["archive_reason"] = reason
+        identity = str(archived.get("run_id") or archived.get("task_id") or "")
+        if identity:
+            history = [
+                item for item in history
+                if str(item.get("run_id") or item.get("task_id") or "") != identity
+            ]
         history = (history + [archived])[-100:]
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self._write_json_atomic(self.history_path, history)
@@ -1371,6 +1435,8 @@ class TaskStateStore:
             self._revision += 1
             self._condition.notify_all()
             result = copy.deepcopy(state)
+            if entered_terminal:
+                self._archive(result, "terminal")
             if entered_terminal and self._terminal_callback is not None:
                 try:
                     self._terminal_callback(copy.deepcopy(result))

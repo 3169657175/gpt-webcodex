@@ -35,3 +35,12 @@ test('0.5.6 classifies ChatGPT stream recovery polling timeout without auto retr
   assert.doesNotMatch(source, /page-stream-recovery-timeout[\s\S]{0,1200}\.click\(/);
 });
 
+
+
+test('0.6.0 stream observer ignores hidden or disabled stale stop buttons and settles before finish', () => {
+  assert.match(source, /stopControls\.some\(\(node\)=>visible\(node\)&&!node\.disabled/);
+  assert.match(source, /aria-disabled/);
+  assert.match(source, /__mcpStreamStableIdleSince/);
+  assert.match(source, /schedule\(1400\)/);
+  assert.match(source, /settled_ms/);
+});
