@@ -698,6 +698,13 @@ class BackgroundOperationTests(unittest.TestCase):
             heartbeat = store.heartbeat(run_id=task["run_id"], step_id="two", progress=True)
             self.assertGreater(heartbeat["last_heartbeat_at"], first_heartbeat)
             self.assertEqual(heartbeat["steps"][1]["last_progress_at"], heartbeat["last_heartbeat_at"])
+            store.record_command_started("sleep 10", "session-one", ".")
+            before = store.get()["last_heartbeat_at"]
+            time.sleep(0.002)
+            ignored = store.heartbeat(run_id=task["run_id"], session_id="stale-session")
+            self.assertEqual(ignored["last_heartbeat_at"], before)
+            matched = store.heartbeat(run_id=task["run_id"], session_id="session-one")
+            self.assertGreater(matched["last_heartbeat_at"], before)
             advanced = store.update({"complete_step_ids": ["two"]})
             self.assertEqual(advanced["current_step_id"], "three")
             self.assertEqual(advanced["resume_cursor"], 2)

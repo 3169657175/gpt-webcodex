@@ -67,6 +67,10 @@ button{font:inherit}
 .progress-band-copy small{font-size:11px;color:#747a80}
 .progress-band time{flex:0 0 auto;color:#687179;font-size:11px;font-variant-numeric:tabular-nums}
 .download-state{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#087f65!important}
+.download-action,.progress-action{height:28px;padding:0 10px;border:1px solid #cfe8df;border-radius:7px;background:#f3fbf8;color:#087f65;font-size:10px;font-weight:700;cursor:pointer}
+.download-action[hidden],.progress-action[hidden]{display:none}
+.progress-action{flex:0 0 auto;border-color:#d9d9d9;background:#fff;color:#4d5359}
+.progress-band.stalled{background:#fff8e8}.progress-band.stalled .progress-band-icon{background:#e5a000;box-shadow:0 0 0 3px rgba(229,160,0,.12)}
 .loading-stage{display:grid;height:calc(100% - 164px);place-items:center;background:radial-gradient(circle at 50% 35%,#fff,#f5f5f6 55%,#eceeef)}
 .loading-card{text-align:center}
 .loading-card h1{margin:18px 0 7px;font-size:20px}
@@ -75,3 +79,13 @@ button{font:inherit}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:1150px){.task-strip small{max-width:180px}}
 @media(max-width:1000px){.page-state{display:none}.toolbar-main{grid-template-columns:1fr auto}.task-strip small{display:none}}
+
+/* 0.7.0 browser chrome: keep the page native while making local state legible. */
+.browser-toolbar{background:rgba(248,250,251,.96);box-shadow:0 2px 16px rgba(30,40,50,.07);backdrop-filter:blur(14px)}
+.toolbar-main{height:64px;padding:0 20px}.workspace-bar{height:50px;padding:0 20px;background:rgba(255,255,255,.55)}
+.icon-button,.home-button,.manager-button,.add-workspace{border-radius:11px}.icon-button{font-size:20px}.home-button{padding:0 13px}.home-button b{font-size:14px}.logo-mark{width:30px;height:30px;border-radius:10px}
+.page-state{font-size:13px}.service-state{gap:10px}.service-state span{font-size:12px}.manager-button{height:40px;padding:0 18px;border-radius:12px}
+.workspace-label{min-width:285px}.workspace-label span{font-size:11px}.workspace-label strong{font-size:13px}.workspace-select,.add-workspace{height:34px;font-size:12px;border-radius:10px}
+.task-strip{max-width:560px;padding:7px 11px;border-radius:10px;font-size:11px}.task-strip b{font-size:11px}.task-strip small{font-size:11px}
+.progress-band{height:55px;padding:7px 20px;background:rgba(255,255,255,.72)}.progress-band-copy b{font-size:13px}.progress-band-copy small{font-size:12px}.progress-band time{font-size:12px}
+.download-state{font-size:11px}.download-action,.progress-action{height:30px;border-radius:8px;font-size:11px}

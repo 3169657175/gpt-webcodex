@@ -9,14 +9,14 @@ const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 test('0.6.0 schema identity change detects first discovery and actual generation changes', () => {
-  const current = { version: '0.6.0', schemaVersion: 10, schemaHash: 'abc', toolCount: 9 };
+  const current = { version: '0.7.0', schemaVersion: 10, schemaHash: 'abc', toolCount: 9 };
   assert.equal(schemaIdentityChanged(null, current), true);
   assert.equal(schemaIdentityChanged(current, current), false);
   assert.equal(schemaIdentityChanged(current, { ...current, schemaVersion: 11 }), true);
   assert.equal(schemaIdentityChanged(current, { ...current, schemaHash: 'def' }), true);
   assert.equal(schemaIdentityChanged(current, { ...current, toolCount: 10 }), true);
   assert.deepEqual(compactSchemaIdentity({
-    version: '0.6.0', schema_version: 10, schema_hash: 'abc', tool_count: 9
+    version: '0.7.0', schema_version: 10, schema_hash: 'abc', tool_count: 9
   }), current);
 });
 

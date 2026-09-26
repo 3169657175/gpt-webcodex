@@ -164,10 +164,14 @@ def terminate_process_group(
     *,
     force: bool = False,
 ) -> None:
+    # Windows exposes os.killpg in some Python builds, but it does not
+    # reliably terminate descendants created through cmd.exe. Always use
+    # taskkill /T there so a cancelled command cannot leave a hidden child
+    # holding the workspace or temporary directory open.
+    if os.name == "nt":
+        _windows_taskkill_tree(process, force=force)
+        return
     if not hasattr(os, "killpg"):
-        if os.name == "nt":
-            _windows_taskkill_tree(process, force=force)
-            return
         try:
             if force:
                 process.kill()

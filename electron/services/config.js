@@ -26,7 +26,6 @@ const DEFAULTS = Object.freeze({
   autoStartServices: false,
   keepRunningOnClose: true,
   continuousMcpMode: true,
-  compactToolCalls: true,
   progressReportSeconds: 30,
   taskNotifications: true,
   taskNotificationSound: true,
@@ -108,7 +107,6 @@ function normalize(input = {}) {
   // These are product defaults now, not user-facing knobs.
   merged.progressReportSeconds = 30;
   merged.continuousMcpMode = true;
-  merged.compactToolCalls = merged.compactToolCalls !== false;
   merged.taskNotifications = Boolean(merged.taskNotifications);
   merged.taskNotificationSound = Boolean(merged.taskNotificationSound);
 

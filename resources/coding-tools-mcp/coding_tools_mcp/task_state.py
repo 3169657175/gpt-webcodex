@@ -627,7 +627,7 @@ class TaskStateStore:
                 self._event(state, "runtime_restart_unsafe_outcome", copy.deepcopy(state["last_recovery"]))
             return self._write(state)
 
-    def heartbeat(self, *, run_id: str = "", step_id: str = "", progress: bool = False) -> dict[str, Any]:
+    def heartbeat(self, *, run_id: str = "", step_id: str = "", progress: bool = False, session_id: str = "") -> dict[str, Any]:
         """Persist a bounded Run/Step heartbeat without adding durable heartbeat events."""
         with self._lock:
             state = self._read()
@@ -635,6 +635,10 @@ class TaskStateStore:
                 return copy.deepcopy(state)
             if run_id and str(state.get("run_id") or "") != str(run_id):
                 return copy.deepcopy(state)
+            if session_id:
+                current = state.get("current_command") if isinstance(state.get("current_command"), dict) else {}
+                if str(current.get("session_id") or "") != str(session_id):
+                    return copy.deepcopy(state)
             now = utc_now()
             state["last_heartbeat_at"] = now
             wanted_step = str(step_id or state.get("current_step_id") or "")

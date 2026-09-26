@@ -14,7 +14,7 @@ test('0.6.0 fixes product mode to personal full permissions', () => {
   assert.equal(result.proxyMode, 'auto');
   assert.equal(Object.hasOwn(result, 'toolMode'), false);
   assert.equal(result.continuousMcpMode, true);
-  assert.equal(result.compactToolCalls, true);
+  assert.equal(Object.hasOwn(result, 'compactToolCalls'), false);
   assert.equal(result.progressReportSeconds, 30);
 });
 

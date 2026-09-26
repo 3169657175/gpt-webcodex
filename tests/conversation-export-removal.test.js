@@ -6,7 +6,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('conversation export stays removed while optional tool folding is restored', () => {
+test('conversation export stays removed and native tool rendering stays untouched', () => {
   const files = [
     'electron/main.js',
     'electron/preload.js',
@@ -25,8 +25,7 @@ test('conversation export stays removed while optional tool folding is restored'
 
   const chat = read('electron/chatViewController.js');
   assert.doesNotMatch(chat, /conversationPageExtractor|extractConversation/);
-  assert.match(chat, /scheduleToolCallCompaction/);
-  assert.match(chat, /mcp-tool-call-summary|mcp-tool-call-hidden/);
-  assert.match(read('electron/services/config.js'), /compactToolCalls:\s*true/);
-  assert.match(read('renderer/index.html'), /id="toolCallFoldingToggle"/);
+  assert.doesNotMatch(chat, /scheduleToolCallCompaction|mcp-tool-call-summary|mcp-tool-call-hidden/);
+  assert.doesNotMatch(read('electron/services/config.js'), /compactToolCalls/);
+  assert.doesNotMatch(read('renderer/index.html'), /toolCallFoldingToggle/);
 });

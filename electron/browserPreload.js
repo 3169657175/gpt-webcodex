@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld('browserAssistant', {
   openManager: () => ipcRenderer.invoke('manager:open'),
   openWorkspaceWindow: () => ipcRenderer.invoke('workspace-window:open'),
   navigate: (action) => ipcRenderer.invoke('chat:navigate', action),
+  stopGeneration: () => ipcRenderer.invoke('chat:stop-generation'),
+  openLastDownload: () => ipcRenderer.invoke('chat:open-last-download'),
   chatStatus: () => ipcRenderer.invoke('chat:status'),
   lightweightStatus: () => ipcRenderer.invoke('app:lightweight-snapshot'),
   workspaceHub: () => ipcRenderer.invoke('workspace:hub'),
@@ -27,6 +29,11 @@ contextBridge.exposeInMainWorld('browserAssistant', {
     const wrapped = (_event, payload) => listener(payload);
     ipcRenderer.on('runtime:heartbeat', wrapped);
     return () => ipcRenderer.removeListener('runtime:heartbeat', wrapped);
+  },
+  onTaskEvent: (listener) => {
+    const wrapped = (_event, payload) => listener(payload);
+    ipcRenderer.on('chat:task-event', wrapped);
+    return () => ipcRenderer.removeListener('chat:task-event', wrapped);
   },
   onDownload: (listener) => {
     const wrapped = (_event, payload) => listener(payload);

@@ -31,19 +31,16 @@ test('workspace picker opens a standalone Workspace Center without resizing Chat
   assert.doesNotMatch(main, /chat:workspace-panel/);
 });
 
-test('embedded ChatGPT tool-call folding is optional and reversible', () => {
+test('embedded ChatGPT leaves tool-call rendering to the native page', () => {
   const controller = read('electron/chatViewController.js');
   const config = read('electron/services/config.js');
   const manager = read('renderer/index.html');
   const main = read('electron/main.js');
   assert.match(controller, /scheduleChatUiEnhancements/);
-  assert.match(controller, /scheduleToolCallCompaction/);
-  assert.match(controller, /mcp-tool-call-hidden|mcp-tool-call-summary|mcp-chat-compact-tools-style/);
-  assert.match(controller, /compactHost|__mcpCompactToolObserver|__mcpCompactToolTimer/);
-  assert.match(controller, /已调用工具/);
-  assert.match(config, /compactToolCalls:\s*true/);
-  assert.match(manager, /id="toolCallFoldingToggle"/);
-  assert.match(main, /'compactToolCalls'/);
+  assert.doesNotMatch(controller, /scheduleToolCallCompaction|mcp-tool-call-hidden|mcp-tool-call-summary|mcp-chat-compact-tools-style/);
+  assert.doesNotMatch(config, /compactToolCalls/);
+  assert.doesNotMatch(manager, /toolCallFoldingToggle|折叠“已调用工具”/);
+  assert.doesNotMatch(main, /compactToolCalls/);
 });
 
 test('Workspace Center owns authorized-root management instead of duplicating it in Manager', () => {
@@ -69,11 +66,11 @@ test('Workspace Center separates workspaces and authorized roots into secondary 
   assert.match(css, /\.workspace-list,.authorized-list\{[^}]*overflow:auto/);
 });
 
-test('package and Manager identify the 0.6.0 personal-full-permission release', () => {
+test('package and Manager identify the 0.7.0 observable-task release', () => {
   const pkg = JSON.parse(read('package.json'));
   const manager = read('renderer/index.html');
-  assert.equal(pkg.version, '0.6.0');
-  assert.match(manager, /v0\.6\.0|0\.6\.0/);
+  assert.equal(pkg.version, '0.7.0');
+  assert.match(manager, /v0\.7\.0|0\.7\.0/);
   assert.match(manager, /data-page="status"/);
   assert.match(manager, /data-page="workspace"/);
   assert.doesNotMatch(manager, /data-page="task"|data-page="build"|data-page="guide"/);

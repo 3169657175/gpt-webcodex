@@ -11,8 +11,8 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.6.0** |
-| Coding Tools MCP Runtime | **v0.6.0** |
+| 网页 MCP 助手 Desktop | **v0.7.0** |
+| Coding Tools MCP Runtime | **v0.7.0** |
 | MCP Tool Schema | **v10 / 9 tools** |
 | Schema Hash | `cb44f23fd265c4a7d10c801ca9ef88ee0fa4228b7a73151b02ff693f23757949` |
 | Electron | **43.2.0** |
@@ -27,7 +27,18 @@
 - **长任务持续执行**：保留任务、命令、进度与恢复状态，网络或页面短暂异常后可以继续。
 - **Git / Worktree 工作流**：支持 Git 操作、隔离 Worktree、安全应用修改与清理。
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
-- **ChatGPT 页面增强**：支持工具调用折叠、连续 MCP 状态观察和页面异常恢复提示。
+- **ChatGPT 页面增强**：保留原生页面渲染，提供连续 MCP 状态观察、动态资源错误提示和长时间无新内容的可操作反馈。
+
+## v0.7.0 重点更新
+
+0.7.0 面向“长任务看起来卡住、网页正在运行但没有反馈、页面更新后资源加载异常”等真实使用问题：
+
+- 移除工具调用折叠和强制 CSS 注入，ChatGPT 工具展示完全交给官方页面，减少 DOM 适配回归。
+- 增加网页生成活动心跳；45 秒没有新内容时明确标记为“页面可能停滞”，可直接停止生成或刷新页面。
+- 本地任务事件通过 SSE 即时推送到 ChatGPT 界面，命令即使没有输出也每 5 秒更新运行心跳。
+- 动态导入模块、Chunk 加载失败会显示明确的刷新动作，不会误重启健康的 MCP Runtime。
+- 附件下载完成后可以直接从工作区打开，绕过 ChatGPT 在线预览缓存限制。
+- 设置页删除失效的工具折叠选项，保留连接、通知和诊断等真正有效的控制项。
 
 ## v0.6.0 重点更新
 
@@ -46,11 +57,11 @@
 
 推荐直接从 GitHub Releases 下载最新版：
 
-**[下载 v0.6.0](https://github.com/3169657175/gpt-webcodex/releases/tag/v0.6.0)**
+**[下载 v0.7.0](https://github.com/3169657175/gpt-webcodex/releases/tag/v0.7.0)**
 
 安装包：
 
-`web-mcp-assistant-setup-0.6.0.exe`
+`web-mcp-assistant-setup-0.7.0.exe`
 
 安装后：
 
@@ -135,10 +146,10 @@ docs/                        正式版本发布说明
 - 安装包、`app.asar`、Runtime、Schema 与版本号核对
 - Git commit / tag / clean 状态检查
 
-当前 v0.6.0 安装包 SHA-256：
+当前 v0.7.0 安装包 SHA-256：
 
 ```text
-F4C9853B826BF4A7C0C16256160ACDC1C51BDA35D62C80BC729AA6C685CA163A
+4F4E86BEF05CFB0C932A9A987F8AC819336454CB6FF25A108604C558F4A52D63
 ```
 
 ## License

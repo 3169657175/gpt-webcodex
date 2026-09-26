@@ -55,19 +55,26 @@
     if (lifecycle === 'waiting_model' || (status === 'waiting' && lifecycle !== 'waiting_user')) {
       return { key: 'waiting', message: '本地步骤已交回 ChatGPT，等待下一步调用', detail: current || next || objective || '本地任务状态已保存', elapsed: '' };
     }
+    if (stream === 'asset_error') {
+      return { key: 'failed', message: 'ChatGPT 页面资源加载失败', detail: streamState?.detail || '请点击“刷新页面”重新加载；本地任务状态不会因此丢失', elapsed: '', action: 'reload-page', actionLabel: '刷新页面' };
+    }
     if (stream === 'interrupted' || stream === 'render_error') {
       if (String(streamState?.event || '') === 'page-stream-recovery-timeout') {
         return {
           key: 'waiting',
           message: 'ChatGPT 网页回复恢复超时，本地任务状态仍已保存',
           detail: '本地任务状态未丢失；可以点击网页“重试”，或继续发送消息；不要重复执行已经完成的本地步骤',
-          elapsed: ''
+          elapsed: '', action: 'reload-page', actionLabel: '刷新页面'
         };
       }
-      return { key: 'failed', message: stream === 'interrupted' ? 'ChatGPT 回答连接已中断' : 'ChatGPT 消息显示异常', detail: '本地任务状态可独立查看；请检查网页连接', elapsed: '' };
+      return { key: 'failed', message: stream === 'interrupted' ? 'ChatGPT 回答连接已中断' : 'ChatGPT 消息显示异常', detail: '本地任务状态可独立查看；请检查网页连接', elapsed: '', action: 'reload-page', actionLabel: '刷新页面' };
     }
     if (stream === 'generating') {
-      return { key: 'generating', message: 'ChatGPT 正在生成回复', detail: '尚无正在执行的本地任务；模型内部规划无法由本地工具读取', elapsed: duration(secondsSince(streamState?.updatedAt, now)) };
+      const quietSeconds = Number(streamState?.quietSeconds || streamState?.quiet_seconds || 0);
+      if (streamState?.stalled || quietSeconds >= 45) {
+        return { key: 'stalled', message: `ChatGPT 仍在生成，但页面已 ${duration(Math.floor(quietSeconds))} 没有新内容`, detail: '这不等于本地 MCP 失败；可以停止本轮生成，或刷新页面重试', elapsed: duration(secondsSince(streamState?.updatedAt, now)), action: 'stop-generation', actionLabel: '停止生成' };
+      }
+      return { key: 'generating', message: 'ChatGPT 正在生成回复', detail: '尚无正在执行的本地任务；模型内部规划无法由本地工具读取，页面有活动时会持续更新', elapsed: duration(secondsSince(streamState?.updatedAt, now)) };
     }
     if (status === 'completed' || lifecycle === 'completed') {
       return { key: 'completed', message: `本地任务已完成：${current || objective || '执行结束'}`, detail: next || objective, elapsed: '' };

@@ -72,3 +72,21 @@ test('stream recovery polling timeout is shown as recoverable page state, not lo
   assert.match(result.detail, /本地任务状态/);
 });
 
+test('quiet ChatGPT generation becomes actionable instead of looking alive forever', () => {
+  const result = describe(null, null, {
+    status: 'generating', stalled: true, quietSeconds: 61, updatedAt: now - 61000
+  }, now);
+  assert.equal(result.key, 'stalled');
+  assert.equal(result.action, 'stop-generation');
+  assert.match(result.message, /没有新内容/);
+});
+
+test('dynamic page asset errors offer a safe manual reload', () => {
+  const result = describe(null, null, {
+    status: 'asset_error', event: 'page-asset-error', detail: 'Failed to fetch dynamically imported module'
+  }, now);
+  assert.equal(result.key, 'failed');
+  assert.equal(result.action, 'reload-page');
+  assert.match(result.detail, /动态|Failed|刷新/);
+});
+

@@ -8,6 +8,17 @@ let workspaceHubState = { workspaces: [] };
 let lastApprovalRequestId = '';
 let lastStreamState = { status: 'unknown', updatedAt: 0 };
 let progressInput = { task: null, operation: null, available: true };
+let taskRefreshPromise = null;
+let lastTaskRefreshAt = 0;
+let taskRefreshWarning = '';
+
+function withTimeout(promise, timeoutMs, label = '请求') {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label}超时`)), timeoutMs); })
+  ]).finally(() => clearTimeout(timer));
+}
 
 function unwrap(result) {
   if (!result?.ok) throw new Error(result?.error || '操作失败');
@@ -61,6 +72,13 @@ function renderProgress() {
   $('#progressMessage').textContent = view.message;
   $('#progressDetail').textContent = view.detail;
   $('#progressElapsed').textContent = view.elapsed ? `已运行 ${view.elapsed}` : '';
+  const action = $('#progressAction');
+  if (action) {
+    action.hidden = !view.action;
+    action.textContent = view.actionLabel || '';
+    action.dataset.action = view.action || '';
+    action.title = view.actionLabel || '';
+  }
 }
 
 function renderServiceState(state) {
@@ -96,19 +114,21 @@ function renderWorkspaceHealth() {
 }
 
 async function refreshStatus() {
-  try { renderServiceState(unwrap(await api.lightweightStatus())); }
+  try { renderServiceState(unwrap(await withTimeout(api.lightweightStatus(), 2500, '连接状态读取'))); }
   catch { renderServiceState(null); }
 }
 
 async function refreshTask() {
   const strip = $('#taskStrip');
   if (!strip) return;
+  if (taskRefreshPromise) return taskRefreshPromise;
+  taskRefreshPromise = (async () => {
   try {
     let runtime = null;
-    try { runtime = unwrap(await api.taskRuntime({ detail: 'compact' })); } catch { runtime = null; }
+    try { runtime = unwrap(await withTimeout(api.taskRuntime({ detail: 'compact' }), 2800, '任务状态读取')); } catch { runtime = null; }
     let task = runtime?.state || null;
     if (!task) {
-      try { task = unwrap(await api.taskState())?.state || null; } catch { task = null; }
+      try { task = unwrap(await withTimeout(api.taskState(), 1600, '任务状态兜底读取'))?.state || null; } catch { task = null; }
     }
     const runningOperation = Array.isArray(runtime?.operations)
       ? runtime.operations.filter((item) => item?.status === 'running').slice(-1)[0]
@@ -120,6 +140,8 @@ async function refreshTask() {
       if (newerChatTurn || Date.now() - updatedAt > keepVisibleMs) task = null;
     }
     progressInput = { task, operation: runningOperation, available: Boolean(runtime || task) || lastRuntimeState?.mcpRunning === false };
+    lastTaskRefreshAt = Date.now();
+    taskRefreshWarning = runtime || task ? '' : '暂时无法读取本地任务状态，正在自动重试';
     renderProgress();
     const view = taskPresentation(task, runningOperation);
     strip.className = `task-strip ${view.key}`;
@@ -129,6 +151,7 @@ async function refreshTask() {
     $('#stopTask').hidden = !view.canStop;
     strip.title = view.canStop ? '任务正在后台执行；需要时可以停止' : view.detail;
   } catch {
+    taskRefreshWarning = '任务状态读取失败，正在自动重试';
     progressInput = { task: null, operation: null, available: false };
     renderProgress();
     strip.className = 'task-strip idle';
@@ -136,6 +159,11 @@ async function refreshTask() {
     $('#taskTitle').textContent = '暂无任务';
     $('#stopTask').hidden = true;
   }
+  if (taskRefreshWarning && !progressInput.task && !progressInput.operation) {
+    $('#progressDetail').textContent = taskRefreshWarning;
+  }
+  })();
+  try { return await taskRefreshPromise; } finally { taskRefreshPromise = null; }
 }
 
 async function refreshApprovals() {
@@ -196,6 +224,17 @@ $('#backButton').onclick = () => navigate('back');
 $('#forwardButton').onclick = () => navigate('forward');
 $('#reloadButton').onclick = () => navigate('reload');
 $('#homeButton').onclick = () => navigate('home');
+$('#progressAction').onclick = async () => {
+  const action = $('#progressAction').dataset.action;
+  try {
+    if (action === 'stop-generation') {
+      await api.stopGeneration?.();
+      await refreshTask();
+    } else if (action === 'reload-page') {
+      await navigate('reload');
+    }
+  } catch (error) { $('#switchState').textContent = error.message; }
+};
 $('#workspaceHealthButton').onclick = (event) => {
   event.stopPropagation();
   const popover = $('#workspaceHealthPopover');
@@ -256,13 +295,19 @@ $('#addWorkspace').onclick = async () => {
 
 api.onChatState(renderChatState);
 api.onHeartbeat(renderServiceState);
+api.onTaskEvent?.(() => refreshTask());
 api.onWorkspaceChanged?.(renderWorkspace);
 api.onDownload((item) => {
   const node = $('#downloadState');
-  if (item.status === 'completed') node.textContent = `已保存：${baseName(item.path)}`;
+  const openButton = $('#openDownloadButton');
+  if (item.status === 'completed') {
+    node.textContent = `已保存：${baseName(item.path)}`;
+    if (openButton) openButton.hidden = false;
+  }
   else if (item.status === 'progressing') node.textContent = `附件 ${item.totalBytes ? Math.round((item.receivedBytes / item.totalBytes) * 100) : 0}%`;
-  else if (item.error) node.textContent = item.error;
+  else if (item.error) { node.textContent = item.error; if (openButton) openButton.hidden = true; }
 });
+$('#openDownloadButton').onclick = () => api.openLastDownload?.().catch((error) => { $('#downloadState').textContent = error.message; });
 api.chatStatus().then((result) => renderChatState(unwrap(result))).catch(() => {});
 refreshStatus();
 refreshWorkspace();

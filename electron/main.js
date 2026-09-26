@@ -35,6 +35,7 @@ let doctorService;
 let taskNotificationService;
 let autoMemoryService;
 let sharedLocalMcpClient = null;
+let lastDownloadPath = '';
 const settings = new SettingsStore();
 const secrets = new SecretStore();
 const log = new LogService();
@@ -196,6 +197,7 @@ function createChatWindow() {
       sendManager('chat:state', payload);
     },
     onDownload: (payload) => {
+      if (payload?.status === 'completed' && payload.path) lastDownloadPath = path.resolve(String(payload.path));
       if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('chat:download', payload);
     },
     onConversationTurn: (turn) => autoMemoryService?.ingestTurn(turn)
@@ -675,6 +677,18 @@ function registerIpc() {
     return true;
   }));
   secureHandle('chat:navigate', (_event, action) => invokeSafely(async () => chatController?.navigate(action)));
+  secureHandle('chat:stop-generation', () => invokeSafely(async () => chatController?.stopGeneration?.() || false));
+  secureHandle('chat:open-last-download', () => invokeSafely(async () => {
+    const rawWorkspace = String(settings.load().workspace || '').trim();
+    if (!rawWorkspace || !lastDownloadPath) throw new Error('暂无可打开的附件。');
+    const candidate = path.resolve(lastDownloadPath);
+    const workspace = path.resolve(rawWorkspace);
+    if (!candidate.toLowerCase().startsWith(`${workspace.toLowerCase()}${path.sep}`)) throw new Error('附件路径不在当前工作区内。');
+    await fs.access(candidate);
+    const error = await shell.openPath(candidate);
+    if (error) throw new Error(error);
+    return candidate;
+  }));
   secureHandle('chat:status', () => invokeSafely(async () => chatController?.getState() || null));
   secureHandle('chat:clear-session', () => invokeSafely(async () => {
     if (!chatController) throw new Error('ChatGPT 页面尚未初始化。');
@@ -686,7 +700,7 @@ function registerIpc() {
     return result.canceled ? '' : result.filePaths[0];
   }));
   secureHandle('settings:save', (_event, patch) => invokeSafely(async () => {
-    const allowed = ['mcpPort', 'healthPort', 'proxyMode', 'proxyUrl', 'tunnelId', 'tunnelProfile', 'startWithWindows', 'autoStartServices', 'keepRunningOnClose', 'taskNotifications', 'taskNotificationSound', 'compactToolCalls', 'theme'];
+    const allowed = ['mcpPort', 'healthPort', 'proxyMode', 'proxyUrl', 'tunnelId', 'tunnelProfile', 'startWithWindows', 'autoStartServices', 'keepRunningOnClose', 'taskNotifications', 'taskNotificationSound', 'theme'];
     const clean = Object.fromEntries(Object.entries(patch || {}).filter(([key]) => allowed.includes(key)));
     const previous = settings.load();
     const proxyChanged = (Object.hasOwn(clean, 'proxyMode') && String(clean.proxyMode || '') !== String(previous.proxyMode || 'auto'))
@@ -698,7 +712,6 @@ function registerIpc() {
     if (Object.hasOwn(clean, 'mcpPort')) taskNotificationService?.restartStream();
     clearProxyCache();
     if (proxyChanged && chatController) await chatController.applyBrowserProxyPolicy({ closeConnections: true, forceProbe: true });
-    if (Object.hasOwn(clean, 'compactToolCalls') && chatController) chatController.scheduleChatUiEnhancements();
     return saved;
   }));
   secureHandle('environment:detect-proxy', () => invokeSafely(async () => resolveProxy(settings.load(), { force: true })));
@@ -800,6 +813,10 @@ app.whenReady().then(async () => {
       const token = secrets.get('mcpAuthToken');
       const client = new LocalMcpClient({ port: current.mcpPort, token, log });
       return client.subscribeTaskEvents(listener, { onError, ...streamOptions });
+    },
+    onTaskEvent: (payload) => {
+      if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('chat:task-event', payload);
+      sendManager('runtime:task-event', payload);
     },
     getChatWindow: () => chatWindow,
     getTray: () => tray,

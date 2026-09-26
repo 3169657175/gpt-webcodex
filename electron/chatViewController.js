@@ -23,6 +23,7 @@ const CHAT_RENDER_ERROR_MARKERS = [
 const CHAT_STREAM_RECOVERY_ERROR_MARKERS = [
   'ChatGPT stream recovery polling timed out'
 ];
+const CHAT_DYNAMIC_ASSET_ERROR = /(?:failed to fetch dynamically imported module|loading chunk .* failed|chunkloaderror|importing a module script failed)/i;
 
 function parseUrl(value) {
   try { return new URL(value); } catch { return null; }
@@ -130,7 +131,7 @@ class ChatViewController {
     this.nextRetryAt = 0;
     this.mcpAttachment = { status: 'unknown', event: 'init', detail: '', updatedAt: 0 };
     this.browserNetwork = { mode: '', browserRoute: '', tunnelRoute: '', aligned: null, source: '', updatedAt: 0 };
-    this.streamState = { status: 'unknown', event: 'init', updatedAt: 0 };
+    this.streamState = { status: 'unknown', event: 'init', updatedAt: 0, activityAt: 0, quietSeconds: 0, stalled: false };
     this.pendingPageLoadReason = '';
     this.boundResize = () => this.resize();
   }
@@ -139,9 +140,15 @@ class ChatViewController {
     const next = {
       status: String(payload.status || this.streamState.status || 'unknown'),
       event: String(payload.event || 'page-stream'),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      activityAt: Number(payload.activityAt || payload.activity_at || this.streamState.activityAt || 0),
+      quietSeconds: Math.max(0, Number(payload.quietSeconds ?? payload.quiet_seconds ?? this.streamState.quietSeconds ?? 0)),
+      stalled: Boolean(payload.stalled ?? this.streamState.stalled),
+      detail: String(payload.detail || this.streamState.detail || '')
     };
-    const changed = next.status !== this.streamState.status || next.event !== this.streamState.event;
+    const changed = next.status !== this.streamState.status || next.event !== this.streamState.event
+      || next.stalled !== this.streamState.stalled
+      || Math.floor(next.quietSeconds / 5) !== Math.floor(Number(this.streamState.quietSeconds || 0) / 5);
     this.streamState = next;
     if (changed) {
       this.log[next.status === 'interrupted' ? 'warn' : 'info']('ChatGPT 回答流状态变化', next);
@@ -356,7 +363,22 @@ class ChatViewController {
       if (raw.startsWith(streamPrefix)) {
         let payload = {};
         try { payload = JSON.parse(raw.slice(streamPrefix.length)); } catch { payload = { event: 'page-stream' }; }
-        this.updateStreamState({ event: payload.event, status: payload.status });
+        this.updateStreamState({
+          event: payload.event,
+          status: payload.status,
+          activityAt: payload.activity_at,
+          quietSeconds: payload.quiet_seconds,
+          stalled: payload.stalled,
+          detail: payload.detail
+        });
+        return;
+      }
+      if (CHAT_DYNAMIC_ASSET_ERROR.test(raw)) {
+        this.lastError = 'ChatGPT 页面资源加载失败，请刷新页面重试';
+        this.errorLayer = 'chat-page';
+        this.updateStreamState({ status: 'asset_error', event: 'page-asset-error', detail: raw.slice(0, 240) });
+        this.log.warn('ChatGPT 页面动态资源加载失败', { detail: raw.slice(0, 500) });
+        this.emitState();
         return;
       }
       const prefix = '[web-mcp-continuous] ';
@@ -446,13 +468,6 @@ class ChatViewController {
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
     contents.executeJavaScript(`(() => {
-      if (window.__mcpCompactToolObserver) { try { window.__mcpCompactToolObserver.disconnect(); } catch {} window.__mcpCompactToolObserver = null; }
-      if (window.__mcpCompactToolTimer) { clearTimeout(window.__mcpCompactToolTimer); window.__mcpCompactToolTimer = 0; }
-      document.querySelectorAll('[data-mcp-tool-summary="1"]').forEach((node) => node.remove());
-      document.querySelectorAll('.mcp-tool-call-hidden').forEach((node) => node.classList.remove('mcp-tool-call-hidden'));
-      document.querySelectorAll('.mcp-tool-call-row').forEach((node) => node.classList.remove('mcp-tool-call-row'));
-      document.querySelectorAll('[data-mcp-tools-expanded]').forEach((node) => delete node.dataset.mcpToolsExpanded);
-      document.getElementById('mcp-chat-compact-tools-style')?.remove();
       if (window.__mcpAutoMemoryObserver) { try { window.__mcpAutoMemoryObserver.disconnect(); } catch {} window.__mcpAutoMemoryObserver = null; }
       if (window.__mcpAutoMemoryTimer) { clearTimeout(window.__mcpAutoMemoryTimer); window.__mcpAutoMemoryTimer = 0; }
       if (window.__mcpStreamObserver) { try { window.__mcpStreamObserver.disconnect(); } catch {} window.__mcpStreamObserver = null; }
@@ -466,117 +481,9 @@ class ChatViewController {
   scheduleChatUiEnhancements() {
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
-    this.scheduleToolCallCompaction();
     this.scheduleMemoryObserver();
     this.scheduleStreamObserver();
     this.scheduleContinuousMcpMode();
-  }
-
-  scheduleToolCallCompaction() {
-    const contents = this.view?.webContents;
-    if (!contents || contents.isDestroyed()) return;
-    const enabled = this.settings.load().compactToolCalls !== false;
-    contents.executeJavaScript(`(() => {
-      const ENABLED = ${JSON.stringify(enabled)};
-      const STYLE_ID = 'mcp-chat-compact-tools-style';
-      const cleanup = () => {
-        if (window.__mcpCompactToolObserver) { try { window.__mcpCompactToolObserver.disconnect(); } catch {} window.__mcpCompactToolObserver = null; }
-        if (window.__mcpCompactToolTimer) { clearTimeout(window.__mcpCompactToolTimer); window.__mcpCompactToolTimer = 0; }
-        document.querySelectorAll('[data-mcp-tool-summary="1"]').forEach((node) => node.remove());
-        document.querySelectorAll('.mcp-tool-call-hidden').forEach((node) => node.classList.remove('mcp-tool-call-hidden'));
-        document.querySelectorAll('.mcp-tool-call-row').forEach((node) => node.classList.remove('mcp-tool-call-row'));
-        document.querySelectorAll('[data-mcp-tools-expanded]').forEach((node) => delete node.dataset.mcpToolsExpanded);
-        if (!ENABLED) document.getElementById(STYLE_ID)?.remove();
-      };
-      cleanup();
-      if (!ENABLED) return false;
-      if (!document.getElementById(STYLE_ID)) {
-        const style = document.createElement('style');
-        style.id = STYLE_ID;
-        style.textContent = [
-          '.mcp-tool-call-row{margin-top:2px!important;margin-bottom:2px!important;min-height:0!important;}',
-          '.mcp-tool-call-hidden{display:none!important;}',
-          '.mcp-tool-call-summary{display:inline-flex!important;align-items:center!important;gap:7px!important;margin:7px 0 5px!important;padding:6px 10px!important;border:1px solid rgba(0,0,0,.09)!important;border-radius:10px!important;background:rgba(0,0,0,.035)!important;color:inherit!important;font:inherit!important;font-size:12px!important;line-height:1.2!important;cursor:pointer!important;}',
-          '.dark .mcp-tool-call-summary{border-color:rgba(255,255,255,.12)!important;background:rgba(255,255,255,.055)!important;}',
-          '.mcp-tool-call-summary:hover{background:rgba(0,0,0,.065)!important;}',
-          '.dark .mcp-tool-call-summary:hover{background:rgba(255,255,255,.09)!important;}'
-        ].join('');
-        document.head.appendChild(style);
-      }
-      const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-      const isToolLabel = (value) => {
-        const text = normalize(value).toLowerCase();
-        return text.includes('已调用工具') || text.includes('已使用工具') ||
-          text.includes('called tool') || text.includes('used tool') || text.includes('tool called');
-      };
-      const findRow = (button, host) => {
-        const existing = button.closest('.mcp-tool-call-row');
-        if (existing && host.contains(existing)) return existing;
-        let node = button;
-        for (let depth = 0; depth < 4; depth += 1) {
-          const parent = node.parentElement;
-          if (!parent || parent === host || parent.querySelector('[data-mcp-tool-summary="1"]')) break;
-          const text = normalize(parent.innerText || parent.textContent);
-          const controls = parent.querySelectorAll('button,[role="button"]').length;
-          if (text.length <= 140 && controls <= 3) node = parent;
-          else break;
-        }
-        return node;
-      };
-      const compactHost = (host) => {
-        if (!host) return;
-        const buttons = Array.from(host.querySelectorAll('button,[role="button"]')).filter((button) =>
-          button.dataset.mcpToolSummary !== '1' && isToolLabel(button.innerText || button.textContent)
-        );
-        const rows = [];
-        const seen = new Set();
-        for (const button of buttons) {
-          const row = findRow(button, host);
-          if (!row || seen.has(row)) continue;
-          seen.add(row);
-          row.classList.add('mcp-tool-call-row');
-          rows.push(row);
-        }
-        let summary = host.querySelector('[data-mcp-tool-summary="1"]');
-        if (!rows.length) {
-          summary?.remove();
-          delete host.dataset.mcpToolsExpanded;
-          return;
-        }
-        if (!summary) {
-          summary = document.createElement('button');
-          summary.type = 'button';
-          summary.dataset.mcpToolSummary = '1';
-          summary.className = 'mcp-tool-call-summary';
-          summary.addEventListener('click', () => {
-            host.dataset.mcpToolsExpanded = host.dataset.mcpToolsExpanded === '1' ? '0' : '1';
-            refresh();
-          });
-          rows[0].parentElement?.insertBefore(summary, rows[0]);
-        }
-        const expanded = host.dataset.mcpToolsExpanded === '1';
-        summary.textContent = expanded ? ('工具 × ' + rows.length + ' · 收起') : ('工具 × ' + rows.length);
-        summary.title = expanded ? '收起工具调用记录' : '展开查看全部工具调用记录';
-        rows.forEach((row) => row.classList.toggle('mcp-tool-call-hidden', !expanded));
-      };
-      const refresh = () => {
-        const turns = Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"]'));
-        if (turns.length) turns.forEach(compactHost);
-        else document.querySelectorAll('[data-message-author-role="assistant"]').forEach(compactHost);
-      };
-      const target = document.querySelector('main') || document.body;
-      const schedule = (delay = 900) => {
-        if (window.__mcpCompactToolTimer) clearTimeout(window.__mcpCompactToolTimer);
-        window.__mcpCompactToolTimer = setTimeout(() => {
-          window.__mcpCompactToolTimer = 0;
-          refresh();
-        }, delay);
-      };
-      window.__mcpCompactToolObserver = new MutationObserver(() => schedule(900));
-      if (target) window.__mcpCompactToolObserver.observe(target, { childList: true, subtree: true });
-      schedule(250);
-      return true;
-    })()`, true).catch(() => false);
   }
 
   scheduleMemoryObserver() {
@@ -600,6 +507,7 @@ class ChatViewController {
     if (!contents || contents.isDestroyed()) return;
     contents.executeJavaScript(`(() => {
       const PREFIX='[web-mcp-stream] ';
+      const STALE_AFTER_SECONDS=45;
       const RENDER_ERROR_MARKERS=${JSON.stringify(CHAT_RENDER_ERROR_MARKERS)};
       const STREAM_RECOVERY_ERROR_MARKERS=${JSON.stringify(CHAT_STREAM_RECOVERY_ERROR_MARKERS)};
       const normalize=(v)=>String(v||'').replace(/\\s+/g,' ').trim();
@@ -623,14 +531,18 @@ class ChatViewController {
         if(renderError()){
           const changed=window.__mcpStreamStatus!=='render_error';
           window.__mcpStreamStatus='render_error';
-          if(changed)report('render_error','page-message-render-error');
+          if(changed)report('render_error','page-message-render-error',{activity_at:window.__mcpStreamLastActivityAt||0,quiet_seconds:0,stalled:false});
           return;
         }
-        const stopSelector='button[data-testid="stop-button"],button[aria-label="Stop"],button[aria-label*="Stop generating"],button[aria-label*="停止生成"]';
+        const stopSelector='button[data-testid="stop-button"],button[data-testid*="stop" i],button[aria-label="Stop"],button[aria-label*="Stop generating" i],button[aria-label*="停止生成"]';
         const stopControls=Array.from(document.querySelectorAll(stopSelector));
-        const generating=stopControls.some((node)=>visible(node)&&!node.disabled&&node.getAttribute('aria-disabled')!=='true');
+        const isGenerationControl=(node)=>{const value=normalize((node.getAttribute('aria-label')||'')+' '+(node.getAttribute('data-testid')||'')).toLowerCase();return value.includes('stop-button')||value.includes('stop generating')||value.includes('停止生成')||(value.includes('stop')&&!/(share|record|audio|speaking)/i.test(value));};
+        const generating=stopControls.some((node)=>visible(node)&&!node.disabled&&node.getAttribute('aria-disabled')!=='true'&&isGenerationControl(node));
         const recoveryTimeout=recoveryTimedOut(text);
         const now=Date.now();
+        const activityAt=Number(window.__mcpStreamLastActivityAt||now);
+        const quietSeconds=generating?Math.max(0,Math.floor((now-activityAt)/1000)):0;
+        const stalled=generating&&quietSeconds>=STALE_AFTER_SECONDS;
         if(generating){
           window.__mcpStreamStableIdleSince=0;
           window.__mcpStreamLastGeneratingAt=now;
@@ -649,18 +561,27 @@ class ChatViewController {
           window.__mcpStreamStableIdleSince=0;
         }
         const next=(recoveryTimeout||interrupted(text))?'interrupted':generating?'generating':'healthy';
-        if(window.__mcpStreamStatus===next)return;
+        const quietBucket=Math.floor(quietSeconds/5);
+        if(window.__mcpStreamStatus===next && window.__mcpStreamQuietBucket===quietBucket && window.__mcpStreamStalled===stalled){
+          if(generating)schedule(1000);
+          return;
+        }
         const previous=window.__mcpStreamStatus;
         window.__mcpStreamStatus=next;
-        if(next==='interrupted')report(next,recoveryTimeout?'page-stream-recovery-timeout':'page-stream-interrupted');
-        else if(next==='generating')report(next,'page-response-generating');
-        else if(previous==='interrupted')report(next,'page-stream-recovered');
-        else if(previous==='render_error')report(next,'page-message-render-recovered');
-        else if(previous==='generating')report(next,'page-response-finished',{settled_ms:Math.max(0,now-(window.__mcpStreamStableIdleSince||now))});
+        window.__mcpStreamQuietBucket=quietBucket;
+        window.__mcpStreamStalled=stalled;
+        const extra={activity_at:activityAt,quiet_seconds:quietSeconds,stalled};
+        if(next==='interrupted')report(next,recoveryTimeout?'page-stream-recovery-timeout':'page-stream-interrupted',extra);
+        else if(next==='generating')report(next,'page-response-generating',extra);
+        else if(previous==='interrupted')report(next,'page-stream-recovered',extra);
+        else if(previous==='render_error')report(next,'page-message-render-recovered',extra);
+        else if(previous==='generating')report(next,'page-response-finished',{...extra,settled_ms:Math.max(0,now-(window.__mcpStreamStableIdleSince||now))});
+        if(generating)schedule(1000);
       };
       const schedule=(delay=500)=>{if(window.__mcpStreamTimer)clearTimeout(window.__mcpStreamTimer);window.__mcpStreamTimer=setTimeout(scan,delay);};
       const target=document.querySelector('main')||document.body;
-      if(!window.__mcpStreamObserver){window.__mcpStreamObserver=new MutationObserver(()=>schedule(650));if(target)window.__mcpStreamObserver.observe(target,{childList:true,subtree:true,characterData:true});}
+      if(!window.__mcpStreamLastActivityAt)window.__mcpStreamLastActivityAt=Date.now();
+      if(!window.__mcpStreamObserver){window.__mcpStreamObserver=new MutationObserver(()=>{window.__mcpStreamLastActivityAt=Date.now();schedule(350);});if(target)window.__mcpStreamObserver.observe(target,{childList:true,subtree:true,characterData:true});}
       schedule(250);
       return true;
     })()`, true).catch(()=>false);
@@ -1001,6 +922,32 @@ class ChatViewController {
     else throw new Error('不支持的导航操作。');
     this.emitState();
     return true;
+  }
+
+  async stopGeneration() {
+    const contents = this.view?.webContents;
+    if (!contents || contents.isDestroyed()) return false;
+    const clicked = await contents.executeJavaScript(`(() => {
+      const selectors = [
+        'button[data-testid="stop-button"]', 'button[data-testid*="stop" i]',
+        'button[aria-label="Stop"]', 'button[aria-label*="Stop generating" i]',
+        'button[aria-label*="停止生成"]'
+      ];
+      const visible = (node) => {
+        if (!node || node.disabled || node.getAttribute('aria-disabled') === 'true') return false;
+        const style = getComputedStyle(node); const rect = node.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
+      };
+      const button = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).find((node) => {
+        const value = String(node.getAttribute('aria-label') || '') + ' ' + String(node.getAttribute('data-testid') || '');
+        return /(stop-button|stop generating|停止生成)/i.test(value) || (value.includes('stop') && !/(share|record|audio|speaking)/i.test(value)) ? visible(node) : false;
+      });
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`, true);
+    if (clicked) this.updateStreamState({ status: 'healthy', event: 'generation-stopped' });
+    return Boolean(clicked);
   }
 
   async clearSession() {

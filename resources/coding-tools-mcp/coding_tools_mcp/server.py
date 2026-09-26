@@ -5920,6 +5920,28 @@ class Runtime:
                 None if change.baseline.data is None else change.baseline.data.decode("utf-8", errors="replace")
             )
 
+    def _start_command_heartbeat(self, session: ExecSession) -> None:
+        """Keep silent long-running commands visible without creating event noise."""
+        try:
+            run_id = str(self.task_state.get().get("run_id") or "")
+        except Exception:
+            run_id = ""
+        if not run_id:
+            return
+
+        def beat() -> None:
+            while session.process.poll() is None:
+                time.sleep(5)
+                if session.process.poll() is not None:
+                    break
+                try:
+                    self.task_state.heartbeat(run_id=run_id, session_id=session.session_id, progress=False)
+                except Exception:
+                    # Heartbeat is observability only; never affect the command.
+                    pass
+
+        threading.Thread(target=beat, name=f"task-heartbeat-{session.session_id[:8]}", daemon=True).start()
+
     def exec_command(self, args: dict[str, Any]) -> dict[str, Any]:
         self._prune_sessions()
         cmd = str(args.get("cmd", ""))
@@ -6045,6 +6067,7 @@ class Runtime:
                     registered = True
             if not registered:
                 raise ToolFailure("SESSION_CLOSED", "Runtime closed while the command was starting.", category="runtime")
+            self._start_command_heartbeat(session)
         except Exception as exc:
             with self.sessions_lock:
                 if not registered and not slot_released:

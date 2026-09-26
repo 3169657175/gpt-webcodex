@@ -150,6 +150,7 @@ class TaskNotificationService {
     this.loadNotificationCheckpoint = options.loadNotificationCheckpoint || (() => null);
     this.saveNotificationCheckpoint = options.saveNotificationCheckpoint || (() => {});
     this.getChatWindow = options.getChatWindow || (() => null);
+    this.onTaskEvent = options.onTaskEvent || (() => {});
     this.getTray = options.getTray || (() => null);
     this.showChatWindow = options.showChatWindow || (() => {});
     this.NotificationClass = options.NotificationClass;
@@ -370,6 +371,9 @@ class TaskNotificationService {
         this.runtimeHealthyRunId = this.lastRuntimeStatus?.fullyReady ? currentRun : '';
       }
     }
+    try { this.onTaskEvent({ ...record, state: state ? { ...state } : null, workspace }); } catch (error) {
+      this.log?.warn?.('任务事件界面推送失败', { error: error?.message || String(error) });
+    }
 
     if (eventIdNumber > this.lastEventId) {
       this.lastEventId = eventIdNumber;
@@ -409,12 +413,18 @@ class TaskNotificationService {
       this.lastState = state && typeof state === 'object' ? { ...state } : null;
       this.runtimeHealthyRunId = taskCanBeBlockedByRuntime(state) && this.lastRuntimeStatus?.fullyReady ? runKey(state) : '';
       this.updateShell(state);
+      try { this.onTaskEvent({ type: 'task.state', state: state && typeof state === 'object' ? { ...state } : null, workspace }); } catch (error) {
+        this.log?.warn?.('任务状态界面推送失败', { error: error?.message || String(error) });
+      }
       return;
     }
 
     const previous = this.lastState;
     this.lastState = state && typeof state === 'object' ? { ...state } : null;
     this.updateShell(state);
+    try { this.onTaskEvent({ type: 'task.state', state: state && typeof state === 'object' ? { ...state } : null, workspace }); } catch (error) {
+      this.log?.warn?.('任务状态界面推送失败', { error: error?.message || String(error) });
+    }
     if (!state || !state.task_id) return;
 
     const event = eventForState(state);

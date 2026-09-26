@@ -19,6 +19,7 @@
       <div class="page-state" id="pageState"><i></i><span>正在准备 ChatGPT…</span></div>
       <div class="service-state">
         <span id="downloadState" class="download-state"></span>
+        <button id="openDownloadButton" class="download-action" type="button" hidden>打开附件</button>
         <span id="mcpState" title="Coding Tools MCP 本地服务状态"><i></i>本地工具</span>
         <span id="tunnelState" title="OpenAI Tunnel 连接状态"><i></i><em id="connectionStateLabel">连接通道</em></span>
         <span id="schemaRefreshHint" hidden>工具已升级 · 建议新聊天</span>
@@ -51,6 +52,7 @@
       <span class="progress-band-icon" id="progressIcon"></span>
       <div class="progress-band-copy"><b id="progressMessage">正在读取任务进度…</b><small id="progressDetail">本地任务状态会持续更新</small></div>
       <time id="progressElapsed"></time>
+      <button id="progressAction" class="progress-action" type="button" hidden></button>
     </div>
   </header>
   <main class="loading-stage">
