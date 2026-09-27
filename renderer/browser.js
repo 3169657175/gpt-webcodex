@@ -12,6 +12,7 @@ let taskRefreshPromise = null;
 let lastTaskRefreshAt = 0;
 let taskRefreshWarning = '';
 let nativeLoginState = { status: 'idle', message: '' };
+let loginState = { status: 'idle', mode: '', prompt: false };
 
 function withTimeout(promise, timeoutMs, label = '请求') {
   let timer;
@@ -55,6 +56,8 @@ function renderChatState(state) {
   if (!state) return;
   lastStreamState = state.streamState || lastStreamState;
   nativeLoginState = state.nativeLogin || nativeLoginState;
+  loginState = state.login || loginState;
+  renderLogin();
   renderProgress();
   $('#backButton').disabled = !state.canGoBack;
   $('#forwardButton').disabled = !state.canGoForward;
@@ -71,7 +74,7 @@ function renderChatState(state) {
 function renderProgress() {
   const login = nativeLoginState;
   const activeLogin = login.active || ['starting', 'waiting', 'syncing', 'closing'].includes(login.status);
-  $('#nativeLoginButton').disabled = activeLogin;
+  $('#nativeLoginButton').disabled = ['starting', 'syncing', 'closing'].includes(login.status);
   $('#nativeLoginFinish').hidden = !['waiting', 'syncing'].includes(login.status);
   $('#nativeLoginFinish').disabled = login.status === 'syncing';
   $('#nativeLoginCancel').hidden = !activeLogin;
@@ -81,6 +84,14 @@ function renderProgress() {
     $('#progressMessage').textContent = login.status === 'success' ? 'ChatGPT 登录修复完成' : login.status === 'error' ? '登录修复未完成' : '浏览器登录修复';
     $('#progressDetail').textContent = login.cleanupWarning || login.message;
     $('#progressDetail').title = `${login.message}${login.cleanupWarning ? ` ${login.cleanupWarning}` : ''}`;
+    $('#progressElapsed').textContent = '';
+    $('#progressAction').hidden = true;
+    return;
+  }
+  if (loginState.mode === 'embedded' && !loginState.prompt) {
+    $('#progressBand').className = 'progress-band waiting';
+    $('#progressMessage').textContent = loginState.returning ? '登录已确认，正在自动返回' : '正在应用内登录 ChatGPT';
+    $('#progressDetail').textContent = loginState.message;
     $('#progressElapsed').textContent = '';
     $('#progressAction').hidden = true;
     return;
@@ -178,7 +189,7 @@ async function refreshTask() {
     $('#taskTitle').textContent = '暂无任务';
     $('#stopTask').hidden = true;
   }
-  if (nativeLoginState.status === 'idle' && taskRefreshWarning && !progressInput.task && !progressInput.operation) {
+  if (nativeLoginState.status === 'idle' && loginState.mode !== 'embedded' && taskRefreshWarning && !progressInput.task && !progressInput.operation) {
     $('#progressDetail').textContent = taskRefreshWarning;
   }
   })();
@@ -247,13 +258,44 @@ async function runNativeLogin(method) {
   try { nativeLoginState = unwrap(await api[method]()); }
   catch (error) { nativeLoginState = { status: 'error', message: error.message }; }
   renderProgress();
+  try { renderChatState(unwrap(await api.chatStatus())); } catch { /* retain the last visible login state */ }
   if (nativeLoginState.status === 'success') {
     setTimeout(() => {
       if (nativeLoginState.status === 'success') { nativeLoginState = { status: 'idle', message: '' }; renderProgress(); }
     }, 12000);
   }
 }
-$('#nativeLoginButton').onclick = () => runNativeLogin('nativeLoginStart');
+async function runLoginAction(method) {
+  try { renderChatState(unwrap(await api[method]())); }
+  catch (error) { $('#loginDialogMessage').textContent = error.message; }
+}
+function renderLogin() {
+  const dialog = $('#loginDialog');
+  if (!loginState.prompt) { if (dialog.open) dialog.close(); return; }
+  const external = loginState.mode === 'native';
+  const busy = external && ['starting', 'syncing', 'closing'].includes(nativeLoginState.status);
+  $('#loginDialogTitle').textContent = external ? nativeLoginState.status === 'syncing' ? '登录已检测到，正在自动返回' : '请在浏览器窗口完成登录'
+    : loginState.kind === 'blocked' ? '登录需要重新连接' : '在助手内登录 ChatGPT';
+  $('#loginDialogMessage').textContent = loginState.message;
+  $('#loginDialogBadge').textContent = external ? 'CHATGPT · 自动返回已开启' : 'CHATGPT · 应用内登录';
+  $('#embeddedLoginStart').hidden = external;
+  $('#embeddedLoginStart').textContent = loginState.kind === 'blocked' ? '在应用内重新登录' : '在应用内继续登录';
+  $('#loginBrowserFallback').hidden = external && Boolean(nativeLoginState.active);
+  $('#loginBrowserFallback').textContent = external ? '重新打开浏览器登录窗口' : '应用内遇到问题？使用 Chrome 备用登录';
+  $('#loginCheckNow').hidden = !external || !nativeLoginState.active;
+  $('#loginCheckNow').disabled = busy;
+  $('#loginDialogCancel').disabled = external && nativeLoginState.status === 'closing';
+  $('#loginDialogCancel').textContent = external ? '取消登录，返回助手' : '暂不登录，返回页面';
+  $('#loginDialogNote').textContent = external ? '成功后会自动同步并返回助手，无需点击右上角按钮。遇到问题可点「立即检查」。不读取日常 Chrome 配置。'
+    : '登录过程保持在应用内，账号验证完成后自动返回聊天。不会把“看到聊天页面”误当作已经登录。';
+  if (!dialog.open) dialog.showModal();
+}
+$('#nativeLoginButton').onclick = () => runLoginAction('openLogin');
+$('#embeddedLoginStart').onclick = () => runLoginAction('embeddedLogin');
+$('#loginBrowserFallback').onclick = () => runNativeLogin('nativeLoginStart');
+$('#loginCheckNow').onclick = () => runNativeLogin('nativeLoginFinish');
+$('#loginDialogCancel').onclick = () => runLoginAction('dismissLogin');
+$('#loginDialog').addEventListener('cancel', (event) => { event.preventDefault(); void runLoginAction('dismissLogin'); });
 $('#nativeLoginFinish').onclick = () => runNativeLogin('nativeLoginFinish');
 $('#nativeLoginCancel').onclick = () => runNativeLogin('nativeLoginCancel');
 $('#progressAction').onclick = async () => {

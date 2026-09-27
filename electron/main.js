@@ -695,6 +695,20 @@ function registerIpc() {
     return candidate;
   }));
   secureHandle('chat:status', () => invokeSafely(async () => chatController?.getState() || null));
+  secureHandle('chat:login-open', () => invokeSafely(async () => {
+    if (!chatController) throw new Error('聊天窗口尚未初始化。');
+    chatController.offerLogin('entry', chatController.activeContents(), true);
+    return chatController.getState();
+  }));
+  secureHandle('chat:login-embedded', () => invokeSafely(async () => {
+    if (!chatController) throw new Error('聊天窗口尚未初始化。');
+    if (chatController.nativeLogin?.run) await chatController.cancelNativeLogin();
+    return chatController.startEmbeddedLogin();
+  }));
+  secureHandle('chat:login-dismiss', () => invokeSafely(async () => {
+    if (chatController?.nativeLogin?.run) await chatController.cancelNativeLogin();
+    return chatController?.dismissLogin();
+  }));
   secureHandle('chat:native-login-start', () => invokeSafely(async () => {
     if (!chatController) throw new Error('聊天窗口尚未初始化。');
     return chatController.startNativeLogin();

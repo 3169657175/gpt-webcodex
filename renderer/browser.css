@@ -82,6 +82,18 @@ button{font:inherit}
 .login-action{flex:0 0 auto;min-height:32px;padding:0 12px;border:1px solid #b8ded3;border-radius:9px;background:#ecf8f3;color:#087f65;font-size:12px;font-weight:650;cursor:pointer;white-space:nowrap}
 .login-action.secondary{border-color:#dedfe2;background:#fff;color:#4d5359}
 .login-action[hidden]{display:none}.login-action:disabled{opacity:.6;cursor:wait}
+.login-entry{background:#087f65;color:#fff;border-color:#087f65;box-shadow:0 2px 7px rgba(8,127,101,.15)}
+.login-dialog{width:min(540px,calc(100vw - 40px));max-height:calc(100vh - 48px);padding:32px;border:1px solid #e0e7e5;border-radius:20px;background:#fff;color:#202123;box-shadow:0 24px 90px rgba(18,38,31,.24);overflow:auto}
+.login-dialog::backdrop{background:rgba(22,33,30,.3);backdrop-filter:blur(5px)}
+.login-dialog-badge{margin-bottom:16px;color:#087f65;font-size:12px;font-weight:750;letter-spacing:1px}
+.login-dialog h1{margin:0 0 14px;font-size:25px;line-height:1.35;letter-spacing:-.5px}
+.login-dialog p{margin:0 0 20px;color:#5a6661;font-size:15px;line-height:1.7;overflow-wrap:anywhere}
+.login-dialog-steps{display:flex;justify-content:space-between;gap:8px;margin:0 0 22px;padding:12px 0;border-top:1px solid #edf1ef;border-bottom:1px solid #edf1ef;color:#68736e;font-size:12px}
+.login-dialog-primary,.login-dialog-secondary{display:block;width:100%;min-height:48px;padding:12px 16px;border:1px solid #cddcd6;border-radius:11px;font-size:15px;font-weight:650;cursor:pointer;line-height:1.4}
+.login-dialog-primary{background:#087f65;color:#fff;border-color:#087f65}.login-dialog-secondary{margin-top:10px;background:#f8fbf9;color:#3f5b4f}
+.login-dialog-primary[hidden],.login-dialog-secondary[hidden]{display:none}.login-dialog button:disabled{opacity:.6;cursor:wait}
+.login-dialog-note{margin-top:18px;color:#7b8580;font-size:12px;line-height:1.7}
+.login-dialog-cancel{display:block;margin:16px auto 0;padding:8px 12px;border:0;background:transparent;color:#616e67;font-size:13px;cursor:pointer}
 @media(max-width:1200px){.toolbar-main{grid-template-columns:1fr auto}.page-state{display:none}.service-state{gap:5px}.service-state span{font-size:11px}}
 
 /* 0.7.0 browser chrome: keep the page native while making local state legible. */

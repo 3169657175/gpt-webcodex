@@ -34,9 +34,9 @@ test('embedded ChatGPT view uses the full available width', () => {
 
 test('authentication popup returns completed ChatGPT login to the embedded view', () => {
   const controller = read('electron/chatViewController.js');
-  assert.match(controller, /did-create-window/);
-  assert.match(controller, /bindAuthPopup/);
-  assert.match(controller, /isChatGptNavigation/);
-  assert.match(controller, /popup\.close\(\)/);
-  assert.match(controller, /maximizable:\s*false/);
+  assert.match(controller, /createWindow:.*createEmbeddedAuthView/);
+  assert.match(controller, /webContents: options\.webContents/);
+  assert.match(controller, /readAuthenticatedSession/);
+  assert.match(controller, /primary\?\.composer/);
+  assert.doesNotMatch(controller, /bindAuthPopup/);
 });

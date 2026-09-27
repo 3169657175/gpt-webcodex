@@ -91,6 +91,25 @@ test('verified import copies only ChatGPT cookies and cleans the owned browser/p
   assert.doesNotMatch(JSON.stringify(f.states), /new-secret|old-secret|google-secret|waf-secret|webSocketDebuggerUrl/);
 });
 
+test('backup browser authenticated login automatically syncs and returns without a finish click', async (t) => {
+  const f = await fixture(t);
+  await f.service.start(); await f.service.autoCheck();
+  assert.equal(f.service.state.status, 'success'); assert.equal(f.service.run, null);
+  assert.deepEqual(f.imported.map((c) => c.value), ['new-secret']);
+});
+
+test('automatic checks do not import unfinished login or retry failed imports in a loop', async (t) => {
+  const unfinished = await fixture(t, { loggedIn: false });
+  await unfinished.service.start(); await unfinished.service.autoCheck();
+  assert.equal(unfinished.imported.length, 0); assert.equal(unfinished.service.state.status, 'waiting');
+  const failed = await fixture(t, { verifyFails: true });
+  await failed.service.start(); await failed.service.autoCheck();
+  const count = failed.imported.length;
+  assert.equal(failed.service.run.autoPaused, true);
+  await failed.service.autoCheck(); assert.equal(failed.imported.length, count);
+  assert.equal(failed.service.state.status, 'waiting');
+});
+
 test('unfinished Google login never reads or changes cookies', async (t) => {
   const f = await fixture(t, { loggedIn: false });
   await f.service.start();
@@ -253,5 +272,8 @@ test('login controls use trusted IPC, remain visible and do not restart Runtime'
   }
   assert.match(html, /id="nativeLoginButton"/);
   assert.match(html, /登录完成，返回助手/);
-  assert.match(renderer, /nativeLoginState\.status === 'idle' && taskRefreshWarning/);
+  assert.match(renderer, /nativeLoginState\.status === 'idle' && loginState\.mode !== 'embedded' && taskRefreshWarning/);
+  assert.match(html, /<dialog id="loginDialog"/);
+  assert.match(html, /在应用内继续登录/);
+  assert.match(renderer, /dialog\.showModal\(\)/);
 });

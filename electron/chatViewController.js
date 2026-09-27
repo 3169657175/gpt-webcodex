@@ -2,20 +2,24 @@ const { shell, session, WebContentsView } = require('electron');
 const { DownloadService } = require('./services/downloadService');
 const { normalizeProxyValue, resolveProxy } = require('./services/proxyService');
 const { NativeLoginService, SESSION_CHECK } = require('./services/nativeLoginService');
+const { AUTH_HOSTS, authUrl, readAuthenticatedSession, LOGIN_DOCUMENT_PROBE } = require('./services/chatLoginPolicy');
 
 const CHAT_HOME = 'https://chatgpt.com/';
 const CHAT_PARTITION = 'persist:chatgpt-session';
 const NAVIGATION_HOSTS = new Set([
   'chatgpt.com', 'www.chatgpt.com', 'openai.com', 'www.openai.com',
-  'auth.openai.com', 'login.openai.com', 'accounts.google.com',
-  'login.microsoftonline.com', 'appleid.apple.com'
+  ...AUTH_HOSTS
 ]);
 const POPUP_HOSTS = new Set([
-  'auth.openai.com', 'login.openai.com', 'accounts.google.com',
-  'login.microsoftonline.com', 'appleid.apple.com'
+  ...AUTH_HOSTS
 ]);
 const TRANSIENT_CHAT_LOAD_ERROR = /ERR_(?:CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_TIMED_OUT|TIMED_OUT|NETWORK_CHANGED|INTERNET_DISCONNECTED|HTTP2_PROTOCOL_ERROR|INCOMPLETE_CHUNKED_ENCODING)/i;
 const CHAT_NETWORK_DIAGNOSTIC_SESSIONS = new WeakSet();
+async function boundedLoginCheck(promise, timeoutMs = 6000) {
+  let timer;
+  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('登录检查超时')), timeoutMs); })]); }
+  finally { clearTimeout(timer); }
+}
 const CHAT_RENDER_ERROR_MARKERS = [
   '出错了，无法显示此消息',
   'There was an error displaying this message',
@@ -115,7 +119,7 @@ function bindChatNetworkDiagnostics(chatSession, log) {
 }
 
 class ChatViewController {
-  constructor({ window, log, settings, nativeLoginRoot, toolbarHeight = 64, onState = () => {}, onDownload = () => {}, onConversationTurn = () => {} }) {
+  constructor({ window, log, settings, nativeLoginRoot, createWebContentsView = (options) => new WebContentsView(options), toolbarHeight = 64, onState = () => {}, onDownload = () => {}, onConversationTurn = () => {} }) {
     this.window = window;
     this.log = log;
     this.toolbarHeight = toolbarHeight;
@@ -123,6 +127,11 @@ class ChatViewController {
     this.settings = settings;
     this.nativeLoginRoot = nativeLoginRoot;
     this.nativeLogin = null;
+    this.createWebContentsView = createWebContentsView;
+    this.authViews = [];
+    this.login = { status: 'idle', mode: '', prompt: false, kind: '', message: '', returning: false };
+    this.loginRevision = 0;
+    this.loginPromptSeen = new Set();
     this.onDownload = onDownload;
     this.onConversationTurn = onConversationTurn;
     this.view = null;
@@ -214,6 +223,8 @@ class ChatViewController {
   }
 
   scheduleTransientRetry(url, description) {
+    // OAuth callbacks can contain one-use codes; never replay or log their URL.
+    if (authUrl(url)) return false;
     if (!isTransientChatLoadError(description) || !isAllowedNavigation(url) || this.retryTimer) return false;
     if (isChatConversationUrl(url)) {
       this.log.warn('当前 ChatGPT 对话发生瞬时网络错误，保留对话上下文并交由页面自身恢复，不自动重载', {
@@ -247,9 +258,9 @@ class ChatViewController {
   mount() {
     if (this.view || !this.window || this.window.isDestroyed()) return;
     const chatSession = session.fromPartition(CHAT_PARTITION);
-    const currentUserAgent = chatSession.getUserAgent();
-    const browserUserAgent = chromeLikeUserAgent(currentUserAgent);
-    if (browserUserAgent && browserUserAgent !== currentUserAgent) chatSession.setUserAgent(browserUserAgent);
+    // Keep Electron's actual browser identity consistent across requests, client hints and OAuth children.
+    // The reference launcher also uses its native identity, not a separately rewritten Chrome UA.
+    const browserUserAgent = chatSession.getUserAgent();
     bindChatNetworkDiagnostics(chatSession, this.log);
     const browserNetworkReady = this.applyBrowserProxyPolicy().catch((error) => {
       this.log.warn('ChatGPT 浏览器代理策略应用失败，将继续使用 Chromium 当前网络配置', { error: String(error?.message || error) });
@@ -261,7 +272,7 @@ class ChatViewController {
     });
     chatSession.setPermissionCheckHandler((_webContents, permission, origin) => mayWriteClipboard(permission, origin));
 
-    this.view = new WebContentsView({
+    this.view = this.createWebContentsView({
       webPreferences: {
         partition: CHAT_PARTITION,
         backgroundThrottling: false,
@@ -285,17 +296,11 @@ class ChatViewController {
   bindWebContents() {
     const contents = this.view.webContents;
     contents.setWindowOpenHandler(({ url }) => {
-      if (isAuthPopup(url)) {
+      if (authUrl(url) || url === 'about:blank' && authUrl(contents.getURL())) {
+        if (this.authViews.length >= 4) { this.offerLogin('blocked', contents, true); return { action: 'deny' }; }
         return {
           action: 'allow',
           overrideBrowserWindowOptions: {
-            width: 560,
-            height: 760,
-            parent: this.window,
-            modal: false,
-            maximizable: false,
-            fullscreenable: false,
-            autoHideMenuBar: true,
             webPreferences: {
               partition: CHAT_PARTITION,
               backgroundThrottling: false,
@@ -304,7 +309,8 @@ class ChatViewController {
               sandbox: true,
               webSecurity: true
             }
-          }
+          },
+          createWindow: (options) => this.createEmbeddedAuthView(options, url).webContents
         };
       }
       if (isAllowedNavigation(url) && parseUrl(url)?.hostname.toLowerCase().endsWith('chatgpt.com')) {
@@ -314,7 +320,6 @@ class ChatViewController {
       }
       return { action: 'deny' };
     });
-    contents.on('did-create-window', (popup) => this.bindAuthPopup(popup));
     contents.on('will-navigate', (event, url) => {
       if (isAllowedNavigation(url)) return;
       event.preventDefault();
@@ -338,11 +343,14 @@ class ChatViewController {
     });
     contents.on('dom-ready', () => {
       this.scheduleChatUiEnhancements();
+      if (authUrl(contents.getURL()) || parseUrl(contents.getURL())?.pathname === '/') this.startLoginWatch();
+      void this.probeLogin(contents);
     });
     contents.on('did-stop-loading', () => {
       this.loading = false;
       this.emitState();
       this.scheduleChatUiEnhancements();
+      void this.probeLogin(contents);
     });
     contents.on('did-navigate', () => {
       this.emitState();
@@ -417,7 +425,7 @@ class ChatViewController {
       this.loading = false;
       this.lastError = `${errorDescription} (${errorCode})`;
       this.errorLayer = 'chat-page';
-      this.log.warn('ChatGPT 页面加载失败', { url: validatedURL, errorCode, errorDescription });
+      this.log.warn('ChatGPT 页面加载失败', { host: parseUrl(validatedURL)?.hostname || '', errorCode, errorDescription });
       this.scheduleTransientRetry(validatedURL, errorDescription);
       this.emitState();
     });
@@ -430,41 +438,170 @@ class ChatViewController {
     });
   }
 
-  bindAuthPopup(popup) {
-    const popupContents = popup?.webContents;
-    if (!popupContents || popupContents.isDestroyed()) return;
-    let completed = false;
-    const finishInMainView = (url) => {
-      if (completed || !isChatGptNavigation(url)) return false;
-      completed = true;
-      this.openUrl(url).catch((error) => {
-        this.lastError = error.message;
-        this.emitState();
-      }).finally(() => {
-        if (!popup.isDestroyed()) popup.close();
-      });
-      return true;
-    };
-    popup.setMenuBarVisibility(false);
-    popup.setMaximizable(false);
-    popup.setFullScreenable(false);
-    popupContents.setWindowOpenHandler(({ url }) => {
-      if (finishInMainView(url)) return { action: 'deny' };
-      if (/^https?:/i.test(url) && !isAllowedNavigation(url)) shell.openExternal(url).catch(() => {});
+  activeContents() {
+    return !this.login.returning && this.authViews.at(-1)?.webContents || this.view?.webContents;
+  }
+
+  setLogin(patch) {
+    this.login = { ...this.login, ...patch };
+    this.syncLoginVisibility();
+    this.emitState();
+  }
+
+  syncLoginVisibility() {
+    const covered = this.login.prompt || this.authViews.length > 0 && !this.login.returning;
+    if (this.view && !this.view.webContents.isDestroyed()) this.view.setVisible(!covered);
+    for (const view of this.authViews) if (!view.webContents.isDestroyed()) view.setVisible(!this.login.prompt && !this.login.returning && view === this.authViews.at(-1));
+  }
+
+  offerLogin(kind = 'entry', contents = this.activeContents(), force = false) {
+    if (this.nativeLogin?.run || !contents || contents.isDestroyed()) return;
+    if (!force && this.login.mode === 'embedded' && kind === 'entry') return;
+    const url = parseUrl(contents.getURL());
+    const key = `${url?.hostname || ''}${url?.pathname || ''}:${kind}`;
+    if (!force && this.loginPromptSeen.has(key)) return;
+    this.loginPromptSeen.add(key);
+    this.setLogin({ status: 'prompt', prompt: true, kind, returning: false,
+      message: kind === 'blocked' ? 'Google 拒绝了当前登录环境。可以在应用内重新发起登录，也可以选择浏览器备用登录，成功后会自动返回。'
+        : kind === 'load-error' ? '登录页面加载失败或超过 60 秒未完成。请重新尝试应用内登录，或选择浏览器备用登录。'
+        : '可以直接在助手内完成登录，登录成功后自动回到聊天。' });
+  }
+
+  async startEmbeddedLogin() {
+    if (this.nativeLogin?.run) throw new Error('请先取消浏览器备用登录。');
+    this.loginRevision++;
+    this.closeAuthViews();
+    this.setLogin({ status: 'waiting', mode: 'embedded', prompt: false, kind: '', returning: false,
+      message: '请在应用内完成登录；成功后将自动返回聊天，不需要点击返回按钮。' });
+    const view = this.createEmbeddedAuthView({}, 'https://chatgpt.com/auth/login');
+    void view.webContents.loadURL('https://chatgpt.com/auth/login').catch(() => {
+      if (this.authViews.includes(view)) this.offerLogin('load-error', view.webContents, true);
+    });
+    return this.getState();
+  }
+
+  createEmbeddedAuthView(options = {}, url = '') {
+    // Adopt Chromium's supplied child, retaining opener, POST data and OAuth session continuity.
+    const view = this.createWebContentsView(options.webContents ? { webContents: options.webContents } : {
+      webPreferences: { partition: CHAT_PARTITION, nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, backgroundThrottling: false }
+    });
+    this.authViews.push(view);
+    this.window.contentView.addChildView(view);
+    this.setLogin({ mode: 'embedded', status: 'waiting', prompt: false, returning: false, message: '正在应用内登录，完成后会自动返回聊天。' });
+    this.resize();
+    const contents = view.webContents;
+    let navigationDeadline;
+    const clearDeadline = () => { clearTimeout(navigationDeadline); navigationDeadline = null; };
+    contents.setBackgroundThrottling(false);
+    contents.setWindowOpenHandler(({ url: next }) => {
+      if (authUrl(next) || isChatGptNavigation(next) || next === 'about:blank') {
+        if (this.authViews.length >= 4) { this.offerLogin('blocked', contents, true); return { action: 'deny' }; }
+        return { action: 'allow', overrideBrowserWindowOptions: {
+          webPreferences: { partition: CHAT_PARTITION, nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true }
+        }, createWindow: (child) => this.createEmbeddedAuthView(child, next).webContents };
+      }
       return { action: 'deny' };
     });
-    popupContents.on('will-navigate', (event, url) => {
-      if (finishInMainView(url)) {
-        event.preventDefault();
-        return;
-      }
-      if (!isAllowedNavigation(url)) {
-        event.preventDefault();
-        if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {});
-      }
+    const restrict = (event, next) => { if (!isAllowedNavigation(next) && next !== 'about:blank') event.preventDefault(); };
+    contents.on('will-navigate', restrict);
+    contents.on('will-redirect', restrict);
+    contents.on('did-start-loading', () => {
+      clearDeadline();
+      navigationDeadline = setTimeout(() => {
+        if (this.authViews.includes(view) && !contents.isDestroyed()) {
+          contents.stop(); this.loading = false; this.offerLogin('load-error', contents, true);
+        }
+      }, 60000);
+      navigationDeadline.unref?.();
+      if (this.activeContents() === contents) { this.loading = true; this.emitState(); }
     });
-    popupContents.on('did-navigate', (_event, url) => finishInMainView(url));
-    popupContents.on('did-navigate-in-page', (_event, url) => finishInMainView(url));
+    const loaded = () => {
+      if (this.activeContents() === contents) { this.loading = false; this.emitState(); void this.probeLogin(contents); }
+    };
+    contents.on('dom-ready', loaded);
+    contents.on('did-stop-loading', () => { clearDeadline(); loaded(); });
+    contents.on('did-navigate-in-page', loaded);
+    contents.on('did-fail-load', (_event, code, _description, _url, main) => {
+      if (main && code !== -3 && this.authViews.includes(view)) { clearDeadline(); this.loading = false; this.offerLogin('load-error', contents, true); }
+    });
+    const unavailable = () => {
+      if (this.authViews.includes(view) && !contents.isDestroyed()) {
+        clearDeadline(); this.loading = false; this.offerLogin('load-error', contents, true);
+      }
+    };
+    contents.on('unresponsive', unavailable);
+    contents.on('render-process-gone', unavailable);
+    contents.once('destroyed', () => {
+      clearDeadline();
+      const index = this.authViews.indexOf(view);
+      if (index !== -1) { this.authViews.splice(index, 1); try { this.window.contentView.removeChildView(view); } catch {} this.syncLoginVisibility(); }
+    });
+    this.startLoginWatch();
+    contents.focus();
+    return view;
+  }
+
+  startLoginWatch() {
+    if (this.loginWatch) return;
+    this.loginWatch = setInterval(() => { void this.probeLogin(); }, 1800);
+    this.loginWatch.unref?.();
+  }
+
+  async probeLogin(contents = this.activeContents()) {
+    if (!contents || contents.isDestroyed() || this.loginProbe || this.login.prompt || this.nativeLogin?.run) return;
+    if (!isAllowedNavigation(contents.getURL())) return;
+    const revision = this.loginRevision;
+    const probe = (async () => {
+      try {
+        const ui = await boundedLoginCheck(contents.executeJavaScript(LOGIN_DOCUMENT_PROBE));
+        if (revision !== this.loginRevision || contents !== this.activeContents()) return;
+        if (ui?.kind) this.offerLogin(ui.kind, contents);
+        if (ui?.composer && !this.login.mode && !ui.kind) { clearInterval(this.loginWatch); this.loginWatch = null; }
+        if (ui?.composer && !this.login.prompt && (this.login.mode === 'embedded' || authUrl(contents.getURL()))) {
+          if (!await readAuthenticatedSession(contents.session.fetch.bind(contents.session)) || revision !== this.loginRevision) return;
+          if (this.authViews.length && !this.login.returning) {
+            this.setLogin({ status: 'verifying', returning: true, message: '登录已确认，正在返回助手…' });
+            const main = this.view.webContents;
+            let deadline;
+            try { await Promise.race([main.loadURL(CHAT_HOME), new Promise((_, reject) => { deadline = setTimeout(() => { if (!main.isDestroyed()) main.stop(); reject(new Error('加载超时')); }, 18000); })]); }
+            finally { clearTimeout(deadline); }
+            if (revision !== this.loginRevision) return;
+            const primary = await boundedLoginCheck(main.executeJavaScript(LOGIN_DOCUMENT_PROBE));
+            if (!primary?.composer || !await readAuthenticatedSession(main.session.fetch.bind(main.session))) return;
+          }
+          if (revision !== this.loginRevision) return;
+          this.closeAuthViews();
+          clearInterval(this.loginWatch); this.loginWatch = null;
+          this.setLogin({ status: 'success', mode: '', prompt: false, kind: '', returning: false, message: '已登录，已自动返回 ChatGPT。' });
+          this.view.webContents.focus();
+        }
+      } catch {
+        if (revision === this.loginRevision && this.login.mode === 'embedded' && this.login.returning) {
+          this.setLogin({ status: 'error', message: '登录返回页面暂未完成，正在重新检查。可以使用醒目的登录入口重试。' });
+        }
+      }
+    })();
+    this.loginProbe = probe;
+    try { await probe; } finally { if (this.loginProbe === probe) this.loginProbe = null; }
+  }
+
+  closeAuthViews() {
+    const views = this.authViews.splice(0);
+    for (const view of views.reverse()) {
+      try { this.window.contentView.removeChildView(view); } catch {}
+      if (!view.webContents.isDestroyed()) view.webContents.close();
+    }
+    this.syncLoginVisibility();
+  }
+
+  dismissLogin() {
+    this.loginRevision++;
+    this.loginProbe = null;
+    clearInterval(this.loginWatch); this.loginWatch = null;
+    if (this.login.returning) this.view?.webContents.stop();
+    this.closeAuthViews();
+    this.setLogin({ status: 'idle', mode: '', prompt: false, kind: '', returning: false, message: '' });
+    return this.getState();
   }
 
   suspendChatUiEnhancements() {
@@ -847,6 +984,7 @@ class ChatViewController {
       width: Math.max(0, width),
       height: Math.max(0, height - this.toolbarHeight)
     });
+    for (const authView of this.authViews) authView.setBounds({ x: 0, y: this.toolbarHeight, width: Math.max(0, width), height: Math.max(0, height - this.toolbarHeight) });
   }
 
   emitState() {
@@ -854,7 +992,7 @@ class ChatViewController {
   }
 
   getState() {
-    const contents = this.view?.webContents;
+    const contents = this.activeContents();
     return {
       loading: this.loading,
       error: this.lastError,
@@ -868,7 +1006,8 @@ class ChatViewController {
       mcpAttachment: { ...this.mcpAttachment },
       browserNetwork: { ...this.browserNetwork },
       streamState: { ...this.streamState },
-      nativeLogin: this.nativeLogin?.getState() || { status: 'idle', message: '', browser: '' }
+      nativeLogin: this.nativeLogin?.getState() || { status: 'idle', message: '', browser: '' },
+      login: { ...this.login }
     };
   }
 
@@ -911,7 +1050,7 @@ class ChatViewController {
   }
 
   async navigate(action) {
-    const contents = this.view?.webContents;
+    const contents = this.activeContents();
     if (!contents || contents.isDestroyed()) return false;
     if (action === 'back' && contents.canGoBack()) contents.goBack();
     else if (action === 'forward' && contents.canGoForward()) contents.goForward();
@@ -922,7 +1061,7 @@ class ChatViewController {
       if (typeof contents.reloadIgnoringCache === 'function') contents.reloadIgnoringCache();
       else contents.reload();
     }
-    else if (action === 'home') await this.loadHome();
+    else if (action === 'home') { this.dismissLogin(); await this.loadHome(); }
     else throw new Error('不支持的导航操作。');
     this.emitState();
     return true;
@@ -956,6 +1095,8 @@ class ChatViewController {
 
   async clearSession() {
     if (this.nativeLogin?.run) throw new Error('请先取消浏览器登录修复，再清理登录状态。');
+    this.dismissLogin();
+    this.loginPromptSeen.clear();
     const chatSession = session.fromPartition(CHAT_PARTITION);
     await chatSession.clearStorageData();
     await chatSession.clearCache();
@@ -966,6 +1107,9 @@ class ChatViewController {
   }
 
   dispose() {
+    this.loginRevision++;
+    clearInterval(this.loginWatch);
+    this.closeAuthViews();
     void this.nativeLogin?.cancel();
     this.clearRetryState();
     if (this.window && !this.window.isDestroyed()) this.window.removeListener('resize', this.boundResize);
@@ -979,13 +1123,19 @@ class ChatViewController {
   }
 
   startNativeLogin() {
+    this.dismissLogin();
+    this.setLogin({ status: 'waiting', mode: 'native', prompt: true, kind: '', message: '请在新打开的浏览器窗口完成登录。助手会自动检查并返回，无需找返回按钮。' });
     if (!this.nativeLogin) {
       if (!this.nativeLoginRoot) throw new Error('登录修复目录未初始化。');
       this.nativeLogin = new NativeLoginService({
         root: this.nativeLoginRoot,
         session: session.fromPartition(CHAT_PARTITION),
         settings: () => this.settings.load(),
-        onState: () => this.emitState(),
+        onState: (state) => {
+          const finished = ['success', 'idle'].includes(state.status);
+          this.setLogin({ status: state.status, mode: finished ? '' : 'native', prompt: !finished, message: state.cleanupWarning || state.message });
+          if (state.status === 'success' && !this.window.isDestroyed()) { this.window.show(); this.window.focus(); }
+        },
         verify: async () => {
           const contents = this.view?.webContents;
           if (!contents || contents.isDestroyed()) return false;

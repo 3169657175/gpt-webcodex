@@ -23,7 +23,7 @@
         <span id="mcpState" title="Coding Tools MCP 本地服务状态"><i></i>本地工具</span>
         <span id="tunnelState" title="OpenAI Tunnel 连接状态"><i></i><em id="connectionStateLabel">连接通道</em></span>
         <span id="schemaRefreshHint" hidden>工具已升级 · 建议新聊天</span>
-        <button id="nativeLoginButton" class="login-action" type="button" title="内置浏览器无法登录时，用独立 Chrome / Edge 窗口手动登录并同步回助手">登录修复</button>
+        <button id="nativeLoginButton" class="login-action login-entry" type="button" title="打开登录中心：优先在应用内登录，成功后自动返回">登录 / 登录帮助</button>
         <button id="managerButton" class="manager-button">设置</button>
       </div>
     </div>
@@ -61,6 +61,17 @@
   <main class="loading-stage">
     <div class="loading-card"><div class="spinner"></div><h1>正在打开 ChatGPT</h1><p>聊天页面与本地工作区权限相互隔离。</p></div>
   </main>
+  <dialog id="loginDialog" class="login-dialog" aria-labelledby="loginDialogTitle" aria-describedby="loginDialogMessage">
+    <div class="login-dialog-badge" id="loginDialogBadge">CHATGPT · 登录中心</div>
+    <h1 id="loginDialogTitle">在助手内登录 ChatGPT</h1>
+    <p id="loginDialogMessage">直接在应用内登录，成功后自动返回聊天。</p>
+    <div class="login-dialog-steps" id="loginDialogSteps"><span>1 选择登录方式</span><span>2 完成账号验证</span><span>3 自动返回聊天</span></div>
+    <button id="embeddedLoginStart" class="login-dialog-primary" type="button">在应用内继续登录</button>
+    <button id="loginBrowserFallback" class="login-dialog-secondary" type="button">应用内遇到问题？使用 Chrome 备用登录</button>
+    <button id="loginCheckNow" class="login-dialog-primary" type="button" hidden>我已登录，立即检查</button>
+    <div class="login-dialog-note" id="loginDialogNote">登录过程使用助手自己的会话，不读取其他软件或日常浏览器中的账号。</div>
+    <button id="loginDialogCancel" class="login-dialog-cancel" type="button">暂不登录，返回页面</button>
+  </dialog>
   <script src="progressPresentation.js"></script>
   <script src="browser.js"></script>
 </body>

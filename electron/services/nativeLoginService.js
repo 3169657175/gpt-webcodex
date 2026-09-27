@@ -2,16 +2,17 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn, execFile } = require('node:child_process');
+const { authenticatedSession, authUrl } = require('./chatLoginPolicy');
 
 const CHAT_HOME = 'https://chatgpt.com/';
 // Return a boolean only. Never send the session object or token to a renderer/log.
 const SESSION_CHECK = `(async () => {
   try {
     if (location.protocol !== 'https:' || !['chatgpt.com', 'www.chatgpt.com'].includes(location.hostname)) return false;
-    const response = await fetch('/api/auth/session', { credentials: 'include', cache: 'no-store', signal: AbortSignal.timeout(8000) });
-    if (!response.ok) return false;
+    const response = await fetch('/api/auth/session', { credentials: 'include', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(8000) });
+    if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) return false;
     const data = await response.json();
-    return Boolean(data?.user && data?.accessToken);
+    return (${authenticatedSession.toString()})(data);
   } catch { return false; }
 })()`;
 
@@ -199,7 +200,9 @@ class NativeLoginService {
       run.browser = await this.deps.connect(endpoint);
       run.expiry = setTimeout(() => { void this.cancel('登录窗口已超过 15 分钟，为保护账号已关闭，请重新开始。', true); }, 15 * 60 * 1000);
       run.expiry.unref?.();
-      return this.update('waiting', `请在 ${browser.name} 窗口手动登录 ChatGPT，看到聊天主页后点击「登录完成，返回助手」。`, browser.name);
+      run.autoWatch = setInterval(() => { void this.autoCheck(run); }, 2000);
+      run.autoWatch.unref?.();
+      return this.update('waiting', `请在 ${browser.name} 窗口手动登录 ChatGPT。登录成功后助手会自动验证并返回；也可以点击中央的「我已登录，立即检查」。`, browser.name);
     } catch (error) {
       await this.cleanup(run);
       return this.update('error', run.abort.signal.aborted ? '登录已取消。' : userError(error));
@@ -211,9 +214,33 @@ class NativeLoginService {
     if (this.operation) return this.operation;
     const run = this.run;
     if (!run?.browser) return Promise.resolve(this.update('error', '请先打开浏览器登录窗口。'));
+    run.autoPaused = true;
     this.update('syncing', '正在验证登录并同步到助手，不会重启本地工具…');
     this.operation = this.importLogin(run).finally(() => { this.operation = null; });
     return this.operation;
+  }
+
+  async autoCheck(run = this.run) {
+    if (!run?.browser || this.run !== run || run.monitorBusy || run.autoPaused || run.abort.signal.aborted || this.operation || this.state.status !== 'waiting') return;
+    run.monitorBusy = true;
+    let authenticated = false;
+    try {
+      const targets = await run.browser.call('Target.getTargets', {}, 4000);
+      const target = targets.targetInfos.find((item) => item.type === 'page' && isChatPage(item.url) && !authUrl(item.url));
+      if (!target) return;
+      const response = await this.deps.fetch(`http://127.0.0.1:${run.port}/json/list`, { signal: AbortSignal.timeout(3000) });
+      const endpoint = (await response.json()).find((item) => item.id === target.targetId)?.webSocketDebuggerUrl;
+      if (!endpoint || new URL(endpoint).port !== String(run.port) || run.abort.signal.aborted) return;
+      run.monitorPage = await this.deps.connect(endpoint);
+      if (run.abort.signal.aborted || this.run !== run) return;
+      const verified = await run.monitorPage.call('Runtime.evaluate', { expression: SESSION_CHECK, awaitPromise: true, returnByValue: true });
+      authenticated = verified.result?.value === true;
+    } catch { /* During interactive navigation the page may be replaced; next bounded check retries. */ }
+    finally { run.monitorPage?.close(); run.monitorPage = null; run.monitorBusy = false; }
+    if (authenticated && this.run === run && !run.abort.signal.aborted && this.state.status === 'waiting' && !this.operation) {
+      run.autoPaused = true;
+      await this.finish();
+    }
   }
 
   async importLogin(run) {
@@ -259,6 +286,7 @@ class NativeLoginService {
         }
       }
       // Keep native window available on recoverable errors so users can finish login.
+      if (!touched && !run.abort.signal.aborted) run.autoPaused = false;
       return this.update('waiting', userError(error));
     } finally { page?.close(); }
   }
@@ -283,6 +311,8 @@ class NativeLoginService {
     if (run.cleanup) return run.cleanup;
     run.cleanup = (async () => {
       clearTimeout(run.expiry);
+      clearInterval(run.autoWatch);
+      run.monitorPage?.close();
       if (run.browser && !run.exited) await run.browser.call('Browser.close', {}, 1500).catch(() => {});
       run.browser?.close();
       if (run.child && !run.exited) {

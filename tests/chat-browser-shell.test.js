@@ -12,13 +12,16 @@ test('ChatGPT shell keeps a persistent isolated session', () => {
   assert.match(source, /session\.fromPartition\(CHAT_PARTITION\)/);
 });
 
-test('ChatGPT shell presents Chromium as normal Chrome without changing the Chrome version', () => {
+test('legacy UA helper preserves Chrome version, but mounted OAuth views use native browser identity', () => {
   const input = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) web-mcp-assistant/0.4.2 Chrome/150.0.7871.129 Electron/43.2.0 Safari/537.36';
   const output = chromeLikeUserAgent(input);
   assert.match(output, /Chrome\/150\.0\.7871\.129/);
   assert.match(output, /Safari\/537\.36/);
   assert.doesNotMatch(output, /Electron\//);
   assert.doesNotMatch(output, /web-mcp-assistant\//);
+  const mounted = source.slice(source.indexOf('  mount()'), source.indexOf('  bindWebContents()'));
+  assert.match(mounted, /browserUserAgent = chatSession\.getUserAgent\(\)/);
+  assert.doesNotMatch(mounted, /chromeLikeUserAgent|chatSession\.setUserAgent/);
 });
 
 test('ChatGPT shell disables Chromium background throttling for long streaming turns', () => {
