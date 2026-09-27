@@ -122,7 +122,12 @@ function recordSchemaDiscovery(identity) {
 }
 
 
-function switchMcpWorkspace(port, token, workspace) {
+const WORKSPACE_SWITCH_REQUEST_TIMEOUT_MS = 30000;
+const WORKSPACE_SWITCH_CONFIRM_TIMEOUT_MS = 15000;
+const WORKSPACE_SWITCH_CONFIRM_INTERVAL_MS = 250;
+
+function switchMcpWorkspace(port, token, workspace, options = {}) {
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs || WORKSPACE_SWITCH_REQUEST_TIMEOUT_MS));
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ workspace });
     const request = http.request({
@@ -135,7 +140,7 @@ function switchMcpWorkspace(port, token, workspace) {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body)
       },
-      timeout: 5000
+      timeout: timeoutMs
     }, (response) => {
       let payload = '';
       response.setEncoding('utf8');
@@ -150,10 +155,47 @@ function switchMcpWorkspace(port, token, workspace) {
         resolve(parsed);
       });
     });
-    request.on('timeout', () => { request.destroy(new Error('MCP 工作区切换超时')); });
+    request.on('timeout', () => {
+      const error = new Error(`MCP 工作区切换请求超时（${Math.round(timeoutMs / 1000)} 秒）`);
+      error.code = 'WORKSPACE_SWITCH_TIMEOUT';
+      request.destroy(error);
+    });
     request.on('error', reject);
     request.end(body);
   });
+}
+
+async function waitForMcpWorkspace(port, token, workspace, options = {}) {
+  const timeoutMs = Math.max(500, Number(options.timeoutMs || WORKSPACE_SWITCH_CONFIRM_TIMEOUT_MS));
+  const intervalMs = Math.max(50, Number(options.intervalMs || WORKSPACE_SWITCH_CONFIRM_INTERVAL_MS));
+  const deadline = Date.now() + timeoutMs;
+  let identity = null;
+  while (Date.now() <= deadline) {
+    identity = await probeMcpIdentity(port, token, workspace);
+    if (identity) return identity;
+    if (Date.now() >= deadline) break;
+    await wait(Math.min(intervalMs, Math.max(50, deadline - Date.now())));
+  }
+  return null;
+}
+
+async function switchMcpWorkspaceConfirmed(port, token, workspace, options = {}) {
+  const requestTimeoutMs = Math.max(1000, Number(options.requestTimeoutMs || WORKSPACE_SWITCH_REQUEST_TIMEOUT_MS));
+  const confirmTimeoutMs = Math.max(500, Number(options.confirmTimeoutMs || WORKSPACE_SWITCH_CONFIRM_TIMEOUT_MS));
+  let requestError = null;
+  try {
+    await switchMcpWorkspace(port, token, workspace, { timeoutMs: requestTimeoutMs });
+  } catch (error) {
+    requestError = error;
+  }
+
+  // The control endpoint can finish the switch just as the HTTP response is
+  // interrupted by a proxy/socket timeout. Confirming the Runtime identity
+  // before rolling back prevents a successful switch from being undone.
+  const identity = await waitForMcpWorkspace(port, token, workspace, { timeoutMs: confirmTimeoutMs });
+  if (identity) return { identity, responseRecovered: Boolean(requestError) };
+  if (requestError) throw requestError;
+  throw new Error(`MCP 工作区切换未在 ${Math.round(confirmTimeoutMs / 1000)} 秒内完成身份确认`);
 }
 
 function setMcpAuthorizedRoots(port, token, roots) {
@@ -494,11 +536,17 @@ class RuntimeOrchestrator {
     const token = await this.ensureToken();
     try {
       this.progress('workspace-switch', 20, '正在热切换 MCP 工作目录');
-      await switchMcpWorkspace(previous.mcpPort, token, workspace);
+      const switched = await switchMcpWorkspaceConfirmed(previous.mcpPort, token, workspace);
+      if (switched.responseRecovered) {
+        this.log.warn('MCP 工作区切换响应超时，但 Runtime 身份已确认，继续完成切换', {
+          workspace,
+          confirmation: 'health'
+        });
+      }
       const next = this.settingsStore.save({ workspace, recentWorkspaces });
       await this.native.markWorkspace(next);
       this.progress('workspace-health', 80, '正在验证新的工作目录');
-      const ready = await probeMcp(next.mcpPort, token, workspace);
+      const ready = await waitForMcpWorkspace(next.mcpPort, token, workspace, { timeoutMs: 5000 });
       if (!ready) throw new Error('新工作目录与 MCP 实际目录不一致。');
       this.progress(
         'workspace-complete',
@@ -510,7 +558,12 @@ class RuntimeOrchestrator {
     } catch (error) {
       this.log.error(error.message, { stage: 'workspace-switch', rollback: previous.workspace });
       try {
-        await switchMcpWorkspace(previous.mcpPort, token, previous.workspace);
+        // Always confirm the old identity. MCP serializes workspace changes
+        // behind its switch lock, so a rollback request safely waits behind a
+        // slow first request instead of racing it or leaving the UI ambiguous.
+        await switchMcpWorkspaceConfirmed(previous.mcpPort, token, previous.workspace, {
+          confirmTimeoutMs: 15000
+        });
         this.settingsStore.save(previous);
         await this.native.markWorkspace(previous);
       } catch (rollbackError) {
@@ -687,6 +740,7 @@ class RuntimeOrchestrator {
 
 module.exports = { RuntimeOrchestrator, probeMcp, probeMcpIdentity, runtimeIdentityMatches, recoveryLayerFor,
   compactSchemaIdentity, schemaIdentityChanged, activeSchemaRefreshNotice, recordSchemaDiscovery,
-  waitForPortRelease, setMcpAuthorizedRoots };
+  waitForPortRelease, switchMcpWorkspace, waitForMcpWorkspace, switchMcpWorkspaceConfirmed,
+  setMcpAuthorizedRoots };
 
 

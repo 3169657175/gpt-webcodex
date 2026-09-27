@@ -17,7 +17,7 @@
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-mark"><span></span><span></span><span></span></div>
-      <div><strong>网页 MCP 助手</strong><small>本地开发助手 · 0.7.0</small></div>
+      <div><strong>网页 MCP 助手</strong><small>本地开发助手 · 0.7.3</small></div>
     </div>
     <nav class="nav-list" aria-label="主导航">
       <div class="nav-section-label">工作</div>
@@ -26,14 +26,15 @@
       <button class="nav-item" data-page="memory"><span class="nav-icon">◫</span><span>本地记忆</span></button>
       <div class="nav-section-label">配置</div>
       <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span><span>设置与诊断</span></button>
-      <div class="nav-sublist" aria-label="配置">
-        <button class="nav-subitem" data-page="setup-guide"><span>配置教程</span></button>
-      </div>
+      <button class="nav-item" data-page="setup-guide"><span class="nav-icon">?</span><span>配置教程</span></button>
     </nav>
-    <div class="sidebar-runtime">
-      <div class="runtime-orbit"><i id="sideRuntimeDot"></i><b id="sideRuntimeText">检查中</b></div>
-      <p id="sideWorkspace">尚未选择工作区</p>
-      <div class="mini-stats"><span>本地工具 <b id="sideMcp">--</b></span><span>连接通道 <b id="sideTunnel">--</b></span></div>
+    <div class="sidebar-health">
+      <div class="sidebar-health-status"><i id="sideRuntimeDot"></i><div><b id="sideRuntimeText">检查中</b><small>本机服务</small></div></div>
+      <div class="sidebar-health-workspace"><span>当前工作区</span><strong id="sideWorkspace">尚未选择工作区</strong></div>
+      <div class="sidebar-health-badges">
+        <span><em>本地工具</em><b id="sideMcp">--</b></span>
+        <span><em>连接通道</em><b id="sideTunnel">--</b></span>
+      </div>
     </div>
   </aside>
 
@@ -139,7 +140,7 @@
         </div>
         <article class="panel memory-mode-panel"><div><b>自动记忆模式</b><p>建议模式会先生成候选；自动模式会跳过闲聊、凭据和敏感个人信息后直接记住有价值内容。</p><small id="memoryAutoCaptureStatus">等待读取状态</small></div><select id="memoryAutoMode"><option value="off">关闭</option><option value="suggest">建议</option><option value="auto">自动</option></select></article>
         <article class="panel memory-candidate-panel" id="memoryCandidatePanel" hidden><div class="panel-title"><div><h3>需要你确认的候选</h3><p>只有真的存在候选时才显示。</p></div></div><div class="memory-list" id="memoryCandidates"></div></article>
-        <article class="panel memory-library-panel"><div class="panel-title"><div><h3>记忆库</h3><p>搜索、编辑、置顶、归档或删除。</p></div></div><div class="memory-toolbar"><input id="memorySearch" type="search" placeholder="搜索标题或正文"><select id="memoryScope"><option value="all">当前上下文</option><option value="project">当前项目</option><option value="global">全局</option></select><button class="secondary-button" id="memorySearchButton">搜索</button></div><div class="history-meta" id="memoryListMeta">等待读取本地记忆</div><div class="memory-list" id="memoryList"><span class="task-muted">暂无记忆</span></div></article>
+        <article class="panel memory-library-panel"><div class="panel-title"><div><h3>记忆库</h3><p>搜索、编辑、置顶、归档或删除。记忆按页加载，展开单条查看详情。</p></div></div><div class="memory-toolbar"><input id="memorySearch" type="search" placeholder="搜索标题或正文"><select id="memoryScope"><option value="all">当前上下文</option><option value="project">当前项目</option><option value="global">全局</option></select><button class="secondary-button" id="memorySearchButton">搜索</button></div><div class="memory-bulk-toolbar"><label class="memory-select-label"><input id="memorySelectPage" type="checkbox">选择本页</label><button class="secondary-button" id="memoryBatchArchive" type="button" disabled>归档已选</button><label class="memory-page-size-label" for="memoryPageSize">每页<select id="memoryPageSize"><option value="8">8</option><option value="12" selected>12</option><option value="24">24</option></select>条</label></div><div class="history-meta" id="memoryListMeta">等待读取本地记忆</div><div class="memory-list" id="memoryList"><span class="task-muted">暂无记忆</span></div><div class="memory-pagination" id="memoryPagination" aria-label="记忆分页"><button class="secondary-button" id="memoryPrevPage" type="button" disabled>上一页</button><span id="memoryPageLabel">第 1 / 1 页</span><button class="secondary-button" id="memoryNextPage" type="button" disabled>下一页</button></div></article>
       </section>
 
 
@@ -231,10 +232,14 @@
         <div class="settings-grid">
           <section class="settings-section">
             <div class="settings-section-heading"><div><h3>常用设置</h3><p>直接影响日常体验。</p></div></div>
-            <label class="setting-row"><span><b>界面主题</b><small>管理中心使用浅色或深色外观。</small></span><select id="themeSelect"><option value="light">浅色</option><option value="dark">深色</option></select></label>
-            <label class="setting-row"><span><b>开机启动</b><small>登录 Windows 后自动打开助手。</small></span><input id="startWithWindowsToggle" class="toggle" type="checkbox"></label>
             <label class="setting-row"><span><b>打开助手时自动启动服务</b><small>配置完整时自动恢复 Runtime 与 Tunnel。</small></span><input id="autoStartToggle" class="toggle" type="checkbox"></label>
             <label class="setting-row"><span><b>关闭窗口后继续运行</b><small>保留本地服务和长任务。</small></span><input id="keepRunningToggle" class="toggle" type="checkbox" checked></label>
+          </section>
+
+          <section class="settings-section">
+            <div class="settings-section-heading"><div><h3>外观与行为</h3><p>界面、启动方式与桌面提醒。</p></div></div>
+            <label class="setting-row"><span><b>界面主题</b><small>管理中心使用浅色或深色外观。</small></span><select id="themeSelect"><option value="light">浅色</option><option value="dark">深色</option></select></label>
+            <label class="setting-row"><span><b>开机启动</b><small>登录 Windows 后自动打开助手。</small></span><input id="startWithWindowsToggle" class="toggle" type="checkbox"></label>
             <label class="setting-row"><span><b>桌面任务提醒</b><small>任务完成、失败或需要处理时发送 Windows 通知。</small></span><input id="taskNotificationsToggle" class="toggle" type="checkbox" checked></label>
             <label class="setting-row"><span><b>通知声音</b><small>桌面提醒出现时播放系统提示音。</small></span><input id="taskNotificationSoundToggle" class="toggle" type="checkbox" checked></label>
           </section>
@@ -252,7 +257,7 @@
           </details>
 
           <details class="settings-section advanced-settings">
-            <summary class="settings-section-heading"><div><h3>高级维护</h3><p>端口冲突、认证重置或登录异常时再使用。</p></div><span>展开</span></summary>
+            <summary class="settings-section-heading"><div><h3>诊断与维护</h3><p>端口冲突、认证重置或登录异常时再使用。</p></div><span>展开</span></summary>
             <div class="advanced-settings-body no-padding">
               <label class="setting-row"><span><b>MCP 本地端口</b><small>只有端口冲突时才需要调整。</small></span><input id="mcpPortInput" class="number-input" type="number" min="1024" max="65535" value="18765"></label>
               <label class="setting-row"><span><b>Tunnel 控制端口</b><small>仅用于本机 Tunnel 健康与管理。</small></span><input id="healthPortInput" class="number-input" type="number" min="1024" max="65535" value="18081"></label>
@@ -263,7 +268,7 @@
           </details>
         </div>
 
-        <div class="section-header diagnostics-header"><div><span class="section-kicker">故障处理</span><h2>诊断</h2><p>正常情况下无需操作；出现连接问题时再展开。</p></div><div class="inline-actions"><button class="secondary-button" id="exportSupportReport">导出脱敏报告</button><button class="primary-button" id="runDiagnostics">一键诊断</button></div></div>
+        <div class="section-header diagnostics-header"><div><span class="section-kicker">运行状态检查</span><h2>诊断</h2><p>正常情况下保持收起；只有连接异常时才需要深入查看。</p></div><div class="inline-actions"><button class="secondary-button" id="exportSupportReport">导出脱敏报告</button><button class="primary-button" id="runDiagnostics">一键诊断</button></div></div>
         <article class="panel diagnostic-summary-panel"><div class="diagnostic-summary-main"><span class="diagnostic-orb" id="diagnosticOrb"></span><div><h3 id="diagnosticSummary">正在读取状态</h3><p id="diagnosticMeta">检查 Runtime、Tunnel、OpenAI 路径与 ChatGPT MCP 挂载。</p></div></div><button class="secondary-button" id="repairHealth">一键修复</button></article>
         <div class="diagnostic-grid">
           <article class="diagnostic-card"><span>本地工具</span><strong id="diagRuntime">检查中</strong><small id="diagRuntimeMeta">Runtime</small></article>
@@ -273,7 +278,7 @@
         </div>
         <details class="panel diagnostic-details" id="doctorDetails"><summary><span><b>技术诊断详情</b><small>只有排查连接问题时需要展开</small></span><span>展开</span></summary><div class="diagnostic-detail-list" id="doctorResults"><span class="task-muted">运行一键诊断后显示详细证据。</span></div></details>
         <details class="panel diagnostic-details"><summary><span><b>运行日志</b><small>密钥、Token 和 Cookie 会自动脱敏</small></span><span>展开</span></summary><div class="compact-log-toolbar"><span id="logCount">0 条日志</span><div><button class="secondary-button" id="refreshLogs">刷新</button><button class="danger-button" id="clearLogs">清空</button></div></div><div class="log-output" id="logOutput"><div class="empty-state"><b>暂无日志</b><span>出现运行或连接异常时再查看。</span></div></div></details>
-        <article class="panel about-panel"><div class="brand-mark large"><span></span><span></span><span></span></div><div><h3>网页 MCP 助手 <span>v0.7.0</span></h3><p>自动完成日常开发流程，同时保留必要的查看、配置和异常处理能力。</p></div></article>
+        <article class="panel about-panel"><div class="brand-mark large"><span></span><span></span><span></span></div><div><h3>网页 MCP 助手 <span>v0.7.3</span></h3><p>自动完成日常开发流程，同时保留必要的查看、配置和异常处理能力。</p></div></article>
       </section>
     </div>
   </main>

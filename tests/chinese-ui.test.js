@@ -29,7 +29,7 @@ test('settings keep common options visible and low-frequency controls collapsed'
   const html = read('renderer/index.html');
   assert.match(html, /常用设置/);
   assert.match(html, /连接与运行/);
-  assert.match(html, /高级维护/);
+  assert.match(html, /诊断与维护/);
   assert.match(html, /桌面任务提醒/);
   assert.doesNotMatch(html, /操作权限策略|项目构建检查|长任务汇报间隔|连续 MCP 兼容监测/);
 });

@@ -317,3 +317,181 @@ body[data-theme="dark"] .topbar{background:rgba(23,24,25,.78)}.topbar h1{font-si
 .setting-row{min-height:64px;padding:12px 18px}.setting-row b{font-size:11px}.setting-row small{font-size:9px}
 .settings-grid{gap:15px}
 @media(max-width:980px){.sidebar{width:216px}.topbar,.content-viewport{padding-left:26px;padding-right:26px}.service-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.service-card:nth-child(3){border-right:0}.service-card:nth-child(n+4){border-top:1px solid var(--m-border)}}
+
+/* 0.7.1 memory library: keep large collections scannable and reversible. */
+.memory-bulk-toolbar{display:flex;align-items:center;gap:9px;margin:2px 0 8px;padding:8px 10px;border:1px solid var(--m-border);border-radius:8px;background:var(--m-soft)}
+.memory-bulk-toolbar .memory-select-label,.memory-page-size-label{display:flex;align-items:center;gap:6px;color:var(--m-muted);font-size:8px}
+.memory-bulk-toolbar .memory-page-size-label{margin-left:auto}.memory-bulk-toolbar input{accent-color:var(--m-accent)}
+.memory-page-size-label select{height:27px;border:1px solid var(--m-border2);border-radius:6px;background:var(--m-surface);color:var(--m-text);padding:0 6px;font-size:8px}
+.memory-bulk-toolbar button{min-height:29px;padding:0 9px;font-size:8px}.memory-pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--m-border);color:var(--m-muted);font-size:8px}.memory-pagination button{min-height:29px;padding:0 10px;font-size:8px}
+.memory-card-head{align-items:flex-start}.memory-select-item{display:grid;flex:0 0 19px;place-items:start center;padding-top:4px;cursor:pointer}.memory-select-item input{accent-color:var(--m-accent)}
+.memory-card-details{min-width:0;flex:1}.memory-card-summary{display:flex;min-width:0;align-items:flex-start;justify-content:space-between;gap:10px;cursor:pointer;list-style:none}.memory-card-summary::-webkit-details-marker{display:none}.memory-card-summary::before{content:'›';display:inline-block;flex:0 0 12px;color:var(--m-subtle);font-size:14px;line-height:1;transform:translateY(-1px)}.memory-card-details[open] .memory-card-summary::before{content:'⌄'}.memory-card-summary>div{min-width:0;flex:1}.memory-card-summary b,.memory-card-summary small{display:block;overflow-wrap:anywhere}.memory-card-summary b{font-size:10px}.memory-card-summary small{margin-top:3px;color:var(--m-subtle);font-size:8px}
+.memory-card-details>.memory-content{margin-left:0}.memory-card-details>.memory-actions{margin-top:9px}
+@media(max-width:690px){.memory-bulk-toolbar{align-items:flex-start;flex-wrap:wrap}.memory-bulk-toolbar .memory-page-size-label{margin-left:0}.memory-pagination{justify-content:space-between}}
+
+/* 0.7.2 management center: compact desktop hierarchy and truthful service states. */
+:root{
+  --sidebar-w:224px;
+  --radius:9px;
+}
+body{background:var(--m-bg)!important}
+.app-shell{
+  border:0;
+  border-radius:0;
+  box-shadow:none;
+}
+.sidebar{
+  width:auto;
+  padding:18px 13px 13px;
+  background:var(--m-sidebar);
+  border-right:1px solid var(--m-border);
+}
+.brand{padding:2px 7px 18px}
+.brand-mark{width:32px;height:32px;border-radius:8px}
+.brand strong{font-size:13px}
+.brand small{margin-top:3px;font-size:9px}
+.nav-list{gap:3px}
+.nav-section-label{margin:14px 8px 5px;font-size:9px}
+.nav-item{
+  height:38px;
+  padding:0 10px;
+  gap:9px;
+  border-radius:8px;
+  font-size:10px;
+}
+.nav-item.active{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--m-accent) 18%,transparent)}
+.nav-item.active:before{left:-13px;top:10px;bottom:10px;width:2px}
+.nav-icon{width:17px;font-size:14px}
+.nav-sublist,.nav-subitem{display:none!important}
+
+.sidebar-health{
+  margin-top:auto;
+  padding:12px 7px 2px;
+  border-top:1px solid var(--m-border);
+}
+.sidebar-health-status{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+}
+.sidebar-health-status>i{
+  width:8px;
+  height:8px;
+  flex:0 0 8px;
+  border-radius:50%;
+  background:var(--m-subtle);
+}
+.sidebar-health-status>i.ready{background:var(--m-green);box-shadow:0 0 0 3px color-mix(in srgb,var(--m-green) 12%,transparent)}
+.sidebar-health-status>i.warn{background:var(--m-yellow)}
+.sidebar-health-status>i.error{background:var(--m-red)}
+.sidebar-health-status b,.sidebar-health-status small{display:block}
+.sidebar-health-status b{font-size:10px;line-height:1.25}
+.sidebar-health-status small{margin-top:2px;color:var(--m-subtle);font-size:8px}
+.sidebar-health-workspace{min-width:0;margin:11px 0 9px}
+.sidebar-health-workspace span,.sidebar-health-workspace strong{display:block}
+.sidebar-health-workspace span{color:var(--m-subtle);font-size:8px}
+.sidebar-health-workspace strong{
+  overflow:hidden;
+  margin-top:3px;
+  color:var(--m-muted);
+  font-size:9px;
+  font-weight:600;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.sidebar-health-badges{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.sidebar-health-badges>span{
+  min-width:0;
+  padding:7px 8px;
+  border:1px solid var(--m-border);
+  border-radius:7px;
+  background:var(--m-soft);
+}
+.sidebar-health-badges em,.sidebar-health-badges b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar-health-badges em{color:var(--m-subtle);font-size:7px;font-style:normal}
+.sidebar-health-badges b{margin-top:2px;color:var(--m-text);font-size:8px}
+
+.topbar{height:92px;padding:0 36px;background:var(--m-bg);backdrop-filter:none}
+body[data-theme="dark"] .topbar{background:var(--m-bg)}
+.topbar h1{font-size:23px}
+.topbar p:last-child{font-size:10px}
+.content-viewport{height:calc(100% - 92px);padding:26px 36px 42px}
+.page{max-width:1120px}
+
+.panel,.service-card,.status-card,.diagnostic-card,.settings-section{
+  border-radius:9px;
+  box-shadow:none;
+}
+.panel{padding:17px 18px}
+.primary-button,.secondary-button,.danger-button{min-height:34px;border-radius:7px;font-size:9px}
+.hero-status{
+  padding:17px 19px;
+  border:1px solid var(--m-border);
+  border-radius:9px;
+  background:var(--m-surface);
+  box-shadow:none;
+}
+.hero-state h2{font-size:17px}
+.hero-state p{font-size:9px}
+.service-grid{border-radius:9px;box-shadow:none}
+.service-card{padding:13px 14px}
+.service-card span{font-size:8px}
+.service-card strong{font-size:11px}
+.service-card small{font-size:8px}
+
+.stage-list{border-radius:8px;background:var(--m-surface)}
+.stage-row{position:relative;padding:11px 10px;background:var(--m-surface)}
+.stage-row i{width:19px;height:19px;margin-bottom:7px;border:1px solid var(--m-border2);background:transparent;color:var(--m-subtle)}
+.stage-row.waiting{color:var(--m-muted)}
+.stage-row.waiting i{background:var(--m-soft);color:var(--m-subtle)}
+.stage-row.waiting small{color:var(--m-subtle)}
+.stage-row.running{background:color-mix(in srgb,var(--m-accent-soft) 52%,var(--m-surface))}
+.stage-row.running:after,.stage-row.done:after,.stage-row.failed:after{
+  content:"";
+  position:absolute;
+  left:0;
+  right:0;
+  top:0;
+  height:2px;
+}
+.stage-row.running:after{background:var(--m-accent)}
+.stage-row.done{background:var(--m-surface)}
+.stage-row.done:after{background:var(--m-green)}
+.stage-row.done i{border-color:transparent;background:var(--m-green);color:#fff}
+.stage-row.failed:after{background:var(--m-red)}
+.stage-row b{font-size:8px}
+.stage-row small,.stage-row>span{font-size:7px}
+.startup-footer{margin-top:9px;padding-top:9px}
+
+.settings-grid{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+}
+.settings-grid>details.settings-section{grid-column:1/-1}
+.settings-section{overflow:hidden}
+.settings-section-heading{padding:12px 14px}
+.settings-section-heading h3{font-size:10px}
+.settings-section-heading p{font-size:8px}
+.setting-row{min-height:54px;padding:10px 14px;gap:16px}
+.setting-row b{font-size:9px}
+.setting-row small{font-size:8px}
+.setting-row select,.setting-row input:not(.toggle){height:32px;border-radius:7px;font-size:9px}
+.diagnostics-header{margin-top:24px;padding-top:22px}
+.diagnostic-summary-panel{margin-bottom:10px}
+.diagnostic-grid{margin-bottom:10px;border-radius:9px}
+.about-panel{background:transparent}
+
+@media(max-width:980px){
+  :root{--sidebar-w:204px}
+  .sidebar{width:auto}
+  .topbar,.content-viewport{padding-left:24px;padding-right:24px}
+}
+@media(max-width:850px){
+  .settings-grid{grid-template-columns:1fr}
+  .settings-grid>details.settings-section{grid-column:auto}
+}
+@media(max-width:690px){
+  :root{--sidebar-w:160px}
+  .sidebar-health-badges{grid-template-columns:1fr}
+}

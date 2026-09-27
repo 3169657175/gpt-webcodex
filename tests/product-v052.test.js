@@ -9,7 +9,7 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 test('0.6.0 exposes four business entries without restoring old control-console pages', () => {
   const html = read('renderer/index.html');
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(pkg.version, '0.7.0');
+  assert.equal(pkg.version, '0.7.3');
   for (const page of ['status', 'workspace', 'memory', 'settings']) {
     assert.match(html, new RegExp('data-page="' + page + '"'));
   }
@@ -84,7 +84,7 @@ test('configuration guide is a dedicated page with current OpenAI setup flow', (
   const main = read('electron/main.js');
 
   assert.match(html, /data-page-view="setup-guide"/);
-  assert.match(html, /class="nav-subitem" data-page="setup-guide"/);
+  assert.match(html, /class="nav-item" data-page="setup-guide"/);
   assert.match(html, /创建 Tunnel 和 API Key/);
   assert.match(html, /开启开发者人员模式/);
   assert.match(html, /创建 MCP 应用/);
@@ -94,7 +94,7 @@ test('configuration guide is a dedicated page with current OpenAI setup flow', (
   assert.match(html, /id="setupTunnelIdInput"/);
   assert.match(app, /function renderSetupGuide/);
   assert.match(app, /'setup-guide': \['配置', '配置教程'/);
-  assert.match(app, /\$\$\('\.nav-subitem'\)\.forEach\(\(button\) => button\.addEventListener\('click', \(\) => navigate\(button\.dataset\.page\)\)\)/);
+  assert.match(app, /\$\$\('\.nav-item'\)\.forEach\(\(button\) => button\.addEventListener\('click', \(\) => navigate\(button\.dataset\.page\)\)\)/);
   assert.match(app, /saveSetupRuntimeKey/);
   assert.match(app, /saveSetupTunnelId/);
   assert.match(app, /snapshot\.secrets\?\.runtimeApiKey/);

@@ -31,6 +31,13 @@ test('workspace picker opens a standalone Workspace Center without resizing Chat
   assert.doesNotMatch(main, /chat:workspace-panel/);
 });
 
+test('Alt+Tab keeps Manager and Workspace Center owned by the assistant', () => {
+  const main = read('electron/main.js');
+  assert.match(main, /workspaceWindow = new BrowserWindow\(\{[\s\S]*?parent: chatWindow && !chatWindow\.isDestroyed\(\) \? chatWindow : undefined,[\s\S]*?modal: false,[\s\S]*?skipTaskbar: true/);
+  assert.match(main, /managerWindow = new BrowserWindow\(\{[\s\S]*?parent: chatWindow && !chatWindow\.isDestroyed\(\) \? chatWindow : undefined,[\s\S]*?modal: false,[\s\S]*?skipTaskbar: true/);
+  assert.doesNotMatch(main, /(?:workspaceWindow|managerWindow)\.on\(['\"]blur['\"][\s\S]{0,160}\.hide\(/);
+});
+
 test('embedded ChatGPT leaves tool-call rendering to the native page', () => {
   const controller = read('electron/chatViewController.js');
   const config = read('electron/services/config.js');
@@ -66,11 +73,11 @@ test('Workspace Center separates workspaces and authorized roots into secondary 
   assert.match(css, /\.workspace-list,.authorized-list\{[^}]*overflow:auto/);
 });
 
-test('package and Manager identify the 0.7.0 observable-task release', () => {
+test('package and Manager identify the 0.7.3 management UI release', () => {
   const pkg = JSON.parse(read('package.json'));
   const manager = read('renderer/index.html');
-  assert.equal(pkg.version, '0.7.0');
-  assert.match(manager, /v0\.7\.0|0\.7\.0/);
+  assert.equal(pkg.version, '0.7.3');
+  assert.match(manager, /v0\.7\.3|0\.7\.3/);
   assert.match(manager, /data-page="status"/);
   assert.match(manager, /data-page="workspace"/);
   assert.doesNotMatch(manager, /data-page="task"|data-page="build"|data-page="guide"/);

@@ -827,7 +827,7 @@ class ChatViewController {
       const observer = new MutationObserver(() => syncPageCapability());
       observer.observe(document.querySelector('main') || document.body, { childList: true, subtree: true });
       window.__webMcpContinuousHandlers = { observer };
-      report('native-send-mode', capabilitySeen() ? 'session-capability-seen' : 'waiting-first-attachment', capabilitySeen() ? 'available' : 'unknown');
+      report('native-send-mode', capabilitySeen() ? 'session-capability-seen' : 'waiting-first-attachment', 'available');
       syncPageCapability();
       return true;
     })()`, true).catch((error) => {

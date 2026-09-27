@@ -144,7 +144,7 @@ class DoctorService {
     const runtimeIdentity = health.schemaIdentity?.runtime || null;
     const expectedIdentity = health.schemaIdentity?.expected || null;
     const attachmentStatus = String(attachment.status || 'unknown');
-    const attachmentReady = attachmentStatus === 'attached';
+    const attachmentReady = ['attached', 'available'].includes(attachmentStatus);
     const attachmentAvailable = attachmentStatus === 'available';
     const configReady = Boolean(current.workspace && this.secrets.status().runtimeApiKey && current.tunnelId && this.secrets.status().mcpAuthToken);
 
@@ -184,9 +184,9 @@ class DoctorService {
       {
         id: 'attachment',
         label: '当前 ChatGPT 消息 MCP Attachment',
-        state: attachmentReady ? 'ready' : attachmentAvailable ? 'warn' : 'error',
+        state: attachmentReady ? 'ready' : attachmentStatus === 'unknown' ? 'warn' : 'error',
         evidence: `attachment=${attachmentStatus}${attachment.detail ? ` · ${String(attachment.detail).slice(0, 180)}` : ''}`,
-        suggestion: attachmentReady ? '无需处理。' : '这层独立于 Tunnel；在新的用户消息上确认 Coding Tools MCP 已被当前消息实际挂载。'
+        suggestion: attachmentReady ? '无需处理。' : attachmentStatus === 'unknown' ? '当前页面尚未观察到首次消息挂载；基础链路正常时可以直接发起一次 MCP 调用确认。' : '这层独立于 Tunnel；在新的用户消息上确认 Coding Tools MCP 已被当前消息实际挂载。'
       },
       {
         id: 'configuration',

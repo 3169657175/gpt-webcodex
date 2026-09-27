@@ -250,6 +250,8 @@ function openWorkspaceWindow() {
   workspaceWindow = new BrowserWindow({
     width,
     height,
+    parent: chatWindow && !chatWindow.isDestroyed() ? chatWindow : undefined,
+    modal: false,
     x,
     y,
     minWidth: 700,
@@ -356,6 +358,8 @@ function openManagerWindow() {
   managerWindow = new BrowserWindow({
     width,
     height,
+    parent: chatWindow && !chatWindow.isDestroyed() ? chatWindow : undefined,
+    modal: false,
     x,
     y,
     minWidth: 820,
