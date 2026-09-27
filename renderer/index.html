@@ -17,7 +17,7 @@
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-mark"><span></span><span></span><span></span></div>
-      <div><strong>网页 MCP 助手</strong><small>本地开发助手 · 0.7.5</small></div>
+      <div><strong>网页 MCP 助手</strong><small>本地开发助手 · 0.7.6</small></div>
     </div>
     <nav class="nav-list" aria-label="主导航">
       <div class="nav-section-label">工作</div>
@@ -149,13 +149,13 @@
           <div>
             <span class="section-kicker">首次配置</span>
             <h2>配置教程</h2>
-            <p>按新版 OpenAI Platform 与 ChatGPT 插件流程一步一步完成。需要保存的信息可以直接在本页填写。</p>
+            <p>严格按顺序完成。前一步没有完成时，不要提前去 ChatGPT 创建 MCP 应用。</p>
           </div>
           <button class="secondary-button" id="setupRefresh">重新检测状态</button>
         </div>
 
         <article class="panel setup-overview">
-          <div><b>配置顺序</b><p>OpenAI Platform 创建 Tunnel / API Key → ChatGPT 开启开发者人员模式 → 创建 MCP 应用 → 启动并验证服务。</p></div>
+          <div><b>完整配置顺序</b><p>创建并保存 Tunnel / API Key → 设置工作区 → 启动 Runtime / Tunnel → 开启开发者人员模式 → 创建 MCP 应用并验证。</p></div>
           <span class="soft-badge neutral" id="setupOverallState">等待读取</span>
         </article>
 
@@ -163,8 +163,8 @@
           <article class="panel setup-step-card" id="setupStepPlatform">
             <div class="setup-step-number">1</div>
             <div class="setup-step-content">
-              <div class="setup-step-heading"><div><span class="section-kicker">OpenAI Platform</span><h3>创建 Tunnel 和 API Key</h3></div><span class="soft-badge neutral" id="setupPlatformState">未完成</span></div>
-              <p class="setup-step-description">先在 OpenAI Platform 创建一个 Tunnel，再创建 API Key。API Key 创建后通常只完整显示一次，请立即复制并保存。</p>
+              <div class="setup-step-heading"><div><span class="section-kicker">OpenAI Platform</span><h3>创建 Tunnel 和 API Key，并保存到助手</h3></div><span class="soft-badge neutral" id="setupPlatformState">未完成</span></div>
+              <p class="setup-step-description">先创建 Tunnel 和 API Key，然后把 Tunnel ID 与 API Key 都保存到助手。两项都保存成功后再进入下一步。</p>
               <div class="setup-link-row"><button class="secondary-button setup-link" data-setup-link="openai-tunnels">打开 Tunnel 页面</button><code>https://platform.openai.com/settings/organization/tunnels</code></div>
               <div class="setup-field-block">
                 <label for="setupTunnelIdInput"><b>Tunnel ID</b><small>创建 Tunnel 后复制 ID，一般以 <code>tunnel_</code> 开头。</small></label>
@@ -172,7 +172,7 @@
                 <span class="setup-field-state" id="setupTunnelState">尚未保存</span>
               </div>
               <div class="setup-link-row"><button class="secondary-button setup-link" data-setup-link="openai-runtime-keys">打开 API Key 页面</button><code>https://platform.openai.com/settings/organization/api-keys</code></div>
-              <div class="setup-warning"><b>重要：先保存 API Key</b><span>创建后请立即复制。助手会使用 Windows 安全存储保存，不会在界面重新显示明文。</span></div>
+              <div class="setup-warning"><b>重要：创建后立即复制 API Key</b><span>助手会使用 Windows 安全存储保存，不会在界面重新显示明文。</span></div>
               <div class="setup-field-block">
                 <label for="setupRuntimeKeyInput"><b>OpenAI API Key</b><small>粘贴刚刚创建的 API Key，然后点击保存。</small></label>
                 <div class="input-action wide"><input id="setupRuntimeKeyInput" type="password" autocomplete="off" placeholder="粘贴 API Key"><button class="primary-button" id="setupSaveRuntimeKey">安全保存 API Key</button></div>
@@ -181,30 +181,52 @@
             </div>
           </article>
 
-          <article class="panel setup-step-card" id="setupStepDeveloper">
+          <article class="panel setup-step-card" id="setupStepWorkspace">
             <div class="setup-step-number">2</div>
             <div class="setup-step-content">
+              <div class="setup-step-heading"><div><span class="section-kicker">本地项目</span><h3>设置工作区</h3></div><span class="soft-badge neutral" id="setupWorkspaceState">未设置</span></div>
+              <p class="setup-step-description">Runtime 必须绑定一个实际存在的工作目录。先添加或切换到你准备让 Coding Tools MCP 操作的项目目录，然后才能启动服务。</p>
+              <div class="setup-value-grid setup-workspace-summary">
+                <div><span>当前工作区</span><code id="setupWorkspacePath">尚未选择工作区</code></div>
+              </div>
+              <div class="inline-actions"><button class="primary-button" id="setupOpenWorkspace">添加 / 选择工作区</button><button class="secondary-button" id="setupRecheckWorkspace">重新检测</button></div>
+            </div>
+          </article>
+
+          <article class="panel setup-step-card" id="setupStepServices">
+            <div class="setup-step-number">3</div>
+            <div class="setup-step-content">
+              <div class="setup-step-heading"><div><span class="section-kicker">本地服务</span><h3>启动 Runtime 和 Tunnel</h3></div><span class="soft-badge neutral" id="setupServiceState">等待前置配置</span></div>
+              <p class="setup-step-description"><b>必须先启动服务，再去 ChatGPT 创建 MCP 应用。</b>只有 Runtime 正常、Tunnel 已连接后，ChatGPT 创建的 MCP 应用才能真正连到本机工具。</p>
+              <div class="setup-status-grid"><div><span>Runtime</span><b id="setupRuntimeStatus">未启动</b></div><div><span>Tunnel</span><b id="setupTunnelStatus">未启动</b></div></div>
+              <div class="inline-actions"><button class="primary-button" id="setupStartServices">启动服务</button><span class="setup-field-state" id="setupStartHint">请先完成第 1、2 步</span></div>
+            </div>
+          </article>
+
+          <article class="panel setup-step-card" id="setupStepDeveloper">
+            <div class="setup-step-number">4</div>
+            <div class="setup-step-content">
               <div class="setup-step-heading"><div><span class="section-kicker">ChatGPT</span><h3>开启开发者人员模式</h3></div></div>
-              <p class="setup-step-description">打开 ChatGPT 的安全设置，找到“开发者人员模式”，将开关打开。只有启用后才能创建自定义 MCP 应用。</p>
-              <div class="setup-link-row"><button class="primary-button setup-link" data-setup-link="chatgpt-developer-mode">打开开发者模式设置</button><code>https://chatgpt.com/plugins#settings/Security?section=developer-mode</code></div>
-              <div class="setup-note">打开页面后：<b>账户安全与登录 → 开发者人员模式 → 开启</b>。</div>
+              <p class="setup-step-description">确认第 3 步已经显示 Runtime 正常、Tunnel 已连接后，再打开 ChatGPT 的开发者人员模式。不同账号/新版 UI 的入口可能有所调整。</p>
+              <div class="setup-link-row"><button class="primary-button setup-link" data-setup-link="chatgpt-developer-mode">打开开发者模式设置</button><code>ChatGPT 设置</code></div>
+              <div class="setup-note">如果新版 ChatGPT 没有直接显示该开关，请在插件/应用相关设置中确认开发者功能是否已开放；不要跳过第 3 步直接创建 MCP 应用。</div>
             </div>
           </article>
 
           <article class="panel setup-step-card" id="setupStepApp">
-            <div class="setup-step-number">3</div>
+            <div class="setup-step-number">5</div>
             <div class="setup-step-content">
-              <div class="setup-step-heading"><div><span class="section-kicker">ChatGPT 插件</span><h3>创建 MCP 应用</h3></div></div>
-              <p class="setup-step-description">进入插件页后，点击右上角 <b>+</b>，依次选择“创建应用” → “创建 MCP 应用”。</p>
+              <div class="setup-step-heading"><div><span class="section-kicker">ChatGPT 插件</span><h3>创建 MCP 应用并验证</h3></div><span class="soft-badge neutral" id="setupAttachmentState">等待创建</span></div>
+              <p class="setup-step-description">服务已启动后进入 ChatGPT 插件页创建 MCP 应用。创建完成后回到对话中调用一次 Coding Tools MCP，助手会自动识别挂载状态。</p>
               <div class="setup-link-row"><button class="primary-button setup-link" data-setup-link="chatgpt-plugins">打开插件页面</button><code>https://chatgpt.com/plugins</code></div>
               <ol class="setup-instructions">
-                <li>右上角点击 <b>+</b> → <b>创建应用</b>。</li>
-                <li>在“新插件”窗口点击左下角 <b>创建 MCP 应用</b>。</li>
+                <li>确认第 3 步显示 <b>Runtime 正常</b>、<b>Tunnel 已连接</b>。</li>
+                <li>进入插件页后点击创建应用入口，并选择 <b>创建 MCP 应用</b>。</li>
                 <li>连接方式选择 <b>隧道</b>。</li>
-                <li>用户隧道选择你在第 1 步创建的 Tunnel。</li>
+                <li>用户隧道选择你在第 1 步创建并保存的 Tunnel。</li>
                 <li>身份验证选择 <b>无身份认证</b>。</li>
                 <li>名称填写 <b>Coding Tools MCP</b>。</li>
-                <li>阅读风险提示并确认后点击 <b>创建</b>。</li>
+                <li>确认风险提示并创建，然后回到 ChatGPT 对话实际调用一次。</li>
               </ol>
               <div class="setup-value-grid">
                 <div><span>应用名称</span><code>Coding Tools MCP</code><button class="secondary-button setup-copy" data-copy-value="Coding Tools MCP">复制</button></div>
@@ -212,20 +234,13 @@
                 <div><span>身份验证</span><code>无身份认证</code></div>
                 <div><span>Tunnel</span><code id="setupTunnelEcho">尚未保存 Tunnel ID</code></div>
               </div>
-            </div>
-          </article>
-
-          <article class="panel setup-step-card" id="setupStepVerify">
-            <div class="setup-step-number">4</div>
-            <div class="setup-step-content">
-              <div class="setup-step-heading"><div><span class="section-kicker">完成</span><h3>启动服务并验证连接</h3></div><span class="soft-badge neutral" id="setupServiceState">等待启动</span></div>
-              <p class="setup-step-description">完成 MCP 应用创建后，回到助手启动 Runtime 与 Tunnel。随后在 ChatGPT 对话中确认可以调用 Coding Tools MCP。</p>
-              <div class="setup-status-grid"><div><span>Runtime</span><b id="setupRuntimeStatus">未启动</b></div><div><span>Tunnel</span><b id="setupTunnelStatus">未启动</b></div><div><span>ChatGPT MCP</span><b id="setupAttachmentStatus">等待识别</b></div></div>
-              <div class="inline-actions"><button class="primary-button" id="setupStartServices">启动 / 重启服务</button><button class="secondary-button" id="setupBackToChat">返回 ChatGPT</button></div>
+              <div class="setup-status-grid"><div><span>ChatGPT MCP</span><b id="setupAttachmentStatus">等待识别</b></div></div>
+              <div class="inline-actions"><button class="secondary-button" id="setupBackToChat">返回 ChatGPT 验证</button></div>
             </div>
           </article>
         </div>
       </section>
+
 
       <section class="page settings-page" data-page-view="settings">
         <div class="section-header"><div><span class="section-kicker">配置与维护</span><h2>设置与诊断</h2><p>常用选项保持简单；连接、教程和故障处理需要时再展开。</p></div><button class="primary-button" id="openGuideSettings">打开配置教程</button></div>
@@ -278,7 +293,7 @@
         </div>
         <details class="panel diagnostic-details" id="doctorDetails"><summary><span><b>技术诊断详情</b><small>只有排查连接问题时需要展开</small></span><span>展开</span></summary><div class="diagnostic-detail-list" id="doctorResults"><span class="task-muted">运行一键诊断后显示详细证据。</span></div></details>
         <details class="panel diagnostic-details"><summary><span><b>运行日志</b><small>密钥、Token 和 Cookie 会自动脱敏</small></span><span>展开</span></summary><div class="compact-log-toolbar"><span id="logCount">0 条日志</span><div><button class="secondary-button" id="refreshLogs">刷新</button><button class="danger-button" id="clearLogs">清空</button></div></div><div class="log-output" id="logOutput"><div class="empty-state"><b>暂无日志</b><span>出现运行或连接异常时再查看。</span></div></div></details>
-        <article class="panel about-panel"><div class="brand-mark large"><span></span><span></span><span></span></div><div><h3>网页 MCP 助手 <span>v0.7.5</span></h3><p>自动完成日常开发流程，同时保留必要的查看、配置和异常处理能力。</p></div></article>
+        <article class="panel about-panel"><div class="brand-mark large"><span></span><span></span><span></span></div><div><h3>网页 MCP 助手 <span>v0.7.6</span></h3><p>自动完成日常开发流程，同时保留必要的查看、配置和异常处理能力。</p></div></article>
       </section>
     </div>
   </main>

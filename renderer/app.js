@@ -210,30 +210,69 @@ function renderSetupGuide(snapshot = state.snapshot) {
   const attachment = snapshot.chat?.mcpAttachment || {};
   const hasKey = Boolean(snapshot.secrets?.runtimeApiKey);
   const hasTunnel = Boolean(settings.tunnelId);
+  const workspaceReady = Boolean(settings.workspace);
   const runtimeOk = Boolean(status.runtimeRunning);
   const tunnelOk = Boolean(status.tunnelRunning && status.connectionRunning);
   const attachmentState = attachmentHealth(attachment, tunnelOk);
   const attachOk = attachmentState.ready;
   const configured = hasKey && hasTunnel;
+  const servicesReady = runtimeOk && tunnelOk;
+  const prerequisitesReady = configured && workspaceReady;
   const tunnelDisplay = maskTunnelId(settings.tunnelId);
 
   $('#setupApiKeyState').textContent = hasKey ? '已使用 Windows 安全存储保存' : '尚未保存';
   $('#setupTunnelState').textContent = hasTunnel ? '已保存（ID 已脱敏）' : '尚未保存';
   $('#setupTunnelEcho').textContent = tunnelDisplay || '尚未保存 Tunnel ID';
-  $('#setupPlatformState').textContent = configured ? '已完成' : '需要配置';
+  $('#setupPlatformState').textContent = configured ? '第 1 步完成' : '需要保存两项配置';
   $('#setupPlatformState').className = 'soft-badge ' + (configured ? 'positive' : 'warning');
+
+  $('#setupWorkspaceState').textContent = workspaceReady ? '第 2 步完成' : '需要设置';
+  $('#setupWorkspaceState').className = 'soft-badge ' + (workspaceReady ? 'positive' : 'warning');
+  $('#setupWorkspacePath').textContent = settings.workspace || '尚未选择工作区';
 
   $('#setupRuntimeStatus').textContent = runtimeOk ? '正常' : '未启动';
   $('#setupTunnelStatus').textContent = tunnelOk ? '已连接' : status.tunnelRunning ? '等待上游' : '未启动';
   $('#setupAttachmentStatus').textContent = attachOk ? '已就绪' : attachmentState.unavailable ? '未挂载' : '等待识别';
+  $('#setupAttachmentState').textContent = attachOk ? '已识别' : servicesReady ? '等待首次调用' : '等待服务';
+  $('#setupAttachmentState').className = 'soft-badge ' + (attachOk ? 'positive' : servicesReady ? 'neutral' : 'warning');
 
-  const serviceReady = runtimeOk && tunnelOk && attachOk;
-  $('#setupServiceState').textContent = serviceReady ? '全部就绪' : runtimeOk && tunnelOk ? '等待首次 MCP 调用' : '等待启动';
-  $('#setupServiceState').className = 'soft-badge ' + (serviceReady ? 'positive' : runtimeOk ? 'warning' : 'neutral');
+  if (servicesReady) {
+    $('#setupServiceState').textContent = '服务已就绪';
+    $('#setupServiceState').className = 'soft-badge positive';
+  } else if (runtimeOk) {
+    $('#setupServiceState').textContent = '正在连接 Tunnel';
+    $('#setupServiceState').className = 'soft-badge warning';
+  } else if (prerequisitesReady) {
+    $('#setupServiceState').textContent = '可以启动';
+    $('#setupServiceState').className = 'soft-badge neutral';
+  } else {
+    $('#setupServiceState').textContent = '等待前置配置';
+    $('#setupServiceState').className = 'soft-badge warning';
+  }
 
-  const readyCount = [hasKey, hasTunnel, runtimeOk, tunnelOk, attachOk].filter(Boolean).length;
-  $('#setupOverallState').textContent = readyCount === 5 ? '配置完成' : '已就绪 ' + readyCount + '/5';
-  $('#setupOverallState').className = 'soft-badge ' + (readyCount === 5 ? 'positive' : 'neutral');
+  $('#setupStartServices').disabled = !prerequisitesReady;
+  $('#setupStartServices').textContent = runtimeOk ? '重新启动服务' : '启动服务';
+  if (!configured) $('#setupStartHint').textContent = '请先完成第 1 步：保存 Tunnel ID 和 API Key';
+  else if (!workspaceReady) $('#setupStartHint').textContent = '请先完成第 2 步：添加 / 选择工作区';
+  else if (servicesReady) $('#setupStartHint').textContent = 'Runtime 与 Tunnel 已就绪，现在继续第 4、5 步';
+  else $('#setupStartHint').textContent = '前置配置完整，可以启动服务';
+
+  if (attachOk && servicesReady) {
+    $('#setupOverallState').textContent = '配置完成';
+    $('#setupOverallState').className = 'soft-badge positive';
+  } else if (servicesReady) {
+    $('#setupOverallState').textContent = '服务已就绪 · 继续 ChatGPT 配置';
+    $('#setupOverallState').className = 'soft-badge positive';
+  } else if (prerequisitesReady) {
+    $('#setupOverallState').textContent = '下一步：启动服务';
+    $('#setupOverallState').className = 'soft-badge neutral';
+  } else if (configured) {
+    $('#setupOverallState').textContent = '下一步：设置工作区';
+    $('#setupOverallState').className = 'soft-badge neutral';
+  } else {
+    $('#setupOverallState').textContent = '先完成 Tunnel / API Key';
+    $('#setupOverallState').className = 'soft-badge warning';
+  }
 
   if (!$('#setupTunnelIdInput').value) {
     $('#setupTunnelIdInput').placeholder = hasTunnel
@@ -1178,6 +1217,11 @@ function bindEvents() {
   };
   $('#setupSaveTunnelId').onclick = saveSetupTunnelId;
   $('#setupSaveRuntimeKey').onclick = saveSetupRuntimeKey;
+  $('#setupOpenWorkspace').onclick = () => api.openWorkspaceWindow();
+  $('#setupRecheckWorkspace').onclick = async () => {
+    await refreshSnapshot({ force: true, forceForms: true, quiet: true });
+    renderSetupGuide();
+  };
   $$('.setup-link').forEach((button) => {
     button.onclick = async () => {
       try { unwrap(await api.openSetupLink(button.dataset.setupLink)); }
@@ -1194,7 +1238,17 @@ function bindEvents() {
       }
     };
   });
-  $('#setupStartServices').onclick = () => runRuntime(state.snapshot?.status?.runtimeRunning ? 'restart' : 'start');
+  $('#setupStartServices').onclick = () => {
+    const snapshot = state.snapshot || {};
+    const settings = snapshot.settings || {};
+    if (!snapshot.secrets?.runtimeApiKey || !settings.tunnelId) {
+      return toast('请先完成第 1 步', '保存 Tunnel ID 和 API Key 后才能启动服务。', 'error');
+    }
+    if (!settings.workspace) {
+      return toast('请先设置工作区', '点击第 2 步的“添加 / 选择工作区”。', 'error');
+    }
+    return runRuntime(snapshot.status?.runtimeRunning ? 'restart' : 'start');
+  };
   $('#setupBackToChat').onclick = () => api.closeManager();
 
   $('#startupDiagnose').onclick = runDiagnostics;
@@ -1289,6 +1343,13 @@ async function initialize() {
     if (!state.snapshot) return;
     state.snapshot.chat = chat ? { ...(state.snapshot.chat || {}), ...chat } : state.snapshot.chat;
     renderSnapshot(state.snapshot);
+  });
+  api.onWorkspaceChanged?.(async () => {
+    await Promise.all([
+      refreshSnapshot({ force: true, forceForms: true, quiet: true }),
+      refreshWorkspaceHub()
+    ]);
+    if (state.currentPage === 'setup-guide') renderSetupGuide();
   });
   api.onLog?.((entry) => {
     state.logs.push(entry);

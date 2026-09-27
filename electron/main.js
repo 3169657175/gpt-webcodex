@@ -340,6 +340,7 @@ function openApprovalWindow() {
 function broadcastWorkspaceHub(hub = workspaceManager.hub()) {
   if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('workspace:changed', hub);
   if (workspaceWindow && !workspaceWindow.isDestroyed()) workspaceWindow.webContents.send('workspace:changed', hub);
+  if (managerWindow && !managerWindow.isDestroyed()) managerWindow.webContents.send('workspace:changed', hub);
   return hub;
 }
 

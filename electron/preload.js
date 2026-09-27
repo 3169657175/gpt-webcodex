@@ -70,5 +70,10 @@ contextBridge.exposeInMainWorld('mcpAssistant', {
     const wrapped = (_event, payload) => listener(payload);
     ipcRenderer.on('chat:state', wrapped);
     return () => ipcRenderer.removeListener('chat:state', wrapped);
+  },
+  onWorkspaceChanged: (listener) => {
+    const wrapped = (_event, payload) => listener(payload);
+    ipcRenderer.on('workspace:changed', wrapped);
+    return () => ipcRenderer.removeListener('workspace:changed', wrapped);
   }
 });

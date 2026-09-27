@@ -11,8 +11,8 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.7.5** |
-| Coding Tools MCP Runtime | **v0.7.5** |
+| 网页 MCP 助手 Desktop | **v0.7.6** |
+| Coding Tools MCP Runtime | **v0.7.6** |
 | MCP Tool Schema | **v10 / 9 tools** |
 | Schema Hash | `cb44f23fd265c4a7d10c801ca9ef88ee0fa4228b7a73151b02ff693f23757949` |
 | Electron | **43.2.0** |
@@ -29,6 +29,18 @@
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
 - **ChatGPT 页面增强**：保留原生页面渲染，提供连续 MCP 状态观察、动态资源错误提示和长时间无新内容的可操作反馈。
 
+## v0.7.6 首次配置流程重构
+
+配置教程按真实依赖顺序重新设计：**创建并保存 Tunnel / API Key → 设置工作区 → 启动 Runtime / Tunnel → 开启开发者人员模式 → 创建 MCP 应用并验证**。
+
+- 新增“设置工作区”独立步骤，可直接打开工作区中心添加或切换项目目录。
+- Tunnel ID、API Key、工作区没有全部准备好时，“启动服务”不会误执行，并会明确提示缺少哪一步。
+- 工作区切换会实时同步回教程页，Runtime / Tunnel 状态也会直接显示。
+- “创建 MCP 应用”移动到服务启动之后，避免服务没启动就去 ChatGPT 创建应用导致连接失败。
+- 创建完成后通过 ChatGPT 中的首次真实调用确认 MCP 是否挂载成功。
+
+详细变化见 [v0.7.6 发布说明](docs/RELEASE_NOTES_0.7.6.md)。
+
 ## v0.7.5 应用内登录与自动返回
 
 优先在助手内完成登录：识别可见的登录入口或 Google「此浏览器或应用可能不安全」错误时，显示中央登录提示；顶部也保留醒目的「登录 / 登录帮助」。登录弹窗接入应用内部，保留 Chromium 原始子窗口、opener 和同一会话，支持二级认证弹窗。
@@ -40,7 +52,7 @@
 - 登录状态受浏览器、账号风控与网站变化影响；同步验证未通过时不会显示登录成功，可以先在独立窗口继续使用。
 - 本地 Runtime、Tunnel 和工作区不因登录修复而重启或清空。
 
-本地安装包：`dist/web-mcp-assistant-setup-0.7.5.exe`。尚未上传 GitHub，下面的 v0.7.3 链接仍是已公开版本。
+本地上一版安装包：`dist/web-mcp-assistant-setup-0.7.5.exe`。
 
 设计参考 [Codex Web GPT 的应用内认证架构](https://github.com/miuuyy/codex-chatgpt-web/blob/main/docs/architecture.md)，详细变化见 [v0.7.5 发布说明](docs/RELEASE_NOTES_0.7.5.md)。Google 的嵌入式浏览器限制不在助手控制范围内，真实账号仍需手动验收。
 
@@ -72,11 +84,11 @@
 
 推荐直接从 GitHub Releases 下载最新版：
 
-**[下载 v0.7.3](https://github.com/3169657175/gpt-webcodex/releases/tag/v0.7.3)**
+**[下载 v0.7.6](https://github.com/3169657175/gpt-webcodex/releases/tag/v0.7.6)**
 
 安装包：
 
-`web-mcp-assistant-setup-0.7.3.exe`
+`web-mcp-assistant-setup-0.7.6.exe`
 
 安装后：
 
@@ -161,10 +173,10 @@ docs/                        正式版本发布说明
 - 安装包、`app.asar`、Runtime、Schema 与版本号核对
 - Git commit / tag / clean 状态检查
 
-本地 v0.7.5 安装包 SHA-256：
+当前 v0.7.6 安装包 SHA-256：
 
 ```text
-26593E036EC093601C8E252740DF7721080703CE36BEE23E5A48E36DD3E34EB4
+1FEE463B1774A63DE6A66F485B6F87158246E1B8A8ED48E48E52B527C568A335
 ```
 
 已公开 v0.7.3 安装包 SHA-256：
