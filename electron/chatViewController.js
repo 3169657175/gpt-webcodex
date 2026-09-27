@@ -1,6 +1,7 @@
 const { shell, session, WebContentsView } = require('electron');
 const { DownloadService } = require('./services/downloadService');
 const { normalizeProxyValue, resolveProxy } = require('./services/proxyService');
+const { NativeLoginService, SESSION_CHECK } = require('./services/nativeLoginService');
 
 const CHAT_HOME = 'https://chatgpt.com/';
 const CHAT_PARTITION = 'persist:chatgpt-session';
@@ -114,12 +115,14 @@ function bindChatNetworkDiagnostics(chatSession, log) {
 }
 
 class ChatViewController {
-  constructor({ window, log, settings, toolbarHeight = 64, onState = () => {}, onDownload = () => {}, onConversationTurn = () => {} }) {
+  constructor({ window, log, settings, nativeLoginRoot, toolbarHeight = 64, onState = () => {}, onDownload = () => {}, onConversationTurn = () => {} }) {
     this.window = window;
     this.log = log;
     this.toolbarHeight = toolbarHeight;
     this.onState = onState;
     this.settings = settings;
+    this.nativeLoginRoot = nativeLoginRoot;
+    this.nativeLogin = null;
     this.onDownload = onDownload;
     this.onConversationTurn = onConversationTurn;
     this.view = null;
@@ -864,7 +867,8 @@ class ChatViewController {
       canGoForward: Boolean(contents && !contents.isDestroyed() && contents.canGoForward()),
       mcpAttachment: { ...this.mcpAttachment },
       browserNetwork: { ...this.browserNetwork },
-      streamState: { ...this.streamState }
+      streamState: { ...this.streamState },
+      nativeLogin: this.nativeLogin?.getState() || { status: 'idle', message: '', browser: '' }
     };
   }
 
@@ -951,6 +955,7 @@ class ChatViewController {
   }
 
   async clearSession() {
+    if (this.nativeLogin?.run) throw new Error('请先取消浏览器登录修复，再清理登录状态。');
     const chatSession = session.fromPartition(CHAT_PARTITION);
     await chatSession.clearStorageData();
     await chatSession.clearCache();
@@ -961,6 +966,7 @@ class ChatViewController {
   }
 
   dispose() {
+    void this.nativeLogin?.cancel();
     this.clearRetryState();
     if (this.window && !this.window.isDestroyed()) this.window.removeListener('resize', this.boundResize);
     if (this.view && this.window && !this.window.isDestroyed()) {
@@ -971,6 +977,41 @@ class ChatViewController {
     }
     this.view = null;
   }
+
+  startNativeLogin() {
+    if (!this.nativeLogin) {
+      if (!this.nativeLoginRoot) throw new Error('登录修复目录未初始化。');
+      this.nativeLogin = new NativeLoginService({
+        root: this.nativeLoginRoot,
+        session: session.fromPartition(CHAT_PARTITION),
+        settings: () => this.settings.load(),
+        onState: () => this.emitState(),
+        verify: async () => {
+          const contents = this.view?.webContents;
+          if (!contents || contents.isDestroyed()) return false;
+          const bounded = async (promise, ms) => {
+            let timer;
+            try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('登录验证超时')), ms); })]); }
+            finally { clearTimeout(timer); }
+          };
+          try {
+            this.clearRetryState();
+            await bounded(contents.loadURL(CHAT_HOME), 15000);
+            if (!isChatGptNavigation(contents.getURL())) return false;
+            return await bounded(contents.executeJavaScript(SESSION_CHECK), 10000) === true;
+          } catch { return false; }
+        }
+      });
+    }
+    return this.nativeLogin.start();
+  }
+
+  finishNativeLogin() {
+    if (!this.nativeLogin) throw new Error('请先打开浏览器登录窗口。');
+    return this.nativeLogin.finish();
+  }
+
+  cancelNativeLogin() { return this.nativeLogin?.cancel() || { status: 'idle', message: '', browser: '' }; }
 }
 
 module.exports = {

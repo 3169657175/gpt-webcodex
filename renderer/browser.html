@@ -23,6 +23,7 @@
         <span id="mcpState" title="Coding Tools MCP 本地服务状态"><i></i>本地工具</span>
         <span id="tunnelState" title="OpenAI Tunnel 连接状态"><i></i><em id="connectionStateLabel">连接通道</em></span>
         <span id="schemaRefreshHint" hidden>工具已升级 · 建议新聊天</span>
+        <button id="nativeLoginButton" class="login-action" type="button" title="内置浏览器无法登录时，用独立 Chrome / Edge 窗口手动登录并同步回助手">登录修复</button>
         <button id="managerButton" class="manager-button">设置</button>
       </div>
     </div>
@@ -53,6 +54,8 @@
       <div class="progress-band-copy"><b id="progressMessage">正在读取任务进度…</b><small id="progressDetail">本地任务状态会持续更新</small></div>
       <time id="progressElapsed"></time>
       <button id="progressAction" class="progress-action" type="button" hidden></button>
+      <button id="nativeLoginFinish" class="login-action" type="button" hidden>登录完成，返回助手</button>
+      <button id="nativeLoginCancel" class="login-action secondary" type="button" hidden>取消登录</button>
     </div>
   </header>
   <main class="loading-stage">

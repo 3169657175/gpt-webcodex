@@ -11,8 +11,8 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.7.3** |
-| Coding Tools MCP Runtime | **v0.7.3** |
+| 网页 MCP 助手 Desktop | **v0.7.4** |
+| Coding Tools MCP Runtime | **v0.7.4** |
 | MCP Tool Schema | **v10 / 9 tools** |
 | Schema Hash | `cb44f23fd265c4a7d10c801ca9ef88ee0fa4228b7a73151b02ff693f23757949` |
 | Electron | **43.2.0** |
@@ -28,6 +28,19 @@
 - **Git / Worktree 工作流**：支持 Git 操作、隔离 Worktree、安全应用修改与清理。
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
 - **ChatGPT 页面增强**：保留原生页面渲染，提供连续 MCP 状态观察、动态资源错误提示和长时间无新内容的可操作反馈。
+
+## v0.7.4 登录修复
+
+Google 不支持在部分嵌入式浏览器中登录。新增顶部「登录修复」：使用助手专用的 Chrome（未安装时尝试 Edge）窗口手动登录 ChatGPT，完成后点击「登录完成，返回助手」，仅同步 ChatGPT 的第一方登录 Cookie，并验证内置页面确实已登录。
+
+- 不读取日常 Chrome 的配置、账号、密码或 Cookie，不复制 Google Cookie，不使用登录 UA 伪装或关闭浏览器安全机制。
+- 失败时恢复助手原有 Cookie，保留独立登录窗口供重试；取消、成功或 15 分钟超时后关闭助手自己启动的浏览器并清理临时配置。
+- 登录状态受浏览器、账号风控与网站变化影响；同步验证未通过时不会显示登录成功，可以先在独立窗口继续使用。
+- 本地 Runtime、Tunnel 和工作区不因登录修复而重启或清空。
+
+本地安装包：`dist/web-mcp-assistant-setup-0.7.4.exe`。尚未上传 GitHub，下面的 v0.7.3 链接仍是已公开版本。
+
+详细变化见 [v0.7.4 发布说明](docs/RELEASE_NOTES_0.7.4.md)。
 
 ## v0.7.3 重点更新
 
@@ -146,7 +159,13 @@ docs/                        正式版本发布说明
 - 安装包、`app.asar`、Runtime、Schema 与版本号核对
 - Git commit / tag / clean 状态检查
 
-当前 v0.7.3 安装包 SHA-256：
+本地 v0.7.4 安装包 SHA-256：
+
+```text
+B776A8FBAA57EC231F112827235266BCABAAFAA41D8F323D66D3AAB25CD3BB67
+```
+
+已公开 v0.7.3 安装包 SHA-256：
 
 ```text
 8B039DCDA2DAE437983C5B64DB27151776F1D91C3990ED77AA1C8599370E0581

@@ -20,7 +20,7 @@ const { ApprovalService } = require('./services/approvalService');
 const { DoctorService } = require('./services/doctorService');
 const { AutoMemoryService } = require('./services/autoMemoryService');
 const { WorkspaceManager } = require('./services/workspaceManager');
-const { notificationStateFile } = require('./paths');
+const { notificationStateFile, dataRoot } = require('./paths');
 
 let chatWindow;
 let managerWindow;
@@ -192,6 +192,7 @@ function createChatWindow() {
     log,
     settings,
     toolbarHeight: 164,
+    nativeLoginRoot: path.join(dataRoot(), 'native-login'),
     onState: (payload) => {
       if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('chat:state', payload);
       sendManager('chat:state', payload);
@@ -694,6 +695,15 @@ function registerIpc() {
     return candidate;
   }));
   secureHandle('chat:status', () => invokeSafely(async () => chatController?.getState() || null));
+  secureHandle('chat:native-login-start', () => invokeSafely(async () => {
+    if (!chatController) throw new Error('聊天窗口尚未初始化。');
+    return chatController.startNativeLogin();
+  }));
+  secureHandle('chat:native-login-finish', () => invokeSafely(async () => {
+    if (!chatController) throw new Error('聊天窗口尚未初始化。');
+    return chatController.finishNativeLogin();
+  }));
+  secureHandle('chat:native-login-cancel', () => invokeSafely(async () => chatController?.cancelNativeLogin()));
   secureHandle('chat:clear-session', () => invokeSafely(async () => {
     if (!chatController) throw new Error('ChatGPT 页面尚未初始化。');
     await chatController.clearSession();
@@ -841,9 +851,16 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on('before-quit', () => {
+let loginQuitPending = false;
+app.on('before-quit', (event) => {
   forceQuit = true;
   taskNotificationService?.stop();
+  if (chatController?.nativeLogin?.run) {
+    event.preventDefault();
+    if (loginQuitPending) return;
+    loginQuitPending = true;
+    chatController.cancelNativeLogin().finally(() => app.quit());
+  }
 });
 app.on('window-all-closed', () => {
   if (!forceQuit && settings.load().keepRunningOnClose) return;

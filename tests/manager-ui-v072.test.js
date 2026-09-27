@@ -11,7 +11,7 @@ test('0.7.3 manager uses one navigation language and compact sidebar health summ
   const html = read('renderer/index.html');
   const css = read('renderer/manager-v2.css');
 
-  assert.equal(pkg.version, '0.7.3');
+  assert.equal(pkg.version, '0.7.4');
   assert.match(html, /class="nav-item" data-page="setup-guide"/);
   assert.doesNotMatch(html, /class="nav-subitem"/);
   assert.match(html, /class="sidebar-health"/);
@@ -46,10 +46,10 @@ test('0.7.3 keeps Desktop and bundled Runtime versions aligned', () => {
   const pyproject = read('resources/coding-tools-mcp/pyproject.toml');
   const contract = JSON.parse(read('resources/coding-tools-mcp/schema-contract.json'));
 
-  assert.equal(pkg.version, '0.7.3');
-  assert.match(runtimeInit, /__version__ = "0\.7\.3"/);
-  assert.match(pyproject, /version = "0\.7\.3"/);
-  assert.equal(contract.runtime_version, '0.7.3');
+  assert.equal(pkg.version, '0.7.4');
+  assert.ok(runtimeInit.includes(`__version__ = "${pkg.version}"`));
+  assert.ok(pyproject.includes(`version = "${pkg.version}"`));
+  assert.equal(contract.runtime_version, pkg.version);
 });
 
 test('0.7.3 keeps the tutorial Tunnel ID private by default', () => {

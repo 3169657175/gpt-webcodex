@@ -11,6 +11,7 @@ let progressInput = { task: null, operation: null, available: true };
 let taskRefreshPromise = null;
 let lastTaskRefreshAt = 0;
 let taskRefreshWarning = '';
+let nativeLoginState = { status: 'idle', message: '' };
 
 function withTimeout(promise, timeoutMs, label = '请求') {
   let timer;
@@ -53,6 +54,7 @@ function taskPresentation(task, runningOperation) {
 function renderChatState(state) {
   if (!state) return;
   lastStreamState = state.streamState || lastStreamState;
+  nativeLoginState = state.nativeLogin || nativeLoginState;
   renderProgress();
   $('#backButton').disabled = !state.canGoBack;
   $('#forwardButton').disabled = !state.canGoForward;
@@ -62,10 +64,27 @@ function renderChatState(state) {
   element.classList.toggle('error', Boolean(state.error));
   element.querySelector('span').textContent = state.error
     ? `加载失败：${state.error}`
+    : state.url?.startsWith('https://accounts.google.com/') ? 'Google 登录请使用右侧「登录修复」'
     : state.loading ? '正在切换页面…' : 'ChatGPT 已就绪';
 }
 
 function renderProgress() {
+  const login = nativeLoginState;
+  const activeLogin = login.active || ['starting', 'waiting', 'syncing', 'closing'].includes(login.status);
+  $('#nativeLoginButton').disabled = activeLogin;
+  $('#nativeLoginFinish').hidden = !['waiting', 'syncing'].includes(login.status);
+  $('#nativeLoginFinish').disabled = login.status === 'syncing';
+  $('#nativeLoginCancel').hidden = !activeLogin;
+  $('#nativeLoginCancel').disabled = login.status === 'closing';
+  if (activeLogin || ['error', 'success'].includes(login.status)) {
+    $('#progressBand').className = `progress-band ${login.status === 'error' ? 'failed' : login.status === 'success' ? 'active' : 'waiting'}`;
+    $('#progressMessage').textContent = login.status === 'success' ? 'ChatGPT 登录修复完成' : login.status === 'error' ? '登录修复未完成' : '浏览器登录修复';
+    $('#progressDetail').textContent = login.cleanupWarning || login.message;
+    $('#progressDetail').title = `${login.message}${login.cleanupWarning ? ` ${login.cleanupWarning}` : ''}`;
+    $('#progressElapsed').textContent = '';
+    $('#progressAction').hidden = true;
+    return;
+  }
   const view = window.progressPresentation.describe(progressInput.task, progressInput.operation, lastStreamState, Date.now(), progressInput.available);
   const band = $('#progressBand');
   band.className = `progress-band ${view.key}`;
@@ -159,7 +178,7 @@ async function refreshTask() {
     $('#taskTitle').textContent = '暂无任务';
     $('#stopTask').hidden = true;
   }
-  if (taskRefreshWarning && !progressInput.task && !progressInput.operation) {
+  if (nativeLoginState.status === 'idle' && taskRefreshWarning && !progressInput.task && !progressInput.operation) {
     $('#progressDetail').textContent = taskRefreshWarning;
   }
   })();
@@ -224,6 +243,19 @@ $('#backButton').onclick = () => navigate('back');
 $('#forwardButton').onclick = () => navigate('forward');
 $('#reloadButton').onclick = () => navigate('reload');
 $('#homeButton').onclick = () => navigate('home');
+async function runNativeLogin(method) {
+  try { nativeLoginState = unwrap(await api[method]()); }
+  catch (error) { nativeLoginState = { status: 'error', message: error.message }; }
+  renderProgress();
+  if (nativeLoginState.status === 'success') {
+    setTimeout(() => {
+      if (nativeLoginState.status === 'success') { nativeLoginState = { status: 'idle', message: '' }; renderProgress(); }
+    }, 12000);
+  }
+}
+$('#nativeLoginButton').onclick = () => runNativeLogin('nativeLoginStart');
+$('#nativeLoginFinish').onclick = () => runNativeLogin('nativeLoginFinish');
+$('#nativeLoginCancel').onclick = () => runNativeLogin('nativeLoginCancel');
 $('#progressAction').onclick = async () => {
   const action = $('#progressAction').dataset.action;
   try {

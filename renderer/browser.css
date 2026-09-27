@@ -79,6 +79,10 @@ button{font:inherit}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:1150px){.task-strip small{max-width:180px}}
 @media(max-width:1000px){.page-state{display:none}.toolbar-main{grid-template-columns:1fr auto}.task-strip small{display:none}}
+.login-action{flex:0 0 auto;min-height:32px;padding:0 12px;border:1px solid #b8ded3;border-radius:9px;background:#ecf8f3;color:#087f65;font-size:12px;font-weight:650;cursor:pointer;white-space:nowrap}
+.login-action.secondary{border-color:#dedfe2;background:#fff;color:#4d5359}
+.login-action[hidden]{display:none}.login-action:disabled{opacity:.6;cursor:wait}
+@media(max-width:1200px){.toolbar-main{grid-template-columns:1fr auto}.page-state{display:none}.service-state{gap:5px}.service-state span{font-size:11px}}
 
 /* 0.7.0 browser chrome: keep the page native while making local state legible. */
 .browser-toolbar{background:rgba(248,250,251,.96);box-shadow:0 2px 16px rgba(30,40,50,.07);backdrop-filter:blur(14px)}
