@@ -133,7 +133,7 @@ function invalidateLocalMcpDiscovery() {
 function localMcpCallCanRetry(name, args = {}) {
   if (name === 'workspace_context' || name === 'coding_tools_guide') return true;
   if (name !== 'task_control') return false;
-  return ['get', 'history', 'operation', 'worktree_list', 'worktree_get', 'worktree_diff']
+  return ['get', 'history', 'operation', 'events', 'worktree_list', 'worktree_get', 'worktree_diff']
     .includes(String(args?.action || 'get').toLowerCase());
 }
 

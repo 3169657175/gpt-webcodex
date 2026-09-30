@@ -672,10 +672,14 @@ function renderTaskRuntime() {
     : null;
   const unified = runtime?.runtime_layers?.user || {};
   let [label, tone] = taskStatusView(task, operation);
-  if (unified.state === 'stalled') {
-    label = '疑似卡住';
-    tone = 'danger';
-  }
+  if (unified.state === 'testing') label = '测试中';
+  else if (unified.state === 'building') label = '构建中';
+  else if (unified.state === 'planning') label = '正在分析';
+  else if (unified.state === 'waiting_model') label = '等待模型';
+  else if (unified.state === 'quiet') label = '仍在运行';
+  else if (unified.state === 'suspected_stall') { label = '疑似停滞'; tone = 'warning'; }
+  else if (unified.state === 'stalled') { label = '疑似卡住'; tone = 'danger'; }
+  else if (unified.state === 'recovering') label = '正在恢复';
   if (state.taskRuntimeError && task) {
     label = `${label} · 状态待确认`;
     tone = 'warning';

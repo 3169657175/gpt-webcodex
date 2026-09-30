@@ -29,8 +29,11 @@ function needsHumanAttention(state) {
   return /(waiting\s+for\s+(user|approval|permission|confirmation|input|review)|needs?\s+(user|approval|permission|confirmation|input)|requires?\s+(approval|permission|confirmation|input)|用户|人工|确认|授权|批准|输入|选择|审阅|审核)/i.test(text);
 }
 
-function eventForState(state) {
+function eventForState(state, nowMs = Date.now()) {
   const lifecycle = String(state?.lifecycle_state || '');
+  const heartbeat = Date.parse(String(state?.last_heartbeat_at || state?.updated_at || ''));
+  const heartbeatAge = Number.isFinite(heartbeat) ? Math.max(0, Math.floor((nowMs - heartbeat) / 1000)) : null;
+  if (taskCanBeBlockedByRuntime(state) && heartbeatAge != null && heartbeatAge >= 90) return 'stalled';
   if (lifecycle === 'completed') return 'completed';
   if (lifecycle === 'failed') return 'failed';
   if (lifecycle === 'cancelled') return 'stopped';
@@ -48,7 +51,8 @@ function titleForEvent(event) {
     completed: '任务已完成',
     failed: '任务执行失败',
     stopped: '任务已中断',
-    attention: '任务需要你的处理'
+    attention: '任务需要你的处理',
+    stalled: '任务疑似卡住'
   }[event] || '任务状态更新';
 }
 
@@ -99,12 +103,16 @@ function notificationDetail(event, state, elapsed) {
   if (event === 'stopped') {
     return clip(state?.failure || state?.current_step || state?.next_step || '任务已停止执行。', 180);
   }
+  if (event === 'stalled') {
+    return clip(`后台心跳超过 90 秒未更新 · ${state?.current_step || state?.objective || '请打开助手查看诊断'}`, 180);
+  }
   return '';
 }
 
 function taskbarState(state) {
   const lifecycle = String(state?.lifecycle_state || '');
-  if (['created', 'preparing', 'running', 'waiting_model'].includes(lifecycle)) return { progress: 2, mode: 'indeterminate' };
+  if (['created', 'planning', 'preparing', 'running', 'verifying', 'recovering'].includes(lifecycle)) return { progress: 2, mode: 'indeterminate' };
+  if (lifecycle === 'waiting_model') return { progress: 1, mode: 'paused' };
   if (['paused', 'needs_user'].includes(lifecycle)) return { progress: 1, mode: 'paused' };
   if (['failed', 'cancelled'].includes(lifecycle)) return { progress: 1, mode: 'error' };
   const status = String(state?.status || 'idle');
@@ -116,7 +124,7 @@ function taskbarState(state) {
 
 function taskCanBeBlockedByRuntime(state) {
   const lifecycle = String(state?.lifecycle_state || '');
-  if (lifecycle) return ['created', 'preparing', 'running', 'waiting_model'].includes(lifecycle);
+  if (lifecycle) return ['created', 'planning', 'preparing', 'running', 'verifying', 'recovering'].includes(lifecycle);
   const status = String(state?.status || 'idle');
   return status === 'active' || (status === 'waiting' && !needsHumanAttention(state));
 }
@@ -134,7 +142,9 @@ const TASK_EVENT_NOTIFICATION = Object.freeze({
   'task.completed': 'completed',
   'task.failed': 'failed',
   'task.cancelled': 'stopped',
-  'task.needs_user': 'attention'
+  'task.needs_user': 'attention',
+  'task.stalled': 'stalled',
+  'task.recovery_failed': 'failed'
 });
 
 function runKey(state) {
@@ -427,9 +437,9 @@ class TaskNotificationService {
     }
     if (!state || !state.task_id) return;
 
-    const event = eventForState(state);
+    const event = eventForState(state, this.now());
     if (!event) return;
-    const previousEvent = previous?.task_id === state.task_id ? eventForState(previous) : null;
+    const previousEvent = previous?.task_id === state.task_id ? eventForState(previous, this.now()) : null;
     const transitioned = previous?.task_id !== state.task_id || previousEvent !== event;
     if (!transitioned) return;
 

@@ -30,7 +30,9 @@ test('model generation is distinguished from local execution', () => {
 test('waiting for model is not displayed as a running local command', () => {
   const result = describe({ status: 'waiting', lifecycle_state: 'waiting_model', current_step: '准备文件' }, null, null, now);
   assert.equal(result.key, 'waiting');
-  assert.match(result.message, /等待下一步调用/);
+  assert.match(result.message, /本地步骤已完成.*等待 ChatGPT/);
+  assert.equal(result.userState, 'waiting_model');
+  assert.equal(result.canStop, false);
 });
 
 test('background heartbeat makes long work visibly alive even without new command output', () => {
@@ -53,7 +55,8 @@ test('stale background heartbeat is surfaced instead of looking silently frozen'
   }, {
     status: 'running', started_at: '2026-09-24T01:58:00Z', heartbeat_age_seconds: 45
   }, null, now);
-  assert.equal(result.key, 'active');
+  assert.equal(result.key, 'warning');
+  assert.equal(result.userState, 'suspected_stall');
   assert.match(result.detail, /后台任务心跳已 45 秒未更新/);
 });
 
@@ -126,3 +129,27 @@ test('page interruption takes precedence over a waiting-model marker', () => {
   assert.match(result.message, /连接已中断/);
 });
 
+
+
+test('ninety second stale heartbeat becomes actionable stalled state', () => {
+  const result = describe({ status: 'active', lifecycle_state: 'running', current_step: '长任务', created_at: '2026-09-24T01:55:00Z' }, { status: 'running', started_at: '2026-09-24T01:58:00Z', heartbeat_age_seconds: 91 }, null, now);
+  assert.equal(result.key, 'stalled');
+  assert.equal(result.userState, 'stalled');
+  assert.equal(result.canStop, true);
+  assert.match(result.diagnostic, /90 秒/);
+});
+
+test('quiet command with healthy heartbeat stays healthy instead of looking frozen', () => {
+  const result = describe({ status: 'active', lifecycle_state: 'running', current_step: '运行长测试', created_at: '2026-09-24T01:58:00Z' }, { status: 'running', started_at: '2026-09-24T01:58:00Z', heartbeat_age_seconds: 4 }, null, now, true, { command: { status: 'running', kind: 'test', started_at: '2026-09-24T01:58:10Z', last_output_at: '2026-09-24T01:59:30Z', latest_output: 'still working' } });
+  assert.equal(result.key, 'active');
+  assert.equal(result.userState, 'quiet');
+  assert.match(result.message, /暂时没有新输出/);
+  assert.match(result.diagnostic, /不代表卡死/);
+});
+
+test('running wrapper operation cannot override waiting-model state after local command settles', () => {
+  const result = describe({ status: 'waiting', lifecycle_state: 'waiting_model', current_step: 'Waiting for model' }, { status: 'running', started_at: '2026-09-24T01:59:00Z', heartbeat_age_seconds: 2 }, null, now);
+  assert.equal(result.key, 'waiting');
+  assert.equal(result.userState, 'waiting_model');
+  assert.equal(result.canStop, false);
+});

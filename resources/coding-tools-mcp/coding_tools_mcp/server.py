@@ -156,7 +156,7 @@ except (TypeError, ValueError):
 BACKGROUND_QUEUE_WAIT_MAX_SECONDS = 3600
 BACKGROUND_HEARTBEAT_SECONDS = 5
 MCP_ENDPOINT_PATH = "/mcp"
-TOOL_SCHEMA_VERSION = 11
+TOOL_SCHEMA_VERSION = 12
 
 
 def tool_schema_hash(tools: list[dict[str, Any]]) -> str:
@@ -2476,6 +2476,13 @@ class Runtime:
                 "transport": "authenticated_sse_and_snapshot",
                 "does_not_send_chat_messages": True,
             },
+            "progress_protocol": {
+                "supported": True,
+                "handoff_seconds": LONG_TOOL_HANDOFF_SECONDS,
+                "report_seconds": PROGRESS_REPORT_SECONDS,
+                "preferred_continuation": "task_control.events",
+                "compatibility_fallback": "task_control.operation",
+            },
             "mcp_apps_status_card": {
                 "supported": False,
                 "reason": "No MCP Apps UI resource is registered by this runtime.",
@@ -2751,7 +2758,10 @@ class Runtime:
             "elapsed_seconds": max(0, int(now_monotonic - started_monotonic)) if started_monotonic > 0 else 0,
             "queue_wait_seconds": queue_wait_seconds,
             "requires_progress_report": report_due,
+            "progress_due": report_due,
             "progress_report_seconds": PROGRESS_REPORT_SECONDS,
+            "continuation_action": "events",
+            "compatibility_fallback_action": "operation",
             "next_progress_report_in_seconds": 0 if finished else max(0, PROGRESS_REPORT_SECONDS - int(report_age)),
             "queued_at": operation.get("queued_at", ""),
             "started_at": operation.get("started_at", ""),
@@ -3130,7 +3140,7 @@ class Runtime:
             "retry_safe", "side_effect_possible", "execution", "queued_at", "started_at", "finished_at", "heartbeat_at",
             "timeout_budget_seconds", "deadline_at", "remaining_timeout_seconds",
             "heartbeat_age_seconds", "elapsed_seconds", "queue_wait_seconds", "runtime_instance_id", "progress_report_seconds",
-            "requires_progress_report", "next_progress_report_in_seconds", "persisted", "message", "recovery_reason",
+            "requires_progress_report", "progress_due", "next_progress_report_in_seconds", "continuation_action", "compatibility_fallback_action", "persisted", "message", "recovery_reason",
         )
         return {key: copy.deepcopy(operation.get(key)) for key in keys if key in operation}
 
@@ -3152,6 +3162,23 @@ class Runtime:
             "tool.failed": "工具调用失败",
         }
         return labels.get(event_type, event_type.replace("_", " "))
+
+    @staticmethod
+    def _activity_event_detail(event: dict[str, Any]) -> str:
+        details = event.get("details") if isinstance(event.get("details"), dict) else {}
+        nested = details.get("details") if isinstance(details.get("details"), dict) else details
+        result = nested.get("result") if isinstance(nested.get("result"), dict) else {}
+        error = result.get("error") if isinstance(result.get("error"), dict) else {}
+        message = str(error.get("message") or nested.get("message") or "").strip()
+        category = str(error.get("category") or nested.get("category") or "").strip()
+        code = str(error.get("code") or nested.get("code") or "").strip()
+        retryable = error.get("retryable") if "retryable" in error else nested.get("retryable")
+        parts = [item for item in (category, code, message) if item]
+        if retryable is True:
+            parts.append("可安全重试")
+        elif retryable is False and (category or code):
+            parts.append("不要自动重复执行")
+        return " · ".join(parts)[:500]
 
     def _desktop_activity_snapshot(
         self,
@@ -3226,6 +3253,7 @@ class Runtime:
                 "label": self._activity_event_label(event),
                 "timestamp": str(event.get("timestamp") or ""),
                 "step": str(event_state.get("current_step") or "")[:300],
+                "detail": self._activity_event_detail(event),
             })
 
         active_operation = next((
@@ -3451,9 +3479,12 @@ class Runtime:
             "ok": True,
             "status": "running",
             "requires_progress_report": True,
+            "progress_due": True,
+            "continuation": {"preferred_action": "events", "fallback_action": "operation"},
             "message": (
                 "The workflow is running in the background. Report only the concrete stage already reached, then use "
-                "task_control action=events with after_event_id and wait_ms to wait for new durable activity without busy polling."
+                "task_control action=events with after_event_id and wait_ms when the current schema supports it. "
+                "If this chat still has an older task_control schema, use action=operation with operation_id and wait_ms instead; do not stop or repeat completed work."
             ),
             "background_operation": snapshot,
             "task": self.task_state.get(),
@@ -3475,9 +3506,9 @@ class Runtime:
         if handler is None:
             raise JsonRpcError(-32602, f"Unknown tool: {name}", {"reason": "unknown_tool"})
         spec = TOOL_REGISTRY[name]
-        validate_arguments(name, args)
         risk: dict[str, Any] | None = None
         try:
+            validate_arguments(name, args)
             current_task = self.task_state.get()
             task_action = str(args.get("action", "get")).lower() if name == "task_control" else ""
             document_action = str(args.get("action", "inspect")).lower() if name == "document_workflow" else ""
@@ -5064,7 +5095,7 @@ class Runtime:
                 if snapshot.get("requires_progress_report"):
                     snapshot["message"] = (
                         "Operation is still running. Report the concrete stage and latest verified evidence, then wait for "
-                        "new durable events with task_control action=events instead of repeating an immediate poll."
+                        "new durable events with task_control action=events when supported; older chat schemas must use action=operation with the same operation_id."
                     )
                     operation["last_progress_report_monotonic"] = time.monotonic()
                     snapshot["next_progress_report_in_seconds"] = PROGRESS_REPORT_SECONDS

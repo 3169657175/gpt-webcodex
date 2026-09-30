@@ -201,6 +201,9 @@ def _tool_event_details(name: str, args: dict[str, Any], payload: dict[str, Any]
         "tool": name,
         "status": str(payload.get("status") or ("failed" if payload.get("ok") is False else "completed")),
         "code": error.get("code"),
+        "category": error.get("category"),
+        "message": _text(error.get("message"), 1000) if error else "",
+        "retryable": error.get("retryable") if error else None,
         "operation_id": operation_id,
         "arguments": _tool_event_value(args),
         "result": _tool_event_value(payload),
@@ -269,6 +272,10 @@ def _set_lifecycle(state: dict[str, Any], lifecycle_state: str, *, wait_reason: 
             "modified_file_count": len(state.get("modified_files") or []),
             "latest_test_status": _text(latest_test.get("status"), 100),
             "latest_build_status": _text(latest_build.get("status"), 100),
+            "local_command_settled": state.get("current_command") is None,
+            "verification_settled": lifecycle in {"completed", "failed", "cancelled"},
+            "workflow_settled": lifecycle in {"completed", "failed", "cancelled"},
+            "handoff_state": "terminal",
         }
 
 

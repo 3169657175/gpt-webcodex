@@ -90,10 +90,20 @@ def layered_runtime_state(
         or task.get("updated_at")
     )
     heartbeat_age = _age_seconds(heartbeat_at)
-    stalled = bool(execution == "running" and heartbeat_age is not None and heartbeat_age >= 90)
+    heartbeat_stalled = bool(execution == "running" and heartbeat_age is not None and heartbeat_age >= 90)
+    heartbeat_suspected = bool(execution == "running" and heartbeat_age is not None and 45 <= heartbeat_age < 90)
+    command_kind = str(command.get("kind") or "")
+    last_output_age = _age_seconds(command.get("last_output_at"))
+    quiet = bool(command_running and last_output_age is not None and last_output_age >= 20 and not heartbeat_suspected and not heartbeat_stalled)
     user_state = (
-        "stalled" if stalled
-        else "running" if execution == "running"
+        "stalled" if heartbeat_stalled
+        else "suspected_stall" if heartbeat_suspected
+        else "quiet" if quiet
+        else "testing" if execution == "running" and command_kind == "test"
+        else "building" if execution == "running" and command_kind == "build"
+        else "planning" if execution == "running" and lifecycle in {"created", "planning", "ready", "preparing"}
+        else "recovering" if execution == "running" and lifecycle == "recovering"
+        else "local_running" if execution == "running"
         else "waiting_model" if lifecycle == "waiting_model"
         else "waiting_user" if execution == "waiting"
         else "failed" if execution == "failed"
@@ -106,9 +116,12 @@ def layered_runtime_state(
         "execution": {"state": execution, "lifecycle": lifecycle, "status": status},
         "user": {
             "state": user_state,
-            "stalled": stalled,
+            "stalled": heartbeat_stalled,
+            "suspected_stall": heartbeat_suspected,
+            "quiet": quiet,
             "heartbeat_at": _text(heartbeat_at, 100),
             "heartbeat_age_seconds": heartbeat_age,
+            "last_output_age_seconds": last_output_age,
         },
         "model": {"state": model, "wait_reason": _text(task.get("wait_reason"), 500)},
         "process": {"state": process, "process_id": process_id, "session_id": _text(command.get("session_id"), 200)},

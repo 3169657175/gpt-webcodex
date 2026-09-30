@@ -11,9 +11,9 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.7.7** |
-| Coding Tools MCP Runtime | **v0.7.7** |
-| MCP Tool Schema | **v11 / 9 tools** |
+| 网页 MCP 助手 Desktop | **v0.8.0** |
+| Coding Tools MCP Runtime | **v0.8.0** |
+| MCP Tool Schema | **v12 / 9 tools** |
 | Schema Hash | `d9446f007bb783df0ffebbb24f3d19435c6978097c9a265d69323b42412f0a76` |
 | Electron | **43.2.0** |
 | 平台 | **Windows** |
@@ -28,6 +28,19 @@
 - **Git / Worktree 工作流**：支持 Git 操作、隔离 Worktree、安全应用修改与清理。
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
 - **ChatGPT 页面增强**：保留原生页面渲染，提供连续 MCP 状态观察、动态资源错误提示和长时间无新内容的可操作反馈。
+
+## v0.8.0 任务可观测性与长任务可靠性
+
+0.8.0 把 ChatGPT 页面流、Agent/MCP 任务和本地 Runtime/Process 收拢成一套用户可读状态，重点解决“到底还在运行、等待模型还是已经卡住”无法判断的问题。
+
+- 聊天主界面持续显示当前阶段、运行时间、最近输出、后台心跳、本地进程与下一步，并提供“为什么看起来卡住了？”诊断。
+- 明确区分测试/构建/本地执行、健康静默、45 秒疑似停滞、90 秒疑似卡住、等待模型、网页生成与恢复状态。
+- 本地命令结束后，wrapper operation 不再把 `waiting_model` 误显示成仍在执行；完成回执增加 command / verification / workflow 收口字段。
+- MCP Schema generation 提升到 v12；长任务优先使用增量 `task_control events`，旧聊天 Schema 自动回退 `task_control operation`，避免因会话缓存直接断链。
+- 参数校验、运行时错误和工具失败进入统一结构化错误链路，活动时间线显示错误类别、代码、消息和是否适合安全重试。
+- 桌面通知增加真实心跳停滞识别，同时继续避免普通 `waiting_model` 和正常 heartbeat 产生噪声。
+
+详细变化见 [v0.8.0 发布说明](docs/RELEASE_NOTES_0.8.0.md)。
 
 ## v0.7.7 本地执行反馈与容错
 
@@ -94,11 +107,11 @@
 
 推荐直接从 GitHub Releases 下载最新版：
 
-**[下载 v0.7.7](https://github.com/3169657175/gpt-webcodex/releases/tag/v0.7.7)**
+本地正式安装包已生成：`dist/web-mcp-assistant-setup-0.8.0.exe`。GitHub Release 可在推送正式版本后补充。
 
 安装包：
 
-`web-mcp-assistant-setup-0.7.7.exe`
+`web-mcp-assistant-setup-0.8.0.exe`
 
 安装后：
 
@@ -183,10 +196,10 @@ docs/                        正式版本发布说明
 - 安装包、`app.asar`、Runtime、Schema 与版本号核对
 - Git commit / tag / clean 状态检查
 
-当前 v0.7.7 安装包 SHA-256：
+当前 v0.8.0 安装包 SHA-256：
 
 ```text
-62413981AF0507425A0DB36C06063DE5C043006DDBDE84A096ED62265BBFE53D
+DF450652B155A6B7982B95BC2FB4E4FF029F3D1E6B951DDA3C488FE7C1968DA3
 ```
 
 已公开 v0.7.3 安装包 SHA-256：

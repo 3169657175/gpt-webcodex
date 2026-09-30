@@ -73,6 +73,9 @@ test('task state boundaries distinguish real attention from ordinary model waiti
   assert.equal(eventForState({ status: 'failed' }), 'failed');
   assert.equal(eventForState({ status: 'stopped' }), 'stopped');
   assert.equal(eventForState({ status: 'waiting', next_step: 'Waiting for user input' }), 'attention');
+  const stalledNow = Date.parse('2026-09-30T14:00:00Z');
+  assert.equal(eventForState({ status: 'active', lifecycle_state: 'running', last_heartbeat_at: '2026-09-30T13:58:00Z' }, stalledNow), 'stalled');
+  assert.equal(eventForState({ status: 'waiting', lifecycle_state: 'waiting_model', last_heartbeat_at: '2026-09-30T13:58:00Z' }, stalledNow), null);
   assert.equal(taskbarState({ status: 'active' }).mode, 'indeterminate');
   assert.equal(taskbarState({ status: 'failed' }).mode, 'error');
 });

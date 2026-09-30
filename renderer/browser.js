@@ -7,7 +7,7 @@ let lastRuntimeCheckAt = 0;
 let workspaceHubState = { workspaces: [] };
 let lastApprovalRequestId = '';
 let lastStreamState = { status: 'unknown', updatedAt: 0 };
-let progressInput = { task: null, operation: null, activity: null, feedbackCapabilities: null, available: true, stale: false };
+let progressInput = { task: null, operation: null, activity: null, runtimeLayers: null, feedbackCapabilities: null, available: true, stale: false };
 let taskRefreshPromise = null;
 let lastTaskRefreshAt = 0;
 let taskRefreshWarning = '';
@@ -31,31 +31,9 @@ function baseName(value) {
   return String(value || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || value || '未选择';
 }
 
-function taskPresentation(task, runningOperation, streamState, available = true, activity = null) {
-  const lifecycle = String(task?.lifecycle_state || '');
-  const rawStatus = String(task?.status || '');
-  const activityCommand = activity?.command && typeof activity.command === 'object' ? activity.command : null;
-  const commandRunning = activityCommand?.status === 'running' || task?.current_command?.status === 'running';
-  const running = Boolean(runningOperation)
-    || commandRunning
-    || ['active', 'running', 'created', 'preparing'].includes(rawStatus)
-    || ['created', 'preparing', 'running'].includes(lifecycle);
-  const needsUser = ['needs_user', 'waiting_user', 'waiting_approval', 'paused'].includes(lifecycle)
-    || rawStatus === 'paused'
-    || (rawStatus === 'waiting' && lifecycle !== 'waiting_model');
-  const failed = lifecycle === 'failed' || rawStatus === 'failed';
-  const stopped = lifecycle === 'cancelled' || rawStatus === 'stopped';
-  const completed = lifecycle === 'completed' || rawStatus === 'completed';
-  if (failed) return { key: 'failed', label: '失败', detail: task?.failure || task?.objective || '任务执行失败', canStop: false };
-  if (stopped) return { key: 'stopped', label: '已停止', detail: task?.objective || '任务已停止', canStop: false };
-  if (completed) return { key: 'completed', label: '已完成', detail: task?.objective || '任务已完成', canStop: false };
-  if (!available) return { key: 'waiting', label: '状态待确认', detail: running ? `上次状态：${task?.current_step || task?.objective || '本地任务仍在执行'}` : '本地状态连接暂不可用', canStop: false };
-  if (running) return { key: 'active', label: '执行中', detail: task?.current_step || task?.objective || activityCommand?.command || '正在处理本地开发任务', canStop: true };
-  if (['interrupted', 'render_error', 'asset_error'].includes(String(streamState?.status || ''))) return { key: 'failed', label: '网页异常', detail: 'ChatGPT 页面连接异常，本地任务状态保持独立', canStop: false };
-  if (lifecycle === 'waiting_model') return { key: 'waiting', label: '等待模型', detail: task?.current_step || task?.objective || '等待 ChatGPT 继续处理', canStop: false };
-  if (needsUser) return { key: 'waiting', label: '等待处理', detail: task?.next_step || task?.current_step || task?.objective || '任务正在等待你的处理', canStop: false };
-  if (String(streamState?.status || '') === 'generating') return { key: 'active', label: '模型处理中', detail: '等待网页端发起本地工具调用', canStop: false };
-  return { key: 'idle', label: '空闲', detail: '暂无本地任务', canStop: false };
+function taskPresentation(task, runningOperation, streamState, available = true, activity = null, runtimeLayers = null) {
+  const view = window.progressPresentation.describe(task, runningOperation, streamState, Date.now(), available, activity, !available, runtimeLayers);
+  return { key: view.key, label: view.userState === 'testing' ? '测试中' : view.userState === 'building' ? '构建中' : view.userState === 'waiting_model' ? '等待模型' : view.userState === 'waiting_user' ? '等待处理' : view.userState === 'quiet' ? '仍在运行' : view.userState === 'suspected_stall' ? '疑似停滞' : view.userState === 'stalled' ? '疑似卡住' : view.userState === 'generating' ? '模型处理中' : view.key === 'failed' ? '失败' : view.key === 'completed' ? '已完成' : view.key === 'stopped' ? '已停止' : view.key === 'idle' ? '空闲' : '执行中', detail: view.message, canStop: Boolean(view.canStop) };
 }
 
 function formatActivityTime(value) {
@@ -67,7 +45,7 @@ function renderActivityPanel() {
   const toggle = $('#activityToggle');
   const panel = $('#activityPanel');
   if (!toggle || !panel) return;
-  const { task, operation, activity, feedbackCapabilities, available, stale } = progressInput;
+  const { task, operation, activity, runtimeLayers, feedbackCapabilities, available, stale } = progressInput;
   const command = activity?.command && typeof activity.command === 'object' ? activity.command : null;
   const timeline = Array.isArray(activity?.timeline) ? activity.timeline : [];
   const hasContent = Boolean(task || operation || command || timeline.length);
@@ -78,12 +56,16 @@ function renderActivityPanel() {
     toggle.textContent = '活动详情';
     return;
   }
-  const view = window.progressPresentation.describe(task, operation, lastStreamState, Date.now(), available, activity, stale);
+  const view = window.progressPresentation.describe(task, operation, lastStreamState, Date.now(), available, activity, stale, runtimeLayers);
+  if (panel.hidden) toggle.textContent = ['quiet', 'suspected_stall', 'stalled'].includes(view.userState) ? '为什么看起来卡住了？' : '活动详情';
   $('#activityStatus').textContent = view.message;
   $('#activityCapturedAt').textContent = `${stale ? '最后成功读取 ' : '状态读取 '}${formatActivityTime(activity?.captured_at || task?.updated_at)}`;
   $('#activityStage').textContent = task?.current_step || operation?.phase || operation?.status || (command?.status === 'running' ? '命令执行中' : '-');
   const lastActivityAt = command?.last_output_at || timeline.at(-1)?.timestamp || task?.updated_at || operation?.updated_at;
   $('#activityLastSeen').textContent = formatActivityTime(lastActivityAt);
+  $('#activityHeartbeat').textContent = view.heartbeatAge == null ? '—' : `${Math.floor(view.heartbeatAge)} 秒前`;
+  $('#activityProcess').textContent = runtimeLayers?.process?.state === 'running' ? '运行中' : runtimeLayers?.process?.state === 'background' ? '后台任务' : (view.canStop ? '运行中' : '无本地命令');
+  $('#activityDiagnosis').textContent = view.diagnostic || (view.userState === 'waiting_model' ? '本地执行已经结束，目前在等待 ChatGPT 继续。' : '当前没有发现异常。');
   let waitReason = '-';
   const lifecycle = String(task?.lifecycle_state || '');
   if (!available) waitReason = '等待本地状态连接恢复';
@@ -110,9 +92,10 @@ function renderActivityPanel() {
     const label = document.createElement('b');
     label.textContent = event.label || event.type || '状态更新';
     item.append(label);
-    if (event.step) {
+    const eventDetail = event.detail || event.step;
+    if (eventDetail) {
       const step = document.createElement('div');
-      step.textContent = event.step;
+      step.textContent = eventDetail;
       item.append(step);
     }
     const time = document.createElement('time');
@@ -179,7 +162,8 @@ function renderProgress() {
     Date.now(),
     progressInput.available,
     progressInput.activity,
-    progressInput.stale
+    progressInput.stale,
+    progressInput.runtimeLayers
   );
   const band = $('#progressBand');
   band.className = `progress-band ${view.key}`;
@@ -259,6 +243,7 @@ async function refreshTask() {
         task,
         operation: runningOperation,
         activity: runtime?.activity || progressInput.activity,
+        runtimeLayers: runtime?.runtime_layers || progressInput.runtimeLayers,
         feedbackCapabilities: runtime?.feedback_capabilities || progressInput.feedbackCapabilities,
         available: true,
         stale: !runtime
@@ -269,7 +254,7 @@ async function refreshTask() {
     lastTaskRefreshAt = Date.now();
     taskRefreshWarning = stateAvailable ? '' : '暂时无法确认本地任务状态，已保留最后一次结果并自动重试';
     renderProgress();
-    const view = taskPresentation(progressInput.task, progressInput.operation, lastStreamState, progressInput.available, progressInput.activity);
+    const view = taskPresentation(progressInput.task, progressInput.operation, lastStreamState, progressInput.available, progressInput.activity, progressInput.runtimeLayers);
     strip.className = `task-strip ${view.key}`;
     $('#taskStatusLabel').textContent = view.label;
     $('#taskTitle').textContent = view.detail;
@@ -413,7 +398,12 @@ $('#activityToggle').onclick = () => {
   const willOpen = panel.hidden;
   panel.hidden = !willOpen;
   $('#activityToggle').setAttribute('aria-expanded', String(willOpen));
-  $('#activityToggle').textContent = willOpen ? '收起详情' : '活动详情';
+  if (willOpen) {
+    $('#activityToggle').textContent = '收起详情';
+  } else {
+    const diagnosticState = window.progressPresentation.describe(progressInput.task, progressInput.operation, lastStreamState, Date.now(), progressInput.available, progressInput.activity, progressInput.stale, progressInput.runtimeLayers).userState;
+    $('#activityToggle').textContent = ['quiet', 'suspected_stall', 'stalled'].includes(diagnosticState) ? '为什么看起来卡住了？' : '活动详情';
+  }
 };
 $('#workspaceHealthButton').onclick = (event) => {
   event.stopPropagation();
