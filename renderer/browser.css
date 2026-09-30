@@ -71,12 +71,12 @@ button{font:inherit}
 .download-action[hidden],.progress-action[hidden]{display:none}
 .progress-action{flex:0 0 auto;border-color:#d9d9d9;background:#fff;color:#4d5359}
 .activity-toggle{border-color:#cfe8df;background:#f3fbf8;color:#087f65}
-.activity-panel{position:absolute;top:calc(100% - 1px);left:20px;right:20px;z-index:90;max-height:min(520px,calc(100vh - 185px));padding:16px;border:1px solid #dfe5e3;border-radius:0 0 16px 16px;background:rgba(255,255,255,.98);box-shadow:0 18px 46px rgba(24,42,36,.18);overflow:auto}
+.activity-panel{position:absolute;top:calc(100% - 3px);left:20px;right:auto;z-index:90;width:min(640px,calc(100vw - 32px));max-height:min(520px,calc(100vh - 185px));padding:16px;border:1px solid #dfe5e3;border-radius:16px;background:rgba(255,255,255,.985);box-shadow:0 18px 46px rgba(24,42,36,.2);overflow:auto;transform-origin:top left}
 .activity-panel[hidden]{display:none}
 .activity-panel-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px}
 .activity-panel-head div{display:flex;align-items:center;gap:9px}.activity-panel-head span,.activity-command>span,.activity-output>span,.activity-timeline>span{color:#74807b;font-size:10px;font-weight:750;letter-spacing:.3px;text-transform:uppercase}
 .activity-panel-head b{font-size:13px}.activity-panel-head time{color:#7a817e;font-size:10px}
-.activity-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.activity-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px}
 .activity-facts div{min-width:0;padding:9px 10px;border:1px solid #edf0ef;border-radius:9px;background:#fafcfb}
 .activity-facts span{display:block;margin-bottom:4px;color:#7a837f;font-size:9px}.activity-facts b{display:block;overflow:hidden;color:#353b38;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
 .activity-command{display:grid;grid-template-columns:72px minmax(0,1fr);align-items:start;gap:8px;margin:8px 0}.activity-command code{display:block;max-height:58px;padding:8px 10px;border-radius:8px;background:#f5f6f6;color:#333a37;font-family:"Cascadia Code",Consolas,monospace;font-size:10px;line-height:1.5;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -85,7 +85,10 @@ button{font:inherit}
 .progress-band.warning,.progress-band.stalled{background:#fff8e8}.progress-band.warning .progress-band-icon,.progress-band.stalled .progress-band-icon{background:#e5a000;box-shadow:0 0 0 3px rgba(229,160,0,.12)}
 .task-strip.warning{background:#fff8e8}.task-strip.warning i{background:#e5a000}
 .activity-diagnosis{display:flex;gap:10px;align-items:flex-start;margin:8px 0;padding:9px 10px;border:1px solid #e8ecea;border-radius:9px;background:#fafcfb}.activity-diagnosis span{flex:0 0 72px;color:#74807b;font-size:10px;font-weight:750}.activity-diagnosis b{font-size:11px;line-height:1.5;color:#3d4742}
-.activity-facts{grid-template-columns:repeat(6,minmax(0,1fr))}
+.task-strip,.progress-band{transition:background .14s ease,box-shadow .14s ease}
+.task-strip:hover,.task-strip:focus-visible{box-shadow:0 0 0 2px rgba(16,163,127,.10);outline:none}
+.progress-band:hover{background:#f7fbf9}
+.activity-panel::before{content:"";position:absolute;top:-7px;left:28px;width:12px;height:12px;border-left:1px solid #dfe5e3;border-top:1px solid #dfe5e3;background:#fff;transform:rotate(45deg)}
 .loading-stage{display:grid;height:calc(100% - 164px);place-items:center;background:radial-gradient(circle at 50% 35%,#fff,#f5f5f6 55%,#eceeef)}
 .loading-card{text-align:center}
 .loading-card h1{margin:18px 0 7px;font-size:20px}
@@ -110,8 +113,7 @@ button{font:inherit}
 .login-dialog-note{margin-top:18px;color:#7b8580;font-size:12px;line-height:1.7}
 .login-dialog-cancel{display:block;margin:16px auto 0;padding:8px 12px;border:0;background:transparent;color:#616e67;font-size:13px;cursor:pointer}
 @media(max-width:1200px){.toolbar-main{grid-template-columns:1fr auto}.page-state{display:none}.service-state{gap:5px}.service-state span{font-size:11px}}
-@media(max-width:1100px){.activity-facts{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:900px){.activity-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.activity-panel{left:8px;right:8px}}
+@media(max-width:900px){.activity-facts{grid-template-columns:1fr}.activity-panel{left:8px!important;width:calc(100vw - 16px)}}
 
 /* 0.7.0 browser chrome: keep the page native while making local state legible. */
 .browser-toolbar{background:rgba(248,250,251,.96);box-shadow:0 2px 16px rgba(30,40,50,.07);backdrop-filter:blur(14px)}

@@ -878,12 +878,21 @@ class TaskStateStore:
         session_id: str,
         workdir: str,
         execution: dict[str, Any] | None = None,
+        *,
+        allow_new_task_after_terminal: bool = False,
     ) -> None:
         with self._lock:
             state = self._read()
             lifecycle = str(state.get("lifecycle_state") or "")
             if lifecycle in TERMINAL_LIFECYCLE_STATES:
-                return
+                if not allow_new_task_after_terminal:
+                    return
+                # A standalone direct exec_command can legitimately start after
+                # the previous task reached a terminal state. Archive the finished
+                # run and create a fresh implicit command task. Internal workflow
+                # commands keep the historical terminal immutability guarantee.
+                self._archive(state, "superseded-by-command")
+                state = _default_state()
             if not self._has_task(state):
                 state["task_id"] = uuid.uuid4().hex
                 state["run_id"] = uuid.uuid4().hex

@@ -11,8 +11,8 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.8.0** |
-| Coding Tools MCP Runtime | **v0.8.0** |
+| 网页 MCP 助手 Desktop | **v0.8.1** |
+| Coding Tools MCP Runtime | **v0.8.1** |
 | MCP Tool Schema | **v12 / 9 tools** |
 | Schema Hash | `d9446f007bb783df0ffebbb24f3d19435c6978097c9a265d69323b42412f0a76` |
 | Electron | **43.2.0** |
@@ -28,6 +28,18 @@
 - **Git / Worktree 工作流**：支持 Git 操作、隔离 Worktree、安全应用修改与清理。
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
 - **ChatGPT 页面增强**：保留原生页面渲染，提供连续 MCP 状态观察、动态资源错误提示和长时间无新内容的可操作反馈。
+
+## v0.8.1 运行状态卡片与连续执行修复
+
+0.8.1 重点修复 0.8.0 安装版真实使用中暴露的四个问题：状态区域过窄、直接命令可能误显示空闲、短工作流失败可能冒出通用 JSON-RPC 错误，以及简单工作流首次启动准备过慢。
+
+- 顶部本地任务状态支持悬停约 150ms 展开详细运行状态卡片，点击可固定；卡片显示当前阶段、已运行时间、最近活动、后台心跳、本地进程、等待原因、下一步、诊断结论、命令输出和最近事件。
+- 直接 `exec_command` 在旧任务已经完成/失败/停止后启动时，会归档旧终态并建立新的隐式命令任务，统一 Runtime / Process / heartbeat 因此能正确进入 `local_running`。
+- `agent_workflow` 的快速失败不再以通用 JSON-RPC `-32603` 呈现，而是返回结构化错误以及 `retry_safe / side_effect_possible` 等重试判断信息。
+- 仅包含命令的轻量 `diagnose/custom` 工作流增加 commands-only fast path，不再执行完整项目上下文准备；本轮真实测试从此前约 35 秒准备延迟降到约 0.190 秒。
+- 继续兼容升级前已经打开的旧聊天：新 Runtime 支持 `events`，旧聊天工具快照可自动使用 `operation` fallback 继续跟踪后台任务。
+
+详细变化见 [v0.8.1 发布说明](docs/RELEASE_NOTES_0.8.1.md)。
 
 ## v0.8.0 任务可观测性与长任务可靠性
 
@@ -90,6 +102,7 @@
 - 增加窗口 owner/Alt+Tab 行为与 Tunnel ID 脱敏回归测试。
 
 详细变化见 [v0.7.3 发布说明](docs/RELEASE_NOTES_0.7.3.md)。
+
 ## v0.7.2 重点更新
 
 0.7.2 重点修正管理中心的状态语义和视觉层级，让“已经能用”与“真正需要处理”清楚分开：
@@ -105,13 +118,13 @@
 
 ## 安装
 
-推荐直接从 GitHub Releases 下载最新版：
+推荐直接从 GitHub Releases 下载最新版。
 
-本地正式安装包已生成：`dist/web-mcp-assistant-setup-0.8.0.exe`。GitHub Release 可在推送正式版本后补充。
+本地正式安装包已生成：
 
-安装包：
+`dist/web-mcp-assistant-setup-0.8.1.exe`
 
-`web-mcp-assistant-setup-0.8.0.exe`
+文件大小：`126,311,291 bytes`（约 `120.46 MiB`），FileVersion / ProductVersion 均为 `0.8.1`。
 
 安装后：
 
@@ -141,7 +154,7 @@ ChatGPT 页面与本地 Runtime、Tunnel、任务执行相互独立。页面短�
 
 ## 权限说明
 
-v0.7.3 面向**单用户个人开发场景**，默认采用完全权限模式：
+v0.7.3 起面向**单用户个人开发场景**，默认采用完全权限模式：
 
 - 命令执行使用当前 Windows 用户本身拥有的权限。
 - Git 提交、Tag、构建、进程操作等正常开发流程不再等待聊天中的二次批准。
@@ -196,7 +209,13 @@ docs/                        正式版本发布说明
 - 安装包、`app.asar`、Runtime、Schema 与版本号核对
 - Git commit / tag / clean 状态检查
 
-当前 v0.8.0 安装包 SHA-256：
+当前 v0.8.1 安装包 SHA-256：
+
+```text
+942AF278CCA5BCCA505EA49F099484F013928288568060847623E9D605AE3694
+```
+
+上一版 v0.8.0 安装包 SHA-256：
 
 ```text
 DF450652B155A6B7982B95BC2FB4E4FF029F3D1E6B951DDA3C488FE7C1968DA3

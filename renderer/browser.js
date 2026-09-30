@@ -13,6 +13,10 @@ let lastTaskRefreshAt = 0;
 let taskRefreshWarning = '';
 let nativeLoginState = { status: 'idle', message: '' };
 let loginState = { status: 'idle', mode: '', prompt: false };
+let activityPopoverPinned = false;
+let activityPopoverAnchor = null;
+let activityOpenTimer = null;
+let activityCloseTimer = null;
 
 function withTimeout(promise, timeoutMs, label = '请求') {
   let timer;
@@ -41,6 +45,58 @@ function formatActivityTime(value) {
   return Number.isFinite(time) ? new Date(time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-';
 }
 
+function clearActivityTimers() {
+  if (activityOpenTimer) clearTimeout(activityOpenTimer);
+  if (activityCloseTimer) clearTimeout(activityCloseTimer);
+  activityOpenTimer = null;
+  activityCloseTimer = null;
+}
+
+function positionActivityPanel(anchor) {
+  const panel = $('#activityPanel');
+  if (!panel || !anchor) return;
+  const rect = anchor.getBoundingClientRect();
+  const width = Math.min(640, Math.max(320, window.innerWidth - 32));
+  const left = Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - width - 12));
+  panel.style.left = `${Math.round(left)}px`;
+}
+
+function openActivityPanel(anchor, { pin = false } = {}) {
+  const panel = $('#activityPanel');
+  if (!panel || $('#activityToggle')?.hidden) return;
+  clearActivityTimers();
+  activityPopoverAnchor = anchor || activityPopoverAnchor || $('#taskStrip');
+  if (pin) activityPopoverPinned = true;
+  positionActivityPanel(activityPopoverAnchor);
+  panel.hidden = false;
+  $('#activityToggle')?.setAttribute('aria-expanded', 'true');
+  $('#taskStrip')?.setAttribute('aria-expanded', 'true');
+  if ($('#activityToggle')) $('#activityToggle').textContent = activityPopoverPinned ? '收起详情' : '活动详情';
+}
+
+function closeActivityPanel({ force = false } = {}) {
+  if (activityPopoverPinned && !force) return;
+  clearActivityTimers();
+  activityPopoverPinned = false;
+  const panel = $('#activityPanel');
+  if (panel) panel.hidden = true;
+  $('#activityToggle')?.setAttribute('aria-expanded', 'false');
+  $('#taskStrip')?.setAttribute('aria-expanded', 'false');
+  renderActivityPanel();
+}
+
+function scheduleActivityOpen(anchor) {
+  if ($('#activityToggle')?.hidden) return;
+  if (activityCloseTimer) clearTimeout(activityCloseTimer);
+  activityOpenTimer = setTimeout(() => openActivityPanel(anchor), 150);
+}
+
+function scheduleActivityClose() {
+  if (activityPopoverPinned) return;
+  if (activityOpenTimer) clearTimeout(activityOpenTimer);
+  activityCloseTimer = setTimeout(() => closeActivityPanel(), 220);
+}
+
 function renderActivityPanel() {
   const toggle = $('#activityToggle');
   const panel = $('#activityPanel');
@@ -48,10 +104,11 @@ function renderActivityPanel() {
   const { task, operation, activity, runtimeLayers, feedbackCapabilities, available, stale } = progressInput;
   const command = activity?.command && typeof activity.command === 'object' ? activity.command : null;
   const timeline = Array.isArray(activity?.timeline) ? activity.timeline : [];
-  const hasContent = Boolean(task || operation || command || timeline.length);
+  const hasContent = Boolean(task || operation || command || timeline.length || runtimeLayers);
   toggle.hidden = !hasContent;
   if (!hasContent) {
     panel.hidden = true;
+    activityPopoverPinned = false;
     toggle.setAttribute('aria-expanded', 'false');
     toggle.textContent = '活动详情';
     return;
@@ -61,10 +118,12 @@ function renderActivityPanel() {
   $('#activityStatus').textContent = view.message;
   $('#activityCapturedAt').textContent = `${stale ? '最后成功读取 ' : '状态读取 '}${formatActivityTime(activity?.captured_at || task?.updated_at)}`;
   $('#activityStage').textContent = task?.current_step || operation?.phase || operation?.status || (command?.status === 'running' ? '命令执行中' : '-');
+  $('#activityElapsed').textContent = view.elapsed || '—';
   const lastActivityAt = command?.last_output_at || timeline.at(-1)?.timestamp || task?.updated_at || operation?.updated_at;
   $('#activityLastSeen').textContent = formatActivityTime(lastActivityAt);
   $('#activityHeartbeat').textContent = view.heartbeatAge == null ? '—' : `${Math.floor(view.heartbeatAge)} 秒前`;
   $('#activityProcess').textContent = runtimeLayers?.process?.state === 'running' ? '运行中' : runtimeLayers?.process?.state === 'background' ? '后台任务' : (view.canStop ? '运行中' : '无本地命令');
+  $('#activityNextStep').textContent = task?.next_step || (view.userState === 'waiting_model' ? '等待 ChatGPT 继续' : '-');
   $('#activityDiagnosis').textContent = view.diagnostic || (view.userState === 'waiting_model' ? '本地执行已经结束，目前在等待 ChatGPT 继续。' : '当前没有发现异常。');
   let waitReason = '-';
   const lifecycle = String(task?.lifecycle_state || '');
@@ -260,7 +319,7 @@ async function refreshTask() {
     $('#taskTitle').textContent = view.detail;
     $('#taskTitle').title = view.detail;
     $('#stopTask').hidden = !view.canStop;
-    strip.title = view.canStop ? '任务正在后台执行；需要时可以停止' : view.detail;
+    strip.title = view.canStop ? '悬停查看详细运行状态；需要时可以停止' : '悬停查看详细运行状态';
   } catch {
     taskRefreshWarning = '任务状态读取失败，正在自动重试';
     progressInput = { ...progressInput, available: false, stale: true };
@@ -271,7 +330,7 @@ async function refreshTask() {
     $('#taskTitle').textContent = view.detail;
     $('#taskTitle').title = view.detail;
     $('#stopTask').hidden = true;
-    strip.title = view.detail;
+    strip.title = '悬停查看详细运行状态';
   }
   if (nativeLoginState.status === 'idle' && loginState.mode !== 'embedded' && taskRefreshWarning && !progressInput.task && !progressInput.operation) {
     $('#progressDetail').textContent = taskRefreshWarning;
@@ -393,18 +452,32 @@ $('#progressAction').onclick = async () => {
     }
   } catch (error) { $('#switchState').textContent = error.message; }
 };
-$('#activityToggle').onclick = () => {
+$('#activityToggle').onclick = (event) => {
+  event.stopPropagation();
   const panel = $('#activityPanel');
-  const willOpen = panel.hidden;
-  panel.hidden = !willOpen;
-  $('#activityToggle').setAttribute('aria-expanded', String(willOpen));
-  if (willOpen) {
-    $('#activityToggle').textContent = '收起详情';
-  } else {
-    const diagnosticState = window.progressPresentation.describe(progressInput.task, progressInput.operation, lastStreamState, Date.now(), progressInput.available, progressInput.activity, progressInput.stale, progressInput.runtimeLayers).userState;
-    $('#activityToggle').textContent = ['quiet', 'suspected_stall', 'stalled'].includes(diagnosticState) ? '为什么看起来卡住了？' : '活动详情';
-  }
+  if (!panel.hidden && activityPopoverPinned) closeActivityPanel({ force: true });
+  else openActivityPanel($('#taskStrip'), { pin: true });
 };
+for (const anchor of [$('#taskStrip'), $('#progressBand')].filter(Boolean)) {
+  anchor.addEventListener('mouseenter', () => scheduleActivityOpen(anchor));
+  anchor.addEventListener('mouseleave', scheduleActivityClose);
+}
+$('#activityPanel').addEventListener('mouseenter', () => {
+  if (activityCloseTimer) clearTimeout(activityCloseTimer);
+});
+$('#activityPanel').addEventListener('mouseleave', scheduleActivityClose);
+$('#taskStrip').addEventListener('click', (event) => {
+  if (event.target.closest('#stopTask')) return;
+  event.stopPropagation();
+  if (!$('#activityPanel').hidden && activityPopoverPinned) closeActivityPanel({ force: true });
+  else openActivityPanel($('#taskStrip'), { pin: true });
+});
+$('#taskStrip').addEventListener('keydown', (event) => {
+  if (!['Enter', ' '].includes(event.key)) return;
+  event.preventDefault();
+  if (!$('#activityPanel').hidden && activityPopoverPinned) closeActivityPanel({ force: true });
+  else openActivityPanel($('#taskStrip'), { pin: true });
+});
 $('#workspaceHealthButton').onclick = (event) => {
   event.stopPropagation();
   const popover = $('#workspaceHealthPopover');
@@ -420,6 +493,16 @@ document.addEventListener('click', (event) => {
     popover.hidden = true;
     $('#workspaceHealthButton').setAttribute('aria-expanded', 'false');
   }
+  const activityPanel = $('#activityPanel');
+  const taskStrip = $('#taskStrip');
+  const activityToggle = $('#activityToggle');
+  if (activityPopoverPinned && activityPanel && !activityPanel.contains(event.target) && !taskStrip?.contains(event.target) && !activityToggle?.contains(event.target)) closeActivityPanel({ force: true });
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('#activityPanel')?.hidden) closeActivityPanel({ force: true });
+});
+window.addEventListener('resize', () => {
+  if (!$('#activityPanel')?.hidden) positionActivityPanel(activityPopoverAnchor || $('#taskStrip'));
 });
 $('#managerButton').onclick = () => api.openManager();
 $('#workspacePickerButton').onclick = (event) => {

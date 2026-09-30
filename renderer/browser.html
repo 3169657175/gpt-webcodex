@@ -38,7 +38,7 @@
           <div><span>最近检查</span><strong id="workspaceHealthTime">-</strong></div>
         </div>
       </div>
-      <div class="task-strip idle" id="taskStrip" title="当前没有运行中的本地任务">
+      <div class="task-strip idle" id="taskStrip" title="悬停查看详细运行状态" role="button" tabindex="0" aria-expanded="false" aria-controls="activityPanel">
         <i></i><b id="taskStatusLabel">空闲</b><small id="taskTitle">暂无任务</small>
         <button id="stopTask" type="button" hidden>停止</button>
       </div>
@@ -58,17 +58,19 @@
       <button id="nativeLoginFinish" class="login-action" type="button" hidden>登录完成，返回助手</button>
       <button id="nativeLoginCancel" class="login-action secondary" type="button" hidden>取消登录</button>
     </div>
-    <aside id="activityPanel" class="activity-panel" aria-label="本地执行活动" hidden>
+    <aside id="activityPanel" class="activity-panel" aria-label="详细运行状态" hidden>
       <div class="activity-panel-head">
         <div><span>本地执行活动</span><b id="activityStatus">等待状态</b></div>
         <time id="activityCapturedAt"></time>
       </div>
       <div class="activity-facts">
         <div><span>当前阶段</span><b id="activityStage">-</b></div>
+        <div><span>已运行</span><b id="activityElapsed">-</b></div>
         <div><span>最近活动</span><b id="activityLastSeen">-</b></div>
         <div><span>后台心跳</span><b id="activityHeartbeat">-</b></div>
         <div><span>本地进程</span><b id="activityProcess">-</b></div>
         <div><span>等待原因</span><b id="activityWaitReason">-</b></div>
+        <div><span>下一步</span><b id="activityNextStep">-</b></div>
         <div><span>反馈通道</span><b id="activityChannel">桌面实时状态</b></div>
       </div>
       <div class="activity-diagnosis"><span>状态判断</span><b id="activityDiagnosis">当前没有发现异常。</b></div>

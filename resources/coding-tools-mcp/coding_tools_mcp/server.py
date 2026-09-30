@@ -3340,10 +3340,24 @@ class Runtime:
                 key: copy.deepcopy(context.get(key))
                 for key in (
                     "cache_hit", "cache_ttl_seconds", "context_budget", "instructions", "objective", "read_strategy",
-                    "recommended_next_action", "searches", "selected_paths", "files", "total_content_bytes", "execution_profile",
+                    "recommended_next_action", "searches", "selected_paths", "files", "total_content_bytes", "execution_profile", "fast_path",
                 )
                 if key in context
             }
+        error = payload.get("error")
+        if isinstance(error, dict):
+            details = error.get("details") if isinstance(error.get("details"), dict) else {}
+            result["error"] = {
+                key: copy.deepcopy(error.get(key))
+                for key in ("code", "message", "category", "retryable")
+                if key in error
+            }
+            if details:
+                result["error"]["details"] = {
+                    key: copy.deepcopy(details.get(key))
+                    for key in ("operation_id", "execution_id", "side_effect_possible", "retry_safe")
+                    if key in details
+                }
         plan = payload.get("execution_plan")
         if isinstance(plan, dict):
             result["execution_plan"] = {
@@ -3460,15 +3474,30 @@ class Runtime:
         if done.wait(handoff_wait_seconds):
             if operation.get("error"):
                 error = operation["error"]
-                raise ToolFailure(
-                    str(error.get("code") or "BACKGROUND_OPERATION_FAILED"),
-                    str(error.get("message") or "后台任务执行失败"),
-                    category=str(error.get("category") or "runtime"),
-                    retryable=bool(error.get("retryable", False)),
-                    details={
-                        "operation_id": str(operation.get("operation_id") or ""),
-                        "execution_id": str(operation.get("execution_id") or ""),
+                snapshot = self._background_operation_snapshot(operation, include_result=True)
+                failure_payload = {
+                    "ok": False,
+                    "status": "failed",
+                    "error": {
+                        "code": str(error.get("code") or "BACKGROUND_OPERATION_FAILED"),
+                        "message": str(error.get("message") or "后台任务执行失败"),
+                        "category": str(error.get("category") or "runtime"),
+                        "retryable": bool(error.get("retryable", False)),
+                        "details": {
+                            "operation_id": str(operation.get("operation_id") or ""),
+                            "execution_id": str(operation.get("execution_id") or ""),
+                            "side_effect_possible": bool(operation.get("side_effect_possible", True)),
+                            "retry_safe": bool(operation.get("retry_safe", False)),
+                        },
                     },
+                    "background_operation": snapshot,
+                    "task": self.task_state.get(),
+                    "latest_event_id": self.task_state.latest_event_id(),
+                }
+                return make_tool_result(
+                    name,
+                    self._project_model_payload(name, args, failure_payload),
+                    is_error=True,
                 )
             return operation["result"]
         operation["last_progress_report_monotonic"] = time.monotonic()
@@ -4697,26 +4726,54 @@ class Runtime:
 
         should_prepare = phase in {"prepare", "run"}
         should_execute = phase in {"execute", "run"}
+        command_fast_path = bool(
+            phase == "run"
+            and workflow in {"diagnose", "custom"}
+            and str(args.get("verification", "none" if workflow == "diagnose" else "tests")).lower() == "none"
+            and (args.get("commands") or args.get("command_steps") or args.get("checks"))
+            and not args.get("queries")
+            and not args.get("paths")
+            and not args.get("directories")
+            and not args.get("files")
+            and not str(args.get("patch", "")).strip()
+            and not [item for item in args.get("patches", []) if str(item).strip()]
+            and not str(args.get("test_command", "")).strip()
+            and not str(args.get("build_command", "")).strip()
+        )
         isolation_mode = str(args.get("isolation", "auto")).strip().lower() or "auto"
         if isolation_mode not in {"auto", "off"}:
             raise ToolFailure("INVALID_ARGUMENT", "isolation must be auto or off.", category="validation")
         prepared = None
         if should_prepare:
-            prepared = self.prepare_coding_context({
-                "objective": objective,
-                "path": args.get("path", "."),
-                "queries": args.get("queries", []),
-                "paths": args.get("paths", []),
-                "regex": args.get("regex", False),
-                "case_sensitive": args.get("case_sensitive", False),
-                "include_globs": args.get("include_globs", []),
-                "exclude_globs": args.get("exclude_globs", []),
-                "max_files": args.get("max_files", 12),
-                "max_entries": args.get("max_entries", 120),
-                "max_matches_per_query": args.get("max_matches_per_query", 20),
-                "max_total_bytes": args.get("max_total_bytes", 262144),
-                "force_refresh": args.get("force_refresh", False),
-            })
+            if command_fast_path:
+                fast_root = self.resolve_existing(str(args.get("path", "."))).path
+                prepared = {
+                    "objective": objective,
+                    "fast_path": "commands_only",
+                    "execution_profile": profile_project_execution(fast_root, []),
+                    "searches": [],
+                    "files": [],
+                    "selected_paths": [],
+                    "total_content_bytes": 0,
+                    "read_strategy": "commands_only",
+                    "context_budget": {"level": "fast", "used_bytes": 0, "selected_files": 0},
+                }
+            else:
+                prepared = self.prepare_coding_context({
+                    "objective": objective,
+                    "path": args.get("path", "."),
+                    "queries": args.get("queries", []),
+                    "paths": args.get("paths", []),
+                    "regex": args.get("regex", False),
+                    "case_sensitive": args.get("case_sensitive", False),
+                    "include_globs": args.get("include_globs", []),
+                    "exclude_globs": args.get("exclude_globs", []),
+                    "max_files": args.get("max_files", 12),
+                    "max_entries": args.get("max_entries", 120),
+                    "max_matches_per_query": args.get("max_matches_per_query", 20),
+                    "max_total_bytes": args.get("max_total_bytes", 262144),
+                    "force_refresh": args.get("force_refresh", False),
+                })
         execution_plan = self._build_execution_plan(args, prepared)
         if not should_execute:
             return {
@@ -6250,6 +6307,7 @@ class Runtime:
                         "side_effect_possible": session.side_effect_possible,
                         "pid": process.pid,
                     },
+                    allow_new_task_after_terminal=not bool(args.get("_prefer_structured", False)),
                 )
                 command_state = self.task_state.get()
                 session.task_id = str(command_state.get("task_id") or "")
