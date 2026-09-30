@@ -70,6 +70,18 @@ button{font:inherit}
 .download-action,.progress-action{height:28px;padding:0 10px;border:1px solid #cfe8df;border-radius:7px;background:#f3fbf8;color:#087f65;font-size:10px;font-weight:700;cursor:pointer}
 .download-action[hidden],.progress-action[hidden]{display:none}
 .progress-action{flex:0 0 auto;border-color:#d9d9d9;background:#fff;color:#4d5359}
+.activity-toggle{border-color:#cfe8df;background:#f3fbf8;color:#087f65}
+.activity-panel{position:absolute;top:calc(100% - 1px);left:20px;right:20px;z-index:90;max-height:min(520px,calc(100vh - 185px));padding:16px;border:1px solid #dfe5e3;border-radius:0 0 16px 16px;background:rgba(255,255,255,.98);box-shadow:0 18px 46px rgba(24,42,36,.18);overflow:auto}
+.activity-panel[hidden]{display:none}
+.activity-panel-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px}
+.activity-panel-head div{display:flex;align-items:center;gap:9px}.activity-panel-head span,.activity-command>span,.activity-output>span,.activity-timeline>span{color:#74807b;font-size:10px;font-weight:750;letter-spacing:.3px;text-transform:uppercase}
+.activity-panel-head b{font-size:13px}.activity-panel-head time{color:#7a817e;font-size:10px}
+.activity-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.activity-facts div{min-width:0;padding:9px 10px;border:1px solid #edf0ef;border-radius:9px;background:#fafcfb}
+.activity-facts span{display:block;margin-bottom:4px;color:#7a837f;font-size:9px}.activity-facts b{display:block;overflow:hidden;color:#353b38;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.activity-command{display:grid;grid-template-columns:72px minmax(0,1fr);align-items:start;gap:8px;margin:8px 0}.activity-command code{display:block;max-height:58px;padding:8px 10px;border-radius:8px;background:#f5f6f6;color:#333a37;font-family:"Cascadia Code",Consolas,monospace;font-size:10px;line-height:1.5;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.activity-output{margin-top:8px}.activity-output pre{max-height:170px;margin:5px 0 0;padding:10px 12px;border-radius:9px;background:#161a19;color:#dfe8e4;font-family:"Cascadia Code",Consolas,monospace;font-size:10px;line-height:1.55;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.activity-timeline{margin-top:10px}.activity-timeline ol{display:flex;gap:8px;margin:6px 0 0;padding:0;list-style:none;overflow-x:auto}.activity-timeline li{min-width:155px;max-width:260px;padding:8px 10px;border-left:2px solid #b8ded3;border-radius:6px;background:#f7faf9;color:#3f4743;font-size:10px}.activity-timeline li time{display:block;margin-top:3px;color:#858c89;font-size:9px}
 .progress-band.stalled{background:#fff8e8}.progress-band.stalled .progress-band-icon{background:#e5a000;box-shadow:0 0 0 3px rgba(229,160,0,.12)}
 .loading-stage{display:grid;height:calc(100% - 164px);place-items:center;background:radial-gradient(circle at 50% 35%,#fff,#f5f5f6 55%,#eceeef)}
 .loading-card{text-align:center}
@@ -95,6 +107,7 @@ button{font:inherit}
 .login-dialog-note{margin-top:18px;color:#7b8580;font-size:12px;line-height:1.7}
 .login-dialog-cancel{display:block;margin:16px auto 0;padding:8px 12px;border:0;background:transparent;color:#616e67;font-size:13px;cursor:pointer}
 @media(max-width:1200px){.toolbar-main{grid-template-columns:1fr auto}.page-state{display:none}.service-state{gap:5px}.service-state span{font-size:11px}}
+@media(max-width:900px){.activity-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.activity-panel{left:8px;right:8px}}
 
 /* 0.7.0 browser chrome: keep the page native while making local state legible. */
 .browser-toolbar{background:rgba(248,250,251,.96);box-shadow:0 2px 16px rgba(30,40,50,.07);backdrop-filter:blur(14px)}

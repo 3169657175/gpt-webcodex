@@ -446,13 +446,41 @@ class TaskStateTests(unittest.TestCase):
             self.assertGreater(replay[0]["event_id"], first_id)
             self.assertEqual(replay[0]["type"], "task.completed")
 
-    def test_direct_exec_command_does_not_create_persistent_task(self) -> None:
+    def test_task_control_events_supports_incremental_cursor(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            runtime = Runtime(Path(temp))
+            runtime.task_state.ensure_started("incremental events")
+            cursor = runtime.task_state.latest_event_id()
+            runtime.task_state.update({"current_step": "new activity"})
+            result = runtime.task_control({"action": "events", "after_event_id": cursor, "wait_ms": 0, "limit": 10})
+            self.assertEqual(len(result["events"]), 1)
+            self.assertGreater(result["next_after_event_id"], cursor)
+            self.assertFalse(result["wait_timed_out"])
+            runtime.close()
+
+    def test_direct_exec_command_creates_implicit_task_and_desktop_activity_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             runtime = Runtime(root, permission_mode="dangerous")
-            result = runtime.exec_command({"cmd": "echo ok", "yield_time_ms": 1000})
+            tool_result = runtime.call_tool("exec_command", {"cmd": "echo feedback-ok", "yield_time_ms": 1000})
+            self.assertFalse(tool_result["isError"])
+            result = tool_result["structuredContent"]
             self.assertEqual(result.get("exit_code"), 0)
-            self.assertFalse((root / ".coding-tools" / "task-state.json").exists())
+            self.assertTrue((root / ".coding-tools" / "task-state.json").exists())
+            state = runtime.task_state.get()
+            self.assertEqual(state["task_origin"], "implicit_command")
+            self.assertEqual(state["status"], "waiting")
+            self.assertIsNone(state["current_command"])
+            session = runtime._get_output_session(result["session_id"])
+            cursor_before = (session.stdout_cursor, session.stderr_cursor)
+            runtime.request_context.trace_origin = "desktop"
+            snapshot = runtime.task_control({"action": "get"})
+            cursor_after = (session.stdout_cursor, session.stderr_cursor)
+            self.assertEqual(cursor_after, cursor_before)
+            self.assertIn("feedback-ok", snapshot["activity"]["command"]["latest_output"])
+            self.assertTrue(snapshot["feedback_capabilities"]["desktop_activity_stream"]["supported"])
+            self.assertTrue(snapshot["feedback_capabilities"]["chatgpt_tool_invocation_status"]["supported"])
+            self.assertFalse(snapshot["feedback_capabilities"]["mcp_events"]["supported"])
             runtime.close()
 
     def test_agent_workflow_prepare_does_not_create_persistent_task(self) -> None:
@@ -1119,12 +1147,21 @@ class ToolModeTests(unittest.TestCase):
 
     def test_server_discover_does_not_require_initialize(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            response = dispatch_rpc(Runtime(Path(temp)), {"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}})
+            runtime = Runtime(Path(temp))
+            response = dispatch_rpc(runtime, {"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}})
             self.assertIn("result", response)
             self.assertEqual(response["result"]["serverInfo"]["name"], "coding-tools-mcp")
             self.assertTrue(response["result"]["capabilities"]["tools"]["listChanged"])
             self.assertIn("runtimeInstanceId", response["result"]["serverInfo"])
             self.assertIn("processId", response["result"]["serverInfo"])
+            feedback = response["result"]["feedbackCapabilities"]
+            self.assertTrue(feedback["desktop_activity_stream"]["supported"])
+            self.assertTrue(feedback["chatgpt_tool_invocation_status"]["supported"])
+            self.assertFalse(feedback["mcp_apps_status_card"]["supported"])
+            exec_tool = next(item for item in runtime.list_tools()["tools"] if item["name"] == "exec_command")
+            self.assertEqual(exec_tool["_meta"]["openai/toolInvocation/invoking"], "正在执行本地命令…")
+            self.assertEqual(exec_tool["_meta"]["openai/toolInvocation/invoked"], "本地命令已返回")
+            runtime.close()
 
     def test_authorized_root_allows_absolute_read_write_and_blocks_other_paths(self) -> None:
         with tempfile.TemporaryDirectory() as main_temp, tempfile.TemporaryDirectory() as extra_temp, tempfile.TemporaryDirectory() as blocked_temp:

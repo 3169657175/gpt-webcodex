@@ -23,7 +23,7 @@ test('model generation is distinguished from local execution', () => {
   const result = describe(null, null, { status: 'generating', updatedAt: now - 18000 }, now);
   assert.equal(result.key, 'generating');
   assert.match(result.message, /ChatGPT 正在生成/);
-  assert.match(result.detail, /尚无正在执行的本地任务/);
+  assert.match(result.detail, /尚未收到工具调用/);
   assert.equal(result.elapsed, '18 秒');
 });
 
@@ -88,5 +88,41 @@ test('dynamic page asset errors offer a safe manual reload', () => {
   assert.equal(result.key, 'failed');
   assert.equal(result.action, 'reload-page');
   assert.match(result.detail, /动态|Failed|刷新/);
+});
+
+test('active local command remains visible when the ChatGPT page stream is interrupted', () => {
+  const result = describe({
+    status: 'active', lifecycle_state: 'running', current_step: '运行完整测试',
+    created_at: '2026-09-24T01:59:00Z'
+  }, null, { status: 'interrupted' }, now, true, {
+    command: {
+      status: 'running', started_at: '2026-09-24T01:59:10Z',
+      last_output_at: '2026-09-24T01:59:58Z', latest_output: 'collecting tests\n18 passed'
+    }
+  });
+  assert.equal(result.key, 'active');
+  assert.match(result.message, /运行完整测试/);
+  assert.match(result.detail, /最新输出：18 passed/);
+  assert.match(result.detail, /页面连接异常.*本地执行仍在继续/);
+});
+
+test('failed status refresh preserves the last active state instead of reporting idle', () => {
+  const result = describe({
+    status: 'active', lifecycle_state: 'running', current_step: '构建安装包',
+    created_at: '2026-09-24T01:58:00Z'
+  }, null, { status: 'unknown' }, now, false, {
+    command: { status: 'running', started_at: '2026-09-24T01:58:30Z' }
+  }, true);
+  assert.equal(result.key, 'waiting');
+  assert.match(result.message, /暂不可确认/);
+  assert.match(result.detail, /最后一次成功读取/);
+});
+
+test('page interruption takes precedence over a waiting-model marker', () => {
+  const result = describe({
+    status: 'waiting', lifecycle_state: 'waiting_model', current_step: '等待模型继续'
+  }, null, { status: 'interrupted' }, now);
+  assert.equal(result.key, 'failed');
+  assert.match(result.message, /连接已中断/);
 });
 

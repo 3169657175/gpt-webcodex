@@ -53,10 +53,26 @@
       <span class="progress-band-icon" id="progressIcon"></span>
       <div class="progress-band-copy"><b id="progressMessage">正在读取任务进度…</b><small id="progressDetail">本地任务状态会持续更新</small></div>
       <time id="progressElapsed"></time>
+      <button id="activityToggle" class="progress-action activity-toggle" type="button" aria-expanded="false" aria-controls="activityPanel" hidden>活动详情</button>
       <button id="progressAction" class="progress-action" type="button" hidden></button>
       <button id="nativeLoginFinish" class="login-action" type="button" hidden>登录完成，返回助手</button>
       <button id="nativeLoginCancel" class="login-action secondary" type="button" hidden>取消登录</button>
     </div>
+    <aside id="activityPanel" class="activity-panel" aria-label="本地执行活动" hidden>
+      <div class="activity-panel-head">
+        <div><span>本地执行活动</span><b id="activityStatus">等待状态</b></div>
+        <time id="activityCapturedAt"></time>
+      </div>
+      <div class="activity-facts">
+        <div><span>当前阶段</span><b id="activityStage">-</b></div>
+        <div><span>最近活动</span><b id="activityLastSeen">-</b></div>
+        <div><span>等待原因</span><b id="activityWaitReason">-</b></div>
+        <div><span>反馈通道</span><b id="activityChannel">桌面实时状态</b></div>
+      </div>
+      <div class="activity-command" id="activityCommandBlock" hidden><span>命令</span><code id="activityCommand"></code></div>
+      <div class="activity-output"><span>最新输出</span><pre id="activityOutput">尚无命令输出</pre></div>
+      <div class="activity-timeline"><span>最近事件</span><ol id="activityTimeline"></ol></div>
+    </aside>
   </header>
   <main class="loading-stage">
     <div class="loading-card"><div class="spinner"></div><h1>正在打开 ChatGPT</h1><p>聊天页面与本地工作区权限相互隔离。</p></div>

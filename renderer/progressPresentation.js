@@ -17,7 +17,13 @@
     return minutes < 60 ? `${minutes} 分 ${seconds % 60} 秒` : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
   }
 
-  function describe(task, operation, streamState, now = Date.now(), available = true) {
+  function latestOutput(value) {
+    if (typeof value !== 'string') return '';
+    const lines = value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+    return plain(lines.at(-1) || '', 120);
+  }
+
+  function describe(task, operation, streamState, now = Date.now(), available = true, activity = null, stale = false) {
     const stream = String(streamState?.status || '');
     const lifecycle = String(task?.lifecycle_state || '');
     const status = String(task?.status || '');
@@ -28,13 +34,14 @@
     const completedSteps = steps.filter((item) => item.status === 'completed' || item.state === 'completed').length;
     const stage = steps.length ? `阶段 ${completedSteps}/${steps.length}` : '';
     const failure = plain(task?.failure);
-    const command = task?.current_command && typeof task.current_command === 'object' ? task.current_command : null;
+    const activityCommand = activity?.command && typeof activity.command === 'object' ? activity.command : null;
+    const command = activityCommand || (task?.current_command && typeof task.current_command === 'object' ? task.current_command : null);
     const runningCommand = command?.status === 'running';
     const operationRunning = ['running', 'queued'].includes(String(operation?.status || ''));
     const active = operationRunning || runningCommand || ['active', 'running', 'planning', 'preparing', 'verifying', 'recovering'].includes(status)
       || ['created', 'planning', 'ready', 'preparing', 'running', 'recovering', 'verifying'].includes(lifecycle);
-    const elapsed = secondsSince(operationRunning ? operation?.started_at || operation?.queued_at : task?.created_at, now);
-    const lastUpdate = secondsSince(task?.updated_at, now);
+    const elapsed = secondsSince(operationRunning ? operation?.started_at || operation?.queued_at : runningCommand ? command?.started_at || task?.created_at : task?.created_at, now);
+    const lastUpdate = secondsSince(command?.last_output_at || activity?.captured_at || task?.updated_at, now);
     const heartbeatAge = operationRunning && Number.isFinite(Number(operation?.heartbeat_age_seconds))
       ? Math.max(0, Number(operation.heartbeat_age_seconds)) : null;
     const age = heartbeatAge != null
@@ -49,11 +56,13 @@
     if (active) {
       const kind = { test: '正在运行测试', build: '正在构建', command: '正在执行命令' }[command?.kind] || '正在执行本地任务';
       const message = current || (runningCommand ? kind : operationRunning ? '后台任务正在执行' : objective || kind);
-      const details = [stage, runningCommand && current ? kind : '', next && next !== current ? `下一步：${next}` : '', age].filter(Boolean);
+      const output = latestOutput(command?.latest_output);
+      const pageWarning = ['interrupted', 'render_error', 'asset_error'].includes(stream) ? 'ChatGPT 页面连接异常，本地执行仍在继续' : '';
+      const details = [stage, runningCommand && current ? kind : '', output ? `最新输出：${output}` : '', next && next !== current ? `下一步：${next}` : '', pageWarning, age].filter(Boolean);
+      if (!available) {
+        return { key: 'waiting', message: `本地任务状态暂不可确认：${message}`, detail: [stale ? '显示最后一次成功读取的状态' : '', ...details].filter(Boolean).join(' · '), elapsed: duration(elapsed) };
+      }
       return { key: 'active', message, detail: details.join(' · ') || objective || '本地任务正在运行', elapsed: duration(elapsed) };
-    }
-    if (lifecycle === 'waiting_model' || (status === 'waiting' && lifecycle !== 'waiting_user')) {
-      return { key: 'waiting', message: '本地步骤已交回 ChatGPT，等待下一步调用', detail: current || next || objective || '本地任务状态已保存', elapsed: '' };
     }
     if (stream === 'asset_error') {
       return { key: 'failed', message: 'ChatGPT 页面资源加载失败', detail: streamState?.detail || '请点击“刷新页面”重新加载；本地任务状态不会因此丢失', elapsed: '', action: 'reload-page', actionLabel: '刷新页面' };
@@ -69,12 +78,19 @@
       }
       return { key: 'failed', message: stream === 'interrupted' ? 'ChatGPT 回答连接已中断' : 'ChatGPT 消息显示异常', detail: '本地任务状态可独立查看；请检查网页连接', elapsed: '', action: 'reload-page', actionLabel: '刷新页面' };
     }
+    if (!available) {
+      const lastKnown = current || objective;
+      return { key: 'waiting', message: '暂时无法确认本地任务状态', detail: lastKnown ? `已保留最后状态：${lastKnown}` : '正在等待本地工具连接恢复，不会显示为“空闲”', elapsed: '' };
+    }
+    if (lifecycle === 'waiting_model' || (status === 'waiting' && lifecycle !== 'waiting_user')) {
+      return { key: 'waiting', message: '本地步骤已交回 ChatGPT，等待下一步调用', detail: current || next || objective || '本地任务状态已保存', elapsed: '' };
+    }
     if (stream === 'generating') {
       const quietSeconds = Number(streamState?.quietSeconds || streamState?.quiet_seconds || 0);
       if (streamState?.stalled || quietSeconds >= 45) {
         return { key: 'stalled', message: `ChatGPT 仍在生成，但页面已 ${duration(Math.floor(quietSeconds))} 没有新内容`, detail: '这不等于本地 MCP 失败；可以停止本轮生成，或刷新页面重试', elapsed: duration(secondsSince(streamState?.updatedAt, now)), action: 'stop-generation', actionLabel: '停止生成' };
       }
-      return { key: 'generating', message: 'ChatGPT 正在生成回复', detail: '尚无正在执行的本地任务；模型内部规划无法由本地工具读取，页面有活动时会持续更新', elapsed: duration(secondsSince(streamState?.updatedAt, now)) };
+      return { key: 'generating', message: 'ChatGPT 正在生成回复', detail: '本地尚未收到工具调用；网页端只公开回复生成状态，收到调用后会显示命令与输出', elapsed: duration(secondsSince(streamState?.updatedAt, now)) };
     }
     if (status === 'completed' || lifecycle === 'completed') {
       return { key: 'completed', message: `本地任务已完成：${current || objective || '执行结束'}`, detail: next || objective, elapsed: '' };
@@ -82,7 +98,6 @@
     if (status === 'stopped' || lifecycle === 'cancelled') {
       return { key: 'stopped', message: '本地任务已停止', detail: current || objective, elapsed: '' };
     }
-    if (!available) return { key: 'waiting', message: '暂时无法读取本地任务进度', detail: '正在等待本地工具连接恢复', elapsed: '' };
     return { key: 'idle', message: '当前没有运行中的本地任务', detail: 'ChatGPT 的模型规划不会显示在本地任务记录中', elapsed: '' };
   }
 

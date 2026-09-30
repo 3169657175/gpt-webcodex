@@ -11,10 +11,10 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.7.6** |
-| Coding Tools MCP Runtime | **v0.7.6** |
-| MCP Tool Schema | **v10 / 9 tools** |
-| Schema Hash | `cb44f23fd265c4a7d10c801ca9ef88ee0fa4228b7a73151b02ff693f23757949` |
+| 网页 MCP 助手 Desktop | **v0.7.7** |
+| Coding Tools MCP Runtime | **v0.7.7** |
+| MCP Tool Schema | **v11 / 9 tools** |
+| Schema Hash | `d9446f007bb783df0ffebbb24f3d19435c6978097c9a265d69323b42412f0a76` |
 | Electron | **43.2.0** |
 | 平台 | **Windows** |
 
@@ -28,6 +28,16 @@
 - **Git / Worktree 工作流**：支持 Git 操作、隔离 Worktree、安全应用修改与清理。
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
 - **ChatGPT 页面增强**：保留原生页面渲染，提供连续 MCP 状态观察、动态资源错误提示和长时间无新内容的可操作反馈。
+
+## v0.7.7 本地执行反馈与容错
+
+- 新增独立“活动详情”面板，展示当前阶段、命令、最新输出、等待原因与持久化事件时间线。
+- 状态刷新失败时保留最后可信状态；ChatGPT 页面连接中断时，不再覆盖仍在执行的本地任务。
+- 没有预建任务的独立命令也会自动建立可观察任务记录，并保留有界输出快照。
+- `task_control events` 支持事件游标与增量等待，长任务交接不再依赖高频轮询。
+- 增加 ChatGPT 原生工具调用状态提示，并明确报告 MCP Apps / MCP Events 能力边界；实时状态不向聊天输入框注入消息。
+
+详细变化见 [v0.7.7 发布说明](docs/RELEASE_NOTES_0.7.7.md)。
 
 ## v0.7.6 首次配置流程重构
 
@@ -84,11 +94,11 @@
 
 推荐直接从 GitHub Releases 下载最新版：
 
-**[下载 v0.7.6](https://github.com/3169657175/gpt-webcodex/releases/tag/v0.7.6)**
+**[下载 v0.7.7](https://github.com/3169657175/gpt-webcodex/releases/tag/v0.7.7)**
 
 安装包：
 
-`web-mcp-assistant-setup-0.7.6.exe`
+`web-mcp-assistant-setup-0.7.7.exe`
 
 安装后：
 
@@ -173,10 +183,10 @@ docs/                        正式版本发布说明
 - 安装包、`app.asar`、Runtime、Schema 与版本号核对
 - Git commit / tag / clean 状态检查
 
-当前 v0.7.6 安装包 SHA-256：
+当前 v0.7.7 安装包 SHA-256：
 
 ```text
-1FEE463B1774A63DE6A66F485B6F87158246E1B8A8ED48E48E52B527C568A335
+62413981AF0507425A0DB36C06063DE5C043006DDBDE84A096ED62265BBFE53D
 ```
 
 已公开 v0.7.3 安装包 SHA-256：

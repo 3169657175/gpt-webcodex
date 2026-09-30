@@ -156,7 +156,7 @@ except (TypeError, ValueError):
 BACKGROUND_QUEUE_WAIT_MAX_SECONDS = 3600
 BACKGROUND_HEARTBEAT_SECONDS = 5
 MCP_ENDPOINT_PATH = "/mcp"
-TOOL_SCHEMA_VERSION = 10
+TOOL_SCHEMA_VERSION = 11
 
 
 def tool_schema_hash(tools: list[dict[str, Any]]) -> str:
@@ -2317,6 +2317,7 @@ class Runtime:
                 "title": SERVER_TITLE,
                 "version": __version__,
             },
+            "feedbackCapabilities": self.feedback_capabilities_payload(),
             "instructions": self.project_context.server_instructions(),
         }
 
@@ -2459,6 +2460,32 @@ class Runtime:
             "tool_registry": tool_registry_snapshot(
                 tools, tool_mode=self.tool_mode, schema_version=TOOL_SCHEMA_VERSION, workspace=str(self.workspace.root)
             ),
+            "feedback_capabilities": self.feedback_capabilities_payload(),
+        }
+
+    def feedback_capabilities_payload(self) -> dict[str, Any]:
+        """Describe feedback channels without claiming unsupported ChatGPT behavior."""
+        return {
+            "chatgpt_tool_invocation_status": {
+                "supported": True,
+                "transport": "OpenAI tool descriptor metadata",
+                "does_not_send_chat_messages": True,
+            },
+            "desktop_activity_stream": {
+                "supported": True,
+                "transport": "authenticated_sse_and_snapshot",
+                "does_not_send_chat_messages": True,
+            },
+            "mcp_apps_status_card": {
+                "supported": False,
+                "reason": "No MCP Apps UI resource is registered by this runtime.",
+            },
+            "mcp_events": {
+                "supported": False,
+                "current_protocol_version": self.protocol_version,
+                "required_protocol_version": "2026-07-28",
+                "reason": "ChatGPT MCP Events require MCP 2.0 webhook subscriptions and are not used for live command telemetry.",
+            },
         }
 
     def permission_policy_payload(self) -> dict[str, Any]:
@@ -3107,6 +3134,113 @@ class Runtime:
         )
         return {key: copy.deepcopy(operation.get(key)) for key in keys if key in operation}
 
+    @staticmethod
+    def _activity_event_label(event: dict[str, Any]) -> str:
+        event_type = str(event.get("type") or "task.updated")
+        labels = {
+            "task.started": "任务已开始",
+            "task.completed": "任务已完成",
+            "task.failed": "任务执行失败",
+            "task.cancelled": "任务已停止",
+            "task.waiting_model": "本地步骤完成，等待 ChatGPT",
+            "command.started": "命令已启动",
+            "command.completed": "命令已完成",
+            "command.failed": "命令执行失败",
+            "command.cancelled": "命令已停止",
+            "tool.started": "工具调用已开始",
+            "tool.completed": "工具调用已完成",
+            "tool.failed": "工具调用失败",
+        }
+        return labels.get(event_type, event_type.replace("_", " "))
+
+    def _desktop_activity_snapshot(
+        self,
+        state: dict[str, Any],
+        operations: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Return bounded live evidence for the desktop UI without consuming command cursors."""
+        current = state.get("current_command") if isinstance(state.get("current_command"), dict) else {}
+        session_id = str(current.get("session_id") or "")
+        self._prune_sessions()
+        with self.sessions_lock:
+            sessions = list(self.sessions.values())
+            retained_sessions = list(self.output_sessions.values())
+        all_sessions = [*sessions, *retained_sessions]
+        session = next((item for item in all_sessions if session_id and item.session_id == session_id), None)
+        if session is None:
+            live = [item for item in sessions if item.process.poll() is None]
+            if live:
+                session = max(live, key=lambda item: item.started_at)
+            elif state.get("task_id") and retained_sessions:
+                same_task = [
+                    item for item in retained_sessions
+                    if item.task_id == str(state.get("task_id") or "")
+                    and (not state.get("run_id") or item.run_id == str(state.get("run_id") or ""))
+                ]
+                session = max(same_task, key=lambda item: item.started_at) if same_task else None
+
+        command: dict[str, Any] | None = None
+        if session is not None:
+            session.refresh_status()
+            output = session.retained_output_text()
+            with session.lock:
+                stdout_total = int(session.stdout_total_bytes)
+                stderr_total = int(session.stderr_total_bytes)
+                last_output_at = session.last_output_at
+            running = session.process.poll() is None
+            command = {
+                "session_id": session.session_id,
+                "execution_id": session.execution_id,
+                "command": session.command,
+                "workdir": session.workdir,
+                "status": "running" if running else "completed" if session.exit_code == 0 else "failed",
+                "pid": session.process.pid,
+                "exit_code": session.exit_code,
+                "started_at": datetime.fromtimestamp(session.started_at, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                "finished_at": (
+                    datetime.fromtimestamp(session.completed_at, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    if session.completed_at is not None else ""
+                ),
+                "last_output_at": (
+                    datetime.fromtimestamp(last_output_at, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    if last_output_at is not None else ""
+                ),
+                "output_total_bytes": stdout_total + stderr_total,
+                "latest_output": output[-6000:],
+                "output_truncated": len(output) > 6000 or session.stdout_dropped_bytes > 0 or session.stderr_dropped_bytes > 0,
+            }
+        elif current:
+            command = copy.deepcopy(current)
+
+        timeline: list[dict[str, Any]] = []
+        for event in self.task_state.recent_events(16)[-12:]:
+            if not isinstance(event, dict):
+                continue
+            event_state = event.get("state") if isinstance(event.get("state"), dict) else {}
+            event_run_id = str(event.get("run_id") or event_state.get("run_id") or "")
+            if state.get("run_id") and event_run_id and event_run_id != str(state.get("run_id") or ""):
+                continue
+            timeline.append({
+                "event_id": max(0, int(event.get("event_id") or 0)),
+                "type": str(event.get("type") or "task.updated"),
+                "label": self._activity_event_label(event),
+                "timestamp": str(event.get("timestamp") or ""),
+                "step": str(event_state.get("current_step") or "")[:300],
+            })
+
+        active_operation = next((
+            self._compact_operation_record(item)
+            for item in reversed(operations)
+            if str(item.get("status") or "") in {"running", "queued"}
+        ), None)
+        return {
+            "command": command,
+            "active_operation": active_operation,
+            "timeline": timeline,
+            "latest_event_id": self.task_state.latest_event_id(),
+            "captured_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        }
+
     def _background_operations_summary(self, operations: list[dict[str, Any]], *, limit: int = 12) -> dict[str, Any]:
         bounded_limit = min(max(int(limit), 1), 12)
         normalized = [item for item in operations if isinstance(item, dict)]
@@ -3317,9 +3451,13 @@ class Runtime:
             "ok": True,
             "status": "running",
             "requires_progress_report": True,
-            "message": "The workflow is still running in the background. Report concrete progress to the user before polling it again.",
+            "message": (
+                "The workflow is running in the background. Report only the concrete stage already reached, then use "
+                "task_control action=events with after_event_id and wait_ms to wait for new durable activity without busy polling."
+            ),
             "background_operation": snapshot,
             "task": self.task_state.get(),
+            "latest_event_id": self.task_state.latest_event_id(),
         }
         return make_tool_result(name, self._project_model_payload(name, args, handoff_payload), is_error=False)
 
@@ -4889,14 +5027,19 @@ class Runtime:
                     if exc.code != "NOT_FOUND":
                         raise
             history = self.task_state.history(1)
-            return {
+            response = {
                 "state": state,
                 "operations": visible_operations,
                 "background_operations_summary": operations_summary,
                 "active_worktree": active_worktree,
                 "recent_task": history[0] if history else None,
+                "latest_event_id": self.task_state.latest_event_id(),
                 "runtime_layers": layered_runtime_state(state, run_operations, workspace=str(self.workspace.root)),
             }
+            if self._trace_origin() == "desktop":
+                response["activity"] = self._desktop_activity_snapshot(state, run_operations)
+                response["feedback_capabilities"] = self.feedback_capabilities_payload()
+            return response
         if action == "operation":
             operation_id = str(args.get("operation_id", "")).strip()
             if not operation_id:
@@ -4919,7 +5062,10 @@ class Runtime:
             snapshot = self._background_operation_snapshot(operation, include_result=True)
             if snapshot["status"] == "running":
                 if snapshot.get("requires_progress_report"):
-                    snapshot["message"] = "Operation is still running. Report concrete progress to the user before waiting again."
+                    snapshot["message"] = (
+                        "Operation is still running. Report the concrete stage and latest verified evidence, then wait for "
+                        "new durable events with task_control action=events instead of repeating an immediate poll."
+                    )
                     operation["last_progress_report_monotonic"] = time.monotonic()
                     snapshot["next_progress_report_in_seconds"] = PROGRESS_REPORT_SECONDS
                 else:
@@ -4933,10 +5079,25 @@ class Runtime:
         if action == "history":
             return {"tasks": self.task_state.history(int(args.get("limit", 20)))}
         if action == "events":
+            after_event_id = max(0, int(args.get("after_event_id", 0)))
+            wait_ms = min(max(int(args.get("wait_ms", 0)), 0), BACKGROUND_OPERATION_WAIT_MAX_MS)
+            if after_event_id > 0:
+                events = self.task_state.wait_for_events(
+                    after_event_id,
+                    timeout=wait_ms / 1000 if wait_ms else 0,
+                    limit=int(args.get("limit", 50)),
+                )
+            else:
+                events = self.task_state.recent_events(int(args.get("limit", 50)))
+            latest_event_id = self.task_state.latest_event_id()
             return {
                 "state": self.task_state.get(),
-                "events": self.task_state.recent_events(int(args.get("limit", 50))),
-                "latest_event_id": self.task_state.latest_event_id(),
+                "events": events,
+                "latest_event_id": latest_event_id,
+                "next_after_event_id": max(
+                    [after_event_id, *[int(item.get("event_id") or 0) for item in events if isinstance(item, dict)]]
+                ),
+                "wait_timed_out": bool(after_event_id > 0 and wait_ms and not events),
             }
         if action == "clear":
             return {"state": self.task_state.clear(), "cleared": True}
@@ -6042,6 +6203,8 @@ class Runtime:
                 warnings=[landlock_warning] if landlock_warning else None,
                 pty_master_fd=pty_master_fd,
             )
+            session.command = cmd
+            session.workdir = workdir.display
             try:
                 self.task_state.record_command_started(
                     cmd,
@@ -6057,6 +6220,9 @@ class Runtime:
                         "pid": process.pid,
                     },
                 )
+                command_state = self.task_state.get()
+                session.task_id = str(command_state.get("task_id") or "")
+                session.run_id = str(command_state.get("run_id") or "")
             except Exception:
                 pass
             with self.sessions_lock:
@@ -8335,6 +8501,12 @@ def schema_type_name(expected_type: str | list[str]) -> str:
 def tool_definition(name: str, *, fake_readonly: bool = False) -> dict[str, Any]:
     schemas = input_schemas()
     annotations = tool_annotations(name, fake_readonly=fake_readonly)
+    invocation = {
+        "agent_workflow": ("正在执行本地开发任务…", "本地后台任务已启动"),
+        "exec_command": ("正在执行本地命令…", "本地命令已返回"),
+        "task_control": ("正在读取本地任务状态…", "本地任务状态已更新"),
+        "workspace_context": ("正在读取工作区上下文…", "工作区上下文已就绪"),
+    }.get(name, (f"正在调用{annotations['title']}…", f"{annotations['title']}已返回"))
     return {
         "name": name,
         "title": annotations["title"],
@@ -8342,6 +8514,10 @@ def tool_definition(name: str, *, fake_readonly: bool = False) -> dict[str, Any]
         "inputSchema": schemas[name],
         "outputSchema": tool_output_schema(),
         "annotations": annotations,
+        "_meta": {
+            "openai/toolInvocation/invoking": invocation[0],
+            "openai/toolInvocation/invoked": invocation[1],
+        },
     }
 
 
@@ -8455,6 +8631,7 @@ def input_schemas() -> dict[str, dict[str, Any]]:
             "base_ref": {**string, "default": "HEAD", "description": "Committed Git ref used as the isolated worktree base."},
             "max_bytes": {**integer, "minimum": 1024, "maximum": 1048576, "default": 262144, "description": "Maximum worktree diff bytes returned."},
             "wait_ms": {**integer, "minimum": 0, "maximum": 60000, "default": 0, "description": "Wait up to this many milliseconds for a background operation before returning control."},
+            "after_event_id": {**integer, "minimum": 0, "description": "For action=events, return only durable events after this cursor and optionally wait up to wait_ms for new activity."},
             "objective": string,
             "status": {**string, "enum": ["idle", "active", "waiting", "paused", "stopped", "completed", "failed"]},
             "steps": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
@@ -8802,6 +8979,7 @@ def server_card_payload(runtime: Runtime, *, oauth_base_url: str | None = None) 
         "capabilities": {
             "tools": {"listChanged": False},
         },
+        "feedbackCapabilities": runtime.feedback_capabilities_payload(),
     }
     return payload
 

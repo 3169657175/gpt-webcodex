@@ -874,11 +874,17 @@ class TaskStateStore:
     ) -> None:
         with self._lock:
             state = self._read()
-            if not self._has_task(state):
-                return
             lifecycle = str(state.get("lifecycle_state") or "")
             if lifecycle in TERMINAL_LIFECYCLE_STATES:
                 return
+            if not self._has_task(state):
+                state["task_id"] = uuid.uuid4().hex
+                state["run_id"] = uuid.uuid4().hex
+                state["objective"] = "执行本地命令"
+                state["current_step"] = "正在启动本地命令"
+                state["next_step"] = "等待命令完成并核对结果"
+                state["task_origin"] = "implicit_command"
+                state["created_at"] = utc_now()
             started_at = utc_now()
             _set_lifecycle(state, "running")
             kind = classify_command(command)

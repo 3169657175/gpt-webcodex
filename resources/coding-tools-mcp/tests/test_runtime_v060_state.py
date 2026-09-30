@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,6 +17,34 @@ from coding_tools_mcp.task_state import TaskStateStore
 
 
 class RuntimeV060StateTests(unittest.TestCase):
+    def test_command_without_existing_task_creates_visible_implicit_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = TaskStateStore(Path(temp))
+            store.record_command_started("echo visible", "session-visible", ".")
+            state = store.get()
+            self.assertTrue(state["task_id"])
+            self.assertEqual(state["task_origin"], "implicit_command")
+            self.assertEqual(state["lifecycle_state"], "running")
+            self.assertEqual(state["current_command"]["session_id"], "session-visible")
+
+    def test_incremental_event_wait_returns_only_activity_after_cursor(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = TaskStateStore(Path(temp))
+            store.ensure_started("wait for event")
+            cursor = store.latest_event_id()
+
+            def publish() -> None:
+                time.sleep(0.03)
+                store.update({"current_step": "new durable activity"})
+
+            worker = threading.Thread(target=publish)
+            worker.start()
+            events = store.wait_for_events(cursor, timeout=1.0, limit=10)
+            worker.join(timeout=1.0)
+            self.assertEqual(len(events), 1)
+            self.assertGreater(events[0]["event_id"], cursor)
+            self.assertEqual(events[0]["state"]["current_step"], "new durable activity")
+
     def test_terminal_run_is_immutable_to_follow_up_command(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             store = TaskStateStore(Path(temp))

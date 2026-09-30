@@ -54,10 +54,10 @@ test('runtime exposes a versioned schema contract and desktop health detects sta
   const native = read('electron/services/nativeService.js');
   const health = read('electron/services/healthService.js');
   const contract = JSON.parse(read('resources/coding-tools-mcp/schema-contract.json'));
-  assert.equal(contract.schema_version, 10);
+  assert.equal(contract.schema_version, 11);
   assert.equal(contract.tool_count, 9);
   assert.match(contract.schema_hash, /^[a-f0-9]{64}$/);
-  assert.match(server, /TOOL_SCHEMA_VERSION = 10/);
+  assert.match(server, /TOOL_SCHEMA_VERSION = 11/);
   assert.match(server, /tool_schema_hash/);
   assert.match(protocol, /schemaHash/);
   assert.match(native, /runtimeSourceFingerprint/);
@@ -100,10 +100,14 @@ test('browser task strip exposes only user-facing status and a real stop action'
   const preload = read('electron/browserPreload.js');
   assert.match(html, /id="taskStatusLabel"/);
   assert.match(html, /id="stopTask"/);
+  assert.match(html, /id="activityPanel"/);
+  assert.match(html, /id="activityOutput"/);
   assert.doesNotMatch(html, /taskProgressBar|taskProgressText|pauseTask|resumeTask/);
   assert.match(browser, /function taskPresentation/);
   assert.match(browser, /taskRuntime/);
   assert.match(browser, /runningOperation/);
+  assert.match(browser, /renderActivityPanel/);
+  assert.match(browser, /progressInput = \{ \.\.\.progressInput, available: false, stale: true \}/);
   assert.match(browser, /api\.stopTask/);
   assert.match(browser, /setInterval\(refreshTask, 3000\)/);
   assert.doesNotMatch(browser, /progressForTask|backgroundOperationStatus|heartbeatAge/);

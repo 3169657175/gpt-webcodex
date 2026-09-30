@@ -291,6 +291,7 @@ class ExecSession:
     lock: threading.Lock = field(default_factory=threading.Lock)
     reader_threads: list[threading.Thread] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
+    last_output_at: float | None = None
     completed_at: float | None = None
     closed: bool = False
     exit_code: int | None = None
@@ -310,6 +311,7 @@ class ExecSession:
             self.stdout_hasher.update(chunk)
             self.stdout.extend(chunk)
             self.stdout_total_bytes += len(chunk)
+            self.last_output_at = time.time()
             self.stdout_dropped_bytes += _trim_buffer(
                 self.stdout,
                 total_bytes=self.stdout_total_bytes,
@@ -322,6 +324,7 @@ class ExecSession:
             self.stderr_hasher.update(chunk)
             self.stderr.extend(chunk)
             self.stderr_total_bytes += len(chunk)
+            self.last_output_at = time.time()
             self.stderr_dropped_bytes += _trim_buffer(
                 self.stderr,
                 total_bytes=self.stderr_total_bytes,

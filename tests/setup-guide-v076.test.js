@@ -43,13 +43,13 @@ test('0.7.6 manager refreshes tutorial state immediately after workspace changes
   assert.match(app, /api\.onWorkspaceChanged\?\.\(async \(\) =>/);
 });
 
-test('0.7.6 keeps Desktop and bundled Runtime versions aligned', () => {
+test('0.7.7 keeps Desktop and bundled Runtime versions aligned', () => {
   const pkg = JSON.parse(read('package.json'));
   const runtimeInit = read('resources/coding-tools-mcp/coding_tools_mcp/__init__.py');
   const pyproject = read('resources/coding-tools-mcp/pyproject.toml');
   const contract = JSON.parse(read('resources/coding-tools-mcp/schema-contract.json'));
-  assert.equal(pkg.version, '0.7.6');
-  assert.ok(runtimeInit.includes('__version__ = "0.7.6"'));
-  assert.ok(pyproject.includes('version = "0.7.6"'));
-  assert.equal(contract.runtime_version, '0.7.6');
+  assert.equal(pkg.version, '0.7.7');
+  assert.ok(runtimeInit.includes('__version__ = "0.7.7"'));
+  assert.ok(pyproject.includes('version = "0.7.7"'));
+  assert.equal(contract.runtime_version, '0.7.7');
 });

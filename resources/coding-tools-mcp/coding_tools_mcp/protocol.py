@@ -126,6 +126,7 @@ def dispatch_rpc(runtime: Any, request: dict[str, Any]) -> dict[str, Any] | None
                 },
                 "capabilities": {"tools": {"listChanged": True}},
                 "tools": runtime.list_tools().get("tools", []),
+                "feedbackCapabilities": runtime.feedback_capabilities_payload(),
             }
         elif method == "tools/list":
             result = runtime.list_tools()
