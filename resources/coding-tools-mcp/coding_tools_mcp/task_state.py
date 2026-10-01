@@ -103,6 +103,15 @@ def _text(value: Any, limit: int = MAX_TEXT) -> str:
     return str(value or "")[:limit]
 
 
+def _duration_ms_between(started_at: Any, finished_at: Any) -> int | None:
+    try:
+        start = datetime.fromisoformat(str(started_at or "").replace("Z", "+00:00"))
+        finish = datetime.fromisoformat(str(finished_at or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return max(0, int((finish - start).total_seconds() * 1000))
+
+
 def _canonical_run_state(lifecycle_state: str) -> str:
     lifecycle = str(lifecycle_state or "")
     if lifecycle == "idle":
@@ -122,7 +131,8 @@ def _finalize_terminal_steps(state: dict[str, Any], lifecycle: str) -> None:
         if status == "completed" or step_state == "completed":
             continue
         if lifecycle == "completed":
-            if status == "in_progress" or step_state in {"running", "verifying"}:
+            step_id = str(step.get("id") or step.get("step_id") or "").strip().lower()
+            if status == "in_progress" or step_state in {"running", "verifying", "recovering"} or step_id == "finalize":
                 step["status"] = "completed"
                 step["state"] = "completed"
             else:
@@ -236,6 +246,8 @@ def _set_lifecycle(state: dict[str, Any], lifecycle_state: str, *, wait_reason: 
         )
         state["last_heartbeat_at"] = utc_now()
         _finalize_terminal_steps(state, lifecycle)
+        state["current_step"] = ""
+        state["current_step_id"] = ""
         current = state.get("current_command")
         if isinstance(current, dict):
             finalized = copy.deepcopy(current)
@@ -256,6 +268,11 @@ def _set_lifecycle(state: dict[str, Any], lifecycle_state: str, *, wait_reason: 
             finalized.setdefault("finished_at", finished_at)
             if not str(finalized.get("execution_finished_at") or ""):
                 finalized["execution_finished_at"] = str(finalized.get("finished_at") or finished_at)
+            if finalized.get("elapsed_ms") is None:
+                finalized["elapsed_ms"] = _duration_ms_between(
+                    finalized.get("execution_started_at") or finalized.get("started_at"),
+                    finalized.get("execution_finished_at") or finalized.get("finished_at"),
+                )
             if lifecycle == "completed" and finalized.get("exit_code") is None:
                 finalized["exit_code"] = 0
             state["last_command"] = finalized
@@ -772,6 +789,8 @@ class TaskStateStore:
                 state["failure"] = None if failure in (None, "") else _text(failure)
             if "steps" in changes:
                 state["steps"] = self._normalize_steps(changes["steps"])
+                if str(state.get("lifecycle_state") or "") in TERMINAL_LIFECYCLE_STATES:
+                    _finalize_terminal_steps(state, str(state.get("lifecycle_state") or ""))
             completed = {str(item) for item in changes.get("complete_step_ids", [])}
             if completed:
                 for step in state["steps"]:
@@ -1036,7 +1055,8 @@ class TaskStateStore:
             current["pid"] = execution.get("pid")
         current["status"] = status or ("failed" if payload.get("ok") is False else "exited")
         current["exit_code"] = payload.get("exit_code")
-        current["elapsed_ms"] = payload.get("elapsed_ms")
+        if isinstance(payload.get("elapsed_ms"), (int, float)):
+            current["elapsed_ms"] = payload.get("elapsed_ms")
         current["role"] = role
         current["blocking"] = blocking
         if current["status"] == "running":
@@ -1044,6 +1064,11 @@ class TaskStateStore:
             state["current_command"] = current
             return
         current["finished_at"] = utc_now()
+        if current.get("elapsed_ms") is None:
+            current["elapsed_ms"] = _duration_ms_between(
+                current.get("execution_started_at") or current.get("started_at"),
+                current.get("execution_finished_at") or current.get("finished_at"),
+            )
         kind = str(current.get("kind", classify_command(command)))
         result = {
             "command": command,
@@ -1051,7 +1076,7 @@ class TaskStateStore:
             "role": role,
             "blocking": blocking,
             "exit_code": payload.get("exit_code"),
-            "duration_ms": payload.get("elapsed_ms"),
+            "duration_ms": current.get("elapsed_ms"),
             "summary": _text(payload.get("summary") or payload.get("stderr") or payload.get("stdout"), 2000),
             "finished_at": current["finished_at"],
             "execution_id": _text(current.get("execution_id"), 200),

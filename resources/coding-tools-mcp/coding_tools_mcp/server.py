@@ -4529,6 +4529,7 @@ class Runtime:
                     "error": build_report.get("error"),
                 }
 
+        set_stage("finalize", "Finalizing result")
         diff = None
         if bool(args.get("include_diff", True)):
             try:
@@ -4539,13 +4540,12 @@ class Runtime:
                     diff = self.git_diff({"path": str(args.get("path", ".")), "unstaged": True, "max_bytes": int(args.get("max_diff_bytes", 131072))})
             except (ToolFailure, OSError, ValueError):
                 diff = None
-        set_stage("finalize", "Finalizing result")
         for step in workflow_steps:
             step["status"] = "completed"
         self.task_state.update({
             "status": "completed",
             "steps": workflow_steps,
-            "current_step": "Completed",
+            "current_step": "",
             "next_step": "Review the verified changes or continue with the next task.",
             "failure": None,
         }, event="continuous_workflow_completed")

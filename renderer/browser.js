@@ -45,6 +45,16 @@ function formatActivityTime(value) {
   return Number.isFinite(time) ? new Date(time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-';
 }
 
+function formatActivityDuration(ms) {
+  const value = Number(ms);
+  if (!Number.isFinite(value) || value < 0) return '—';
+  const seconds = Math.floor(value / 1000);
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`;
+  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+}
+
 function clearActivityTimers() {
   if (activityOpenTimer) clearTimeout(activityOpenTimer);
   if (activityCloseTimer) clearTimeout(activityCloseTimer);
@@ -56,7 +66,7 @@ function positionActivityPanel(anchor) {
   const panel = $('#activityPanel');
   if (!panel || !anchor) return;
   const rect = anchor.getBoundingClientRect();
-  const width = Math.min(640, Math.max(320, window.innerWidth - 32));
+  const width = Math.min(780, Math.max(360, window.innerWidth - 24));
   const left = Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - width - 12));
   panel.style.left = `${Math.round(left)}px`;
 }
@@ -65,12 +75,12 @@ function openActivityPanel(anchor, { pin = false } = {}) {
   const panel = $('#activityPanel');
   if (!panel || $('#activityToggle')?.hidden) return;
   clearActivityTimers();
-  activityPopoverAnchor = anchor || activityPopoverAnchor || $('#taskStrip');
+  activityPopoverAnchor = anchor || activityPopoverAnchor || $('#progressBand');
   if (pin) activityPopoverPinned = true;
   positionActivityPanel(activityPopoverAnchor);
   panel.hidden = false;
   $('#activityToggle')?.setAttribute('aria-expanded', 'true');
-  $('#taskStrip')?.setAttribute('aria-expanded', 'true');
+  $('#progressBand')?.setAttribute('aria-expanded', 'true');
   if ($('#activityToggle')) $('#activityToggle').textContent = activityPopoverPinned ? '收起详情' : '活动详情';
 }
 
@@ -81,7 +91,7 @@ function closeActivityPanel({ force = false } = {}) {
   const panel = $('#activityPanel');
   if (panel) panel.hidden = true;
   $('#activityToggle')?.setAttribute('aria-expanded', 'false');
-  $('#taskStrip')?.setAttribute('aria-expanded', 'false');
+  $('#progressBand')?.setAttribute('aria-expanded', 'false');
   renderActivityPanel();
 }
 
@@ -103,6 +113,7 @@ function renderActivityPanel() {
   if (!toggle || !panel) return;
   const { task, operation, activity, runtimeLayers, feedbackCapabilities, available, stale } = progressInput;
   const command = activity?.command && typeof activity.command === 'object' ? activity.command : null;
+  const lastCommand = task?.last_command && typeof task.last_command === 'object' ? task.last_command : null;
   const timeline = Array.isArray(activity?.timeline) ? activity.timeline : [];
   const hasContent = Boolean(task || operation || command || timeline.length || runtimeLayers);
   toggle.hidden = !hasContent;
@@ -117,9 +128,15 @@ function renderActivityPanel() {
   if (panel.hidden) toggle.textContent = ['quiet', 'suspected_stall', 'stalled'].includes(view.userState) ? '为什么看起来卡住了？' : '活动详情';
   $('#activityStatus').textContent = view.message;
   $('#activityCapturedAt').textContent = `${stale ? '最后成功读取 ' : '状态读取 '}${formatActivityTime(activity?.captured_at || task?.updated_at)}`;
-  $('#activityStage').textContent = task?.current_step || operation?.phase || operation?.status || (command?.status === 'running' ? '命令执行中' : '-');
-  $('#activityElapsed').textContent = view.elapsed || '—';
-  const lastActivityAt = command?.last_output_at || timeline.at(-1)?.timestamp || task?.updated_at || operation?.updated_at;
+  const stateLabel = {
+    testing: '正在测试', building: '正在构建', waiting_model: '等待 ChatGPT', waiting_user: '等待处理', quiet: '仍在运行',
+    suspected_stall: '疑似停滞', stalled: '疑似卡住', local_running: '本地运行中', planning: '正在规划', recovering: '正在恢复',
+    completed: '已完成', failed: '失败', stopped: '已停止'
+  }[view.userState || view.key] || view.key || '—';
+  $('#activityState').textContent = stateLabel;
+  $('#activityStage').textContent = task?.current_step || operation?.phase || operation?.status || (command?.status === 'running' ? '命令执行中' : task?.status === 'completed' ? '本地任务已完成' : '—');
+  $('#activityElapsed').textContent = view.elapsed || formatActivityDuration(command?.elapsed_ms ?? lastCommand?.elapsed_ms);
+  const lastActivityAt = command?.last_output_at || lastCommand?.finished_at || timeline.at(-1)?.timestamp || task?.updated_at || operation?.updated_at;
   $('#activityLastSeen').textContent = formatActivityTime(lastActivityAt);
   $('#activityHeartbeat').textContent = view.heartbeatAge == null ? '—' : `${Math.floor(view.heartbeatAge)} 秒前`;
   $('#activityProcess').textContent = runtimeLayers?.process?.state === 'running' ? '运行中' : runtimeLayers?.process?.state === 'background' ? '后台任务' : (view.canStop ? '运行中' : '无本地命令');
@@ -139,6 +156,14 @@ function renderActivityPanel() {
   $('#activityChannel').title = feedbackCapabilities?.mcp_events?.supported
     ? 'MCP Events 已启用'
     : feedbackCapabilities?.mcp_events?.reason || '实时反馈不依赖向聊天输入框发送消息';
+  $('#activityTaskId').textContent = task?.task_id || '—';
+  $('#activityRunId').textContent = task?.run_id || operation?.run_id || '—';
+  $('#activityOperationId').textContent = operation?.operation_id || '—';
+  const lastResultStatus = lastCommand?.status || task?.latest_test_result?.status || task?.latest_build_result?.status || '';
+  const lastExitCode = lastCommand?.exit_code;
+  $('#activityLastResult').textContent = lastResultStatus
+    ? `${lastResultStatus}${lastExitCode == null ? '' : ` · exit ${lastExitCode}`}${lastCommand?.elapsed_ms == null ? '' : ` · ${formatActivityDuration(lastCommand.elapsed_ms)}`}`
+    : '—';
   const commandBlock = $('#activityCommandBlock');
   commandBlock.hidden = !command?.command;
   $('#activityCommand').textContent = command?.command || '';
@@ -317,9 +342,7 @@ async function refreshTask() {
     strip.className = `task-strip ${view.key}`;
     $('#taskStatusLabel').textContent = view.label;
     $('#taskTitle').textContent = view.detail;
-    $('#taskTitle').title = view.detail;
     $('#stopTask').hidden = !view.canStop;
-    strip.title = view.canStop ? '悬停查看详细运行状态；需要时可以停止' : '悬停查看详细运行状态';
   } catch {
     taskRefreshWarning = '任务状态读取失败，正在自动重试';
     progressInput = { ...progressInput, available: false, stale: true };
@@ -328,9 +351,7 @@ async function refreshTask() {
     strip.className = `task-strip ${view.key}`;
     $('#taskStatusLabel').textContent = view.label;
     $('#taskTitle').textContent = view.detail;
-    $('#taskTitle').title = view.detail;
     $('#stopTask').hidden = true;
-    strip.title = '悬停查看详细运行状态';
   }
   if (nativeLoginState.status === 'idle' && loginState.mode !== 'embedded' && taskRefreshWarning && !progressInput.task && !progressInput.operation) {
     $('#progressDetail').textContent = taskRefreshWarning;
@@ -456,27 +477,25 @@ $('#activityToggle').onclick = (event) => {
   event.stopPropagation();
   const panel = $('#activityPanel');
   if (!panel.hidden && activityPopoverPinned) closeActivityPanel({ force: true });
-  else openActivityPanel($('#taskStrip'), { pin: true });
+  else openActivityPanel($('#progressBand'), { pin: true });
 };
-for (const anchor of [$('#taskStrip'), $('#progressBand')].filter(Boolean)) {
-  anchor.addEventListener('mouseenter', () => scheduleActivityOpen(anchor));
-  anchor.addEventListener('mouseleave', scheduleActivityClose);
-}
+$('#progressBand')?.addEventListener('mouseenter', () => scheduleActivityOpen($('#progressBand')));
+$('#progressBand')?.addEventListener('mouseleave', scheduleActivityClose);
 $('#activityPanel').addEventListener('mouseenter', () => {
   if (activityCloseTimer) clearTimeout(activityCloseTimer);
 });
 $('#activityPanel').addEventListener('mouseleave', scheduleActivityClose);
-$('#taskStrip').addEventListener('click', (event) => {
-  if (event.target.closest('#stopTask')) return;
+$('#progressBand').addEventListener('click', (event) => {
+  if (event.target.closest('button')) return;
   event.stopPropagation();
   if (!$('#activityPanel').hidden && activityPopoverPinned) closeActivityPanel({ force: true });
-  else openActivityPanel($('#taskStrip'), { pin: true });
+  else openActivityPanel($('#progressBand'), { pin: true });
 });
-$('#taskStrip').addEventListener('keydown', (event) => {
+$('#progressBand').addEventListener('keydown', (event) => {
   if (!['Enter', ' '].includes(event.key)) return;
   event.preventDefault();
   if (!$('#activityPanel').hidden && activityPopoverPinned) closeActivityPanel({ force: true });
-  else openActivityPanel($('#taskStrip'), { pin: true });
+  else openActivityPanel($('#progressBand'), { pin: true });
 });
 $('#workspaceHealthButton').onclick = (event) => {
   event.stopPropagation();
@@ -494,15 +513,15 @@ document.addEventListener('click', (event) => {
     $('#workspaceHealthButton').setAttribute('aria-expanded', 'false');
   }
   const activityPanel = $('#activityPanel');
-  const taskStrip = $('#taskStrip');
+  const progressBand = $('#progressBand');
   const activityToggle = $('#activityToggle');
-  if (activityPopoverPinned && activityPanel && !activityPanel.contains(event.target) && !taskStrip?.contains(event.target) && !activityToggle?.contains(event.target)) closeActivityPanel({ force: true });
+  if (activityPopoverPinned && activityPanel && !activityPanel.contains(event.target) && !progressBand?.contains(event.target) && !activityToggle?.contains(event.target)) closeActivityPanel({ force: true });
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !$('#activityPanel')?.hidden) closeActivityPanel({ force: true });
 });
 window.addEventListener('resize', () => {
-  if (!$('#activityPanel')?.hidden) positionActivityPanel(activityPopoverAnchor || $('#taskStrip'));
+  if (!$('#activityPanel')?.hidden) positionActivityPanel(activityPopoverAnchor || $('#progressBand'));
 });
 $('#managerButton').onclick = () => api.openManager();
 $('#workspacePickerButton').onclick = (event) => {
@@ -567,6 +586,6 @@ refreshWorkspace();
 refreshTask();
 refreshApprovals();
 setInterval(refreshWorkspace, 15000);
-setInterval(refreshTask, 3000);
+setInterval(refreshTask, 1000);
 setInterval(renderProgress, 1000);
 setInterval(refreshApprovals, 3000);

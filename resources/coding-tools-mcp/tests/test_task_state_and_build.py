@@ -112,8 +112,27 @@ class TaskStateTests(unittest.TestCase):
             state = store.update({"status": "completed", "current_step": "Completed"})
             self.assertEqual(state["lifecycle_state"], "completed")
             self.assertIsNone(state["current_command"])
+            self.assertEqual(state["current_step"], "")
             self.assertEqual(state["last_command"]["session_id"], "session-terminal")
             self.assertEqual(state["last_command"]["status"], "completed")
+            self.assertIsInstance(state["last_command"]["elapsed_ms"], int)
+
+    def test_completed_lifecycle_marks_pending_finalize_step_completed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = TaskStateStore(Path(temp))
+            store.ensure_started("terminal step cleanup")
+            state = store.update({
+                "steps": [
+                    {"id": "verify", "text": "Verify", "status": "completed"},
+                    {"id": "finalize", "text": "Finalize", "status": "pending"},
+                ],
+                "status": "completed",
+                "current_step": "Testing and building",
+            })
+            finalize = next(step for step in state["steps"] if step["id"] == "finalize")
+            self.assertEqual(finalize["status"], "completed")
+            self.assertEqual(finalize["state"], "completed")
+            self.assertEqual(state["current_step"], "")
 
     def test_terminal_task_is_not_revived_by_later_plain_command(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -11,8 +11,8 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.8.1** |
-| Coding Tools MCP Runtime | **v0.8.1** |
+| 网页 MCP 助手 Desktop | **v0.8.2** |
+| Coding Tools MCP Runtime | **v0.8.2** |
 | MCP Tool Schema | **v12 / 9 tools** |
 | Schema Hash | `d9446f007bb783df0ffebbb24f3d19435c6978097c9a265d69323b42412f0a76` |
 | Electron | **43.2.0** |
@@ -28,6 +28,12 @@
 - **Git / Worktree 工作流**：支持 Git 操作、隔离 Worktree、安全应用修改与清理。
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
 - **ChatGPT 页面增强**：保留原生页面渲染，提供连续 MCP 状态观察、动态资源错误提示和长时间无新内容的可操作反馈。
+
+## v0.8.2 详细状态卡与终态收口
+
+0.8.2 继续收紧 0.8.1 的可观测性体验：详情卡回到聊天区顶部左侧的主进度带，并扩展真实耗时、心跳、进程、Task / Run / Operation ID、最近结果、命令输出和事件时间线；同时修复任务完成后的状态残留与 finalize 矛盾状态。
+
+详细变化见 [v0.8.2 发布说明](docs/RELEASE_NOTES_0.8.2.md)。
 
 ## v0.8.1 运行状态卡片与连续执行修复
 
@@ -122,9 +128,9 @@
 
 本地正式安装包已生成：
 
-`dist/web-mcp-assistant-setup-0.8.1.exe`
+`dist/web-mcp-assistant-setup-0.8.2.exe`
 
-文件大小：`126,311,291 bytes`（约 `120.46 MiB`），FileVersion / ProductVersion 均为 `0.8.1`。
+文件大小：`126,312,028 bytes`（约 `120.46 MiB`），FileVersion / ProductVersion 均为 `0.8.2`。
 
 安装后：
 
@@ -209,10 +215,10 @@ docs/                        正式版本发布说明
 - 安装包、`app.asar`、Runtime、Schema 与版本号核对
 - Git commit / tag / clean 状态检查
 
-当前 v0.8.1 安装包 SHA-256：
+当前 v0.8.2 安装包 SHA-256：
 
 ```text
-942AF278CCA5BCCA505EA49F099484F013928288568060847623E9D605AE3694
+E4711F20B8EDFCBD31FC3C0F06F7422320E9F85EBDE74B6EDF7D774967B3C98F
 ```
 
 上一版 v0.8.0 安装包 SHA-256：

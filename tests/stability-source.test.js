@@ -75,7 +75,7 @@ test('desktop runtime hot-switches workspaces while the chat chrome stays compac
   assert.match(orchestrator, /async supervise\(\)/);
   assert.match(browser, /workspacePickerButton/);
   assert.match(browser, /function taskPresentation/);
-  assert.match(browser, /setInterval\(refreshTask, 3000\)/);
+  assert.match(browser, /setInterval\(refreshTask, 1000\)/);
   assert.doesNotMatch(browser, /backgroundOperationStatus|progressForTask|taskProgressBar/);
   assert.match(workspaceWindow, /inspectWorkspaces/);
   assert.match(workspaceWindow, /cleanupInvalidWorkspaces/);
@@ -109,7 +109,7 @@ test('browser task strip exposes only user-facing status and a real stop action'
   assert.match(browser, /renderActivityPanel/);
   assert.match(browser, /progressInput = \{ \.\.\.progressInput, available: false, stale: true \}/);
   assert.match(browser, /api\.stopTask/);
-  assert.match(browser, /setInterval\(refreshTask, 3000\)/);
+  assert.match(browser, /setInterval\(refreshTask, 1000\)/);
   assert.doesNotMatch(browser, /progressForTask|backgroundOperationStatus/);
   assert.match(browser, /activityHeartbeat/);
   assert.match(browser, /activityDiagnosis/);

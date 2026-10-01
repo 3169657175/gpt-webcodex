@@ -359,6 +359,8 @@ class ExecSession:
     def snapshot_since_cursor(self, max_output_bytes: int) -> dict[str, Any]:
         self.refresh_status()
         final_output = self.process.poll() is not None
+        elapsed_until = self.completed_at if self.completed_at is not None else time.time()
+        elapsed_ms = max(0, int((elapsed_until - self.started_at) * 1000))
         with self.lock:
             stdout_omitted = max(0, self.stdout_start_offset - self.stdout_cursor)
             stderr_omitted = max(0, self.stderr_start_offset - self.stderr_cursor)
@@ -403,6 +405,7 @@ class ExecSession:
             "exit_code": self.exit_code,
             "signal": self.signal_name,
             "timed_out": self.timed_out,
+            "elapsed_ms": elapsed_ms,
             "stdout": stdout_truncation.content,
             "stderr": stderr_truncation.content,
             "stdout_encoding": stdout_decoded.encoding,
