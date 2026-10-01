@@ -20,7 +20,7 @@ test('Manager primary navigation exposes four Chinese-first business entries', (
   const html = read('renderer/index.html');
   assert.match(html, />首页<\/span>/);
   assert.match(html, />工作区<\/span>/);
-  assert.match(html, />本地记忆<\/span>/);
+  assert.match(html, />长期上下文<\/span>/);
   assert.match(html, />设置与诊断<\/span>/);
   assert.doesNotMatch(html, /data-page="task"|data-page="overview"|data-page="support"|data-page="build"/);
 });

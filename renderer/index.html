@@ -17,13 +17,13 @@
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-mark"><span></span><span></span><span></span></div>
-      <div><strong>网页 MCP 助手</strong><small>本地开发助手 · 0.8.3</small></div>
+      <div><strong>网页 MCP 助手</strong><small>本地开发助手 · 0.8.4</small></div>
     </div>
     <nav class="nav-list" aria-label="主导航">
       <div class="nav-section-label">工作</div>
       <button class="nav-item active" data-page="status"><span class="nav-icon">⌂</span><span>首页</span></button>
       <button class="nav-item" data-page="workspace"><span class="nav-icon">▣</span><span>工作区</span></button>
-      <button class="nav-item" data-page="memory"><span class="nav-icon">◫</span><span>本地记忆</span></button>
+      <button class="nav-item" data-page="memory"><span class="nav-icon">◫</span><span>长期上下文</span></button>
       <div class="nav-section-label">配置</div>
       <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span><span>设置与诊断</span></button>
       <button class="nav-item" data-page="setup-guide"><span class="nav-icon">?</span><span>配置教程</span></button>
@@ -132,15 +132,15 @@
       </section>
 
       <section class="page memory-page" data-page-view="memory">
-        <div class="section-header"><div><span class="section-kicker">跨账号本机画像</span><h2>本地记忆</h2><p>记住你的身份背景、技术兴趣、常做项目、工作习惯和长期偏好，而不是收藏聊天片段。</p></div><div class="inline-actions"><button class="secondary-button" id="memoryImport">导入</button><button class="secondary-button" id="memoryExport">导出</button><button class="primary-button" id="memoryRefresh">刷新</button></div></div>
+        <div class="section-header"><div><span class="section-kicker">跨账号 · 跨会话</span><h2>长期上下文</h2><p>保存真正会影响未来协作的稳定信息：由 ChatGPT 主动总结为主，自动画像作为辅助兜底；这里不是聊天历史。</p></div><div class="inline-actions"><button class="secondary-button" id="memoryImport">导入</button><button class="secondary-button" id="memoryExport">导出</button><button class="primary-button" id="memoryRefresh">刷新</button></div></div>
         <div class="memory-status-grid">
           <article class="status-card"><h3>有效记忆</h3><strong id="memoryActive">0</strong><p>总计 <span id="memoryTotal">0</span> · 归档 <span id="memoryArchived">0</span></p></article>
           <article class="status-card"><h3>待确认</h3><strong id="memoryCandidateCount">0</strong><p>只有出现候选时才需要处理</p></article>
           <article class="status-card"><h3>最后更新</h3><strong id="memoryUpdated">—</strong><p id="memoryProfile">local-default</p></article>
         </div>
-        <article class="panel memory-mode-panel"><div><b>自动画像模式</b><p>自动模式只提炼稳定、可复用的信息，并合并到少量长期画像中；一次性问题、Bug 抱怨、闲聊、凭据和敏感个人信息不会进入长期画像。</p><small id="memoryAutoCaptureStatus">等待读取状态</small></div><select id="memoryAutoMode"><option value="off">关闭</option><option value="suggest">建议</option><option value="auto">自动</option></select></article>
+        <article class="panel memory-mode-panel"><div><b>自动画像辅助</b><p>主要由 ChatGPT 在使用 MCP 时自行判断并调用长期上下文写入；自动画像只负责辅助兜底。一次性问题、临时 Bug、闲聊、凭据和敏感个人信息不会进入长期上下文。</p><small id="memoryAutoCaptureStatus">等待读取状态</small></div><select id="memoryAutoMode"><option value="off">关闭</option><option value="suggest">建议</option><option value="auto">自动</option></select></article>
         <article class="panel memory-candidate-panel" id="memoryCandidatePanel" hidden><div class="panel-title"><div><h3>需要你确认的候选</h3><p>只有真的存在候选时才显示。</p></div></div><div class="memory-list" id="memoryCandidates"></div></article>
-        <article class="panel memory-library-panel"><div class="panel-title"><div><h3>长期画像与项目记忆</h3><p>“核心画像”相当于全局长期上下文，会优先提供给助手；项目记忆只在相关工作区使用。旧版聊天片段会在迁移后归档。</p></div></div><div class="memory-toolbar"><input id="memorySearch" type="search" placeholder="搜索标题或正文"><select id="memoryScope"><option value="all">当前上下文</option><option value="project">当前项目</option><option value="global">全局</option></select><button class="secondary-button" id="memorySearchButton">搜索</button></div><div class="memory-bulk-toolbar"><label class="memory-select-label"><input id="memorySelectPage" type="checkbox">选择本页</label><button class="secondary-button" id="memoryBatchArchive" type="button" disabled>归档已选</button><label class="memory-page-size-label" for="memoryPageSize">每页<select id="memoryPageSize"><option value="8">8</option><option value="12" selected>12</option><option value="24">24</option></select>条</label></div><div class="history-meta" id="memoryListMeta">等待读取本地记忆</div><div class="memory-list" id="memoryList"><span class="task-muted">暂无记忆</span></div><div class="memory-pagination" id="memoryPagination" aria-label="记忆分页"><button class="secondary-button" id="memoryPrevPage" type="button" disabled>上一页</button><span id="memoryPageLabel">第 1 / 1 页</span><button class="secondary-button" id="memoryNextPage" type="button" disabled>下一页</button></div></article>
+        <article class="panel memory-library-panel"><div class="panel-title"><div><h3>长期画像与项目上下文</h3><p>“核心画像”是跨项目长期上下文，会优先提供给助手；“项目上下文”只在相关工作区使用。模型主动总结和自动画像都会在这里汇总、去重。</p></div></div><div class="memory-toolbar"><input id="memorySearch" type="search" placeholder="搜索标题或正文"><select id="memoryScope"><option value="all">当前上下文</option><option value="project">当前项目</option><option value="global">全局</option></select><button class="secondary-button" id="memorySearchButton">搜索</button></div><div class="memory-bulk-toolbar"><label class="memory-select-label"><input id="memorySelectPage" type="checkbox">选择本页</label><button class="secondary-button" id="memoryBatchArchive" type="button" disabled>归档已选</button><label class="memory-page-size-label" for="memoryPageSize">每页<select id="memoryPageSize"><option value="8">8</option><option value="12" selected>12</option><option value="24">24</option></select>条</label></div><div class="history-meta" id="memoryListMeta">等待读取长期上下文</div><div class="memory-list" id="memoryList"><span class="task-muted">暂无长期上下文</span></div><div class="memory-pagination" id="memoryPagination" aria-label="长期上下文分页"><button class="secondary-button" id="memoryPrevPage" type="button" disabled>上一页</button><span id="memoryPageLabel">第 1 / 1 页</span><button class="secondary-button" id="memoryNextPage" type="button" disabled>下一页</button></div></article>
       </section>
 
 

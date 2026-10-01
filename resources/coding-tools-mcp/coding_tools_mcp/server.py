@@ -111,7 +111,7 @@ SERVER_TITLE = "Coding Tools MCP"
 TOOL_MODE_ALLOWLISTS = {
     "smart": frozenset({
         "coding_tools_guide", "workspace_context", "agent_workflow", "task_control", "document_workflow",
-        "exec_command", "command_control", "request_permissions", "view_image",
+        "exec_command", "command_control", "request_permissions", "remember_context", "view_image",
     }),
     "readonly": frozenset({"server_info", "check_exec_environment", "get_default_cwd", "task_state_get", "task_history_list", "read_file", "list_dir", "list_files", "search_text", "read_output", "git_status", "git_diff", "git_log", "git_show", "git_blame", "view_image"}),
     "coding": frozenset({"server_info", "check_exec_environment", "get_default_cwd", "set_default_cwd", "task_state_get", "task_state_update", "task_state_pause", "task_state_resume", "task_history_list", "read_file", "list_dir", "list_files", "search_text", "apply_patch", "exec_command", "write_stdin", "kill_session", "read_output", "git_status", "git_diff", "git_log", "git_show", "git_blame", "request_permissions", "verify_build", "view_image"}),
@@ -156,7 +156,7 @@ except (TypeError, ValueError):
 BACKGROUND_QUEUE_WAIT_MAX_SECONDS = 3600
 BACKGROUND_HEARTBEAT_SECONDS = 5
 MCP_ENDPOINT_PATH = "/mcp"
-TOOL_SCHEMA_VERSION = 12
+TOOL_SCHEMA_VERSION = 13
 
 
 def tool_schema_hash(tools: list[dict[str, Any]]) -> str:
@@ -898,6 +898,16 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         title="Request permissions",
         description="Report scoped permission-request status without silently granting operations.",
         read_only=True,
+    ),
+    "remember_context": ToolSpec(
+        title="Remember long-term context",
+        description=(
+            "Save one stable, long-lived, reusable fact that will materially improve future collaboration. "
+            "Use this proactively only when the information is likely to remain useful across future turns, such as a durable user preference or working style, a standing project rule, or an enduring project decision. "
+            "Do NOT call it for one-off questions, temporary bugs, ordinary chat, transient task state, guesses, passwords, tokens, payment credentials, or sensitive personal information. Summarize before writing instead of copying chat text."
+        ),
+        destructive=True,
+        idempotent=True,
     ),
     "view_image": ToolSpec(
         title="View image",
@@ -2635,6 +2645,10 @@ class Runtime:
             elif not read_only:
                 categories = {"write"}
                 risk_level = "R1"
+        elif name == "remember_context":
+            categories = {"write"}
+            risk_level = "R1"
+            summary = "写入模型主动筛选的长期上下文"
         elif name in {"apply_patch", "apply_changes_and_verify", "file_batch", "document_create", "document_convert"}:
             categories = {"write"}
             risk_level = "R1"
@@ -3577,7 +3591,7 @@ class Runtime:
                 )
             control_tools = {
                 "task_control", "task_state_get", "task_state_update", "task_state_pause", "task_state_resume",
-                "task_state_clear", "task_history_list", "command_control", "request_permissions",
+                "task_state_clear", "task_history_list", "command_control", "request_permissions", "remember_context",
             }
             if name not in control_tools and not call_is_read_only:
                 if str(current_task.get("status", "")) == "paused":
@@ -4014,6 +4028,39 @@ class Runtime:
         if repo_map.get("_refresh_needed"):
             _start_repo_index_refresh(repo_index_root, cache_key, detail)
         return payload
+
+    def remember_context(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Persist one deliberately selected piece of long-term context for future model use."""
+        if self.memory_store is None or self.memory_candidates is None:
+            return {
+                "status": "rejected",
+                "code": "MEMORY_UNAVAILABLE",
+                "reason": self.memory_warning or "Long-term context store is unavailable.",
+            }
+        scope = str(args.get("scope") or "project").strip().lower()
+        project_id = str(self.project_identity.get("project_id") or "") if scope == "project" else ""
+        try:
+            result = self.memory_candidates.remember_direct(
+                scope=scope,
+                memory_type=str(args.get("memory_type") or "note"),
+                title=str(args.get("title") or "").strip(),
+                content=str(args.get("content") or "").strip(),
+                project_id=project_id,
+                source="model_summary",
+                confidence=float(args.get("confidence", 0.9) or 0.0),
+                pinned=bool(args.get("pinned", False)),
+            )
+        except MemoryWriteError as exc:
+            return {
+                "status": "rejected",
+                "code": exc.code,
+                "reason": str(exc),
+                "details": exc.details,
+            }
+        if str(result.get("status") or "") in {"remembered", "updated"}:
+            self._invalidate_fast_cache()
+            self._clear_context_bundle_cache()
+        return result
 
     def _active_recipe_context(self, *, include_steps: bool = False) -> dict[str, Any]:
         listing = self.recipes.list()
@@ -8599,6 +8646,7 @@ def tool_definition(name: str, *, fake_readonly: bool = False) -> dict[str, Any]
         "exec_command": ("正在执行本地命令…", "本地命令已返回"),
         "task_control": ("正在读取本地任务状态…", "本地任务状态已更新"),
         "workspace_context": ("正在读取工作区上下文…", "工作区上下文已就绪"),
+        "remember_context": ("正在整理长期上下文…", "长期上下文已更新"),
     }.get(name, (f"正在调用{annotations['title']}…", f"{annotations['title']}已返回"))
     return {
         "name": name,
@@ -9011,6 +9059,17 @@ def input_schemas() -> dict[str, dict[str, Any]]:
                 "ttl_seconds": {**integer, "minimum": 1, "maximum": 3600, "default": 300},
             },
             ["tool_name", "permission", "reason", "arguments"],
+        ),
+        "remember_context": object_schema(
+            {
+                "scope": {**string, "enum": ["global", "project"], "default": "project", "description": "Use global for durable user-wide context and project for standing context specific to the current workspace."},
+                "memory_type": {**string, "enum": ["core_preference", "working_style", "decision", "project_context", "note"], "default": "note"},
+                "title": {**string, "minLength": 1, "description": "Short semantic title for the stable context."},
+                "content": {**string, "minLength": 1, "description": "Concise model-written summary of only the stable reusable information; never paste the full chat."},
+                "confidence": {"type": "number", "default": 0.9, "description": "Confidence that this context is stable and worth carrying into future work."},
+                "pinned": {**boolean, "default": False, "description": "Reserve true for foundational global context or a project rule that should be prioritized."},
+            },
+            ["title", "content"],
         ),
         "view_image": object_schema(
             {

@@ -1,7 +1,7 @@
 'use strict';
 
 function memoryResult(response) {
-  if (response && response.ok === false) throw new Error(String(response.error || '本地记忆处理失败'));
+  if (response && response.ok === false) throw new Error(String(response.error || '长期上下文处理失败'));
   return response?.result ?? response ?? {};
 }
 

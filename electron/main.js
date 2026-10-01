@@ -563,7 +563,7 @@ const MEMORY_CONTROL_ACTIONS = new Set([
 function sanitizeMemoryControlPayload(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
   const action = String(source.action || 'status').trim().toLowerCase();
-  if (!MEMORY_CONTROL_ACTIONS.has(action)) throw new Error('不支持的本地记忆操作。');
+  if (!MEMORY_CONTROL_ACTIONS.has(action)) throw new Error('不支持的长期上下文操作。');
   const result = { action };
   const copyText = (key, limit) => {
     if (source[key] !== undefined && source[key] !== null) result[key] = String(source[key]).slice(0, limit);
@@ -731,7 +731,7 @@ function registerIpc() {
     const action = String(payload?.action || 'status').trim().toLowerCase();
     if (action === 'export') {
       const result = await dialog.showSaveDialog(managerWindow || chatWindow, {
-        title: '导出本地记忆备份',
+        title: '导出长期上下文备份',
         defaultPath: path.join(app.getPath('documents'), `gpt-webcodex-memory-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}.zip`),
         filters: [{ name: 'ZIP 备份', extensions: ['zip'] }]
       });
@@ -740,7 +740,7 @@ function registerIpc() {
     }
     if (action === 'import') {
       const result = await dialog.showOpenDialog(managerWindow || chatWindow, {
-        title: '导入本地记忆备份',
+        title: '导入长期上下文备份',
         properties: ['openFile'],
         filters: [{ name: 'ZIP 备份', extensions: ['zip'] }]
       });

@@ -11,10 +11,10 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.8.3** |
-| Coding Tools MCP Runtime | **v0.8.3** |
-| MCP Tool Schema | **v12 / 9 tools** |
-| Schema Hash | `d9446f007bb783df0ffebbb24f3d19435c6978097c9a265d69323b42412f0a76` |
+| 网页 MCP 助手 Desktop | **v0.8.4** |
+| Coding Tools MCP Runtime | **v0.8.4** |
+| MCP Tool Schema | **v13 / 10 tools** |
+| Schema Hash | `ddc6ffcbf2d76157c312709b95bff9136d0e4827f7b539e42d4710ba963ea4b2` |
 | Electron | **43.2.0** |
 | 平台 | **Windows** |
 
@@ -28,6 +28,18 @@
 - **Git / Worktree 工作流**：支持 Git 操作、隔离 Worktree、安全应用修改与清理。
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
 - **ChatGPT 页面增强**：保留原生页面渲染，提供连续 MCP 状态观察、动态资源错误提示和长时间无新内容的可操作反馈。
+
+## v0.8.4 长期上下文与顺序状态链路
+
+0.8.4 把“本地记忆”升级为更准确的“长期上下文”：ChatGPT 可以通过新增的 `remember_context` MCP 工具主动判断并总结真正稳定、长期、可复用的信息，自动画像退居辅助兜底；同时缩小运行详情悬停热区，并把服务启动页改为严格按顺序推进的真实状态链路。
+
+- **长期上下文**：跨账号/跨会话复用用户画像、工作习惯、长期偏好、项目规则与决策，不再把它描述成聊天记录式“记忆”。
+- **模型主动总结**：`remember_context` 只用于长期稳定信息，内置去重、同主题更新、secret 拒绝和敏感个人信息保护。
+- **精确运行详情热区**：只有顶部左侧状态文案附近约 390–400px 可悬停/点击打开原生运行详情，整条状态带不再误触。
+- **顺序启动状态机**：配置 → 环境/网络 → Runtime → 本地 MCP → Tunnel → OpenAI 上游 → ChatGPT MCP；前置步骤未完成时后续步骤不会提前变绿。
+- MCP Tool Schema 升级到 **v13 / 10 tools**。
+
+详细变化见 [v0.8.4 发布说明](docs/RELEASE_NOTES_0.8.4.md)。
 
 ## v0.8.3 原生运行详情与长期画像记忆
 

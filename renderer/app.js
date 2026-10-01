@@ -5,7 +5,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const pageMeta = {
   status: ['运行', '首页', '运行状态、当前任务与最近异常集中在这里。'],
   workspace: ['项目', '工作区', '查看当前主工作区与额外授权边界。'],
-  memory: ['记忆', '本地记忆', '管理真正会影响协作方式的用户画像、长期偏好和项目背景。'],
+  memory: ['上下文', '长期上下文', '管理由模型主动总结并持续复用的用户画像、长期偏好和项目背景。'],
   settings: ['配置', '设置与诊断', '常用设置保持简单，连接、教程和故障处理按需展开。'],
   'setup-guide': ['配置', '配置教程', '按新版 OpenAI Platform 与 ChatGPT 插件流程完成首次接入。']
 };
@@ -21,17 +21,20 @@ const startupStages = [
 ];
 
 const progressStageMap = {
-  'config-check': 'config',
-  'config-ready': 'config',
-  preflight: 'environment',
-  'proxy-detect': 'environment',
-  'proxy-ready': 'environment',
-  'runtime-stop-old': 'environment',
-  'native-start': 'runtime',
-  'mcp-health': 'mcp',
-  'tunnel-start': 'tunnel',
-  complete: 'tunnel',
-  failed: 'failed'
+  'config-check': { stage: 'config', status: 'running' },
+  'config-ready': { stage: 'config', status: 'done' },
+  preflight: { stage: 'environment', status: 'running' },
+  'proxy-detect': { stage: 'environment', status: 'running' },
+  'proxy-ready': { stage: 'environment', status: 'done' },
+  'runtime-stop-old': { stage: 'runtime', status: 'running' },
+  'native-start': { stage: 'runtime', status: 'running' },
+  'runtime-ready': { stage: 'runtime', status: 'done' },
+  'mcp-health': { stage: 'mcp', status: 'running' },
+  'mcp-ready': { stage: 'mcp', status: 'done' },
+  'tunnel-start': { stage: 'tunnel', status: 'running' },
+  'tunnel-ready': { stage: 'tunnel', status: 'done' },
+  'upstream-check': { stage: 'upstream', status: 'running' },
+  'upstream-ready': { stage: 'upstream', status: 'done' }
 };
 
 const state = {
@@ -74,7 +77,7 @@ function memoryResult(response) {
   const data = unwrap(response);
   if (data?.canceled) return data;
   if (data && data.ok === false) {
-    const error = new Error(data.error || '本地记忆操作失败');
+    const error = new Error(data.error || '长期上下文操作失败');
     error.code = String(data.code || '');
     throw error;
   }
@@ -479,37 +482,50 @@ function setStartupStage(stageId, status, message = '') {
   if (message) stage.message = message;
 }
 
+function startupStageIndex(stageId) {
+  return startupStages.findIndex((item) => item.id === stageId);
+}
+
+function startupPrerequisitesDone(stageId) {
+  const index = startupStageIndex(stageId);
+  if (index <= 0) return true;
+  return startupStages.slice(0, index).every((item) => state.startup.stages[item.id]?.status === 'done');
+}
+
+function applyStartupProgress(stageId, status, message = '') {
+  if (!stageId || !state.startup.stages[stageId]) return false;
+  if (!startupPrerequisitesDone(stageId)) return false;
+  if (status === 'running') {
+    const current = state.startup.stages[stageId];
+    if (current.status !== 'done') setStartupStage(stageId, 'running', message);
+  } else if (status === 'done') {
+    setStartupStage(stageId, 'done', message);
+  }
+  state.startup.current = stageId;
+  return true;
+}
+
 function handleProgress(payload) {
   if (!payload) return;
-  if (!state.startup.active && !['stopped', 'stop-connection', 'stop-runtime'].includes(payload.step)) resetStartup();
-  const stageId = progressStageMap[payload.step];
+  const ignored = ['stopped', 'stop-connection', 'stop-runtime'];
+  if (!state.startup.active && !ignored.includes(payload.step) && payload.step !== 'complete') resetStartup();
   state.startup.message = payload.message || '';
+
   if (payload.step === 'failed') {
     state.startup.failed = true;
     state.startup.active = false;
-    const current = state.startup.current || 'config';
+    const current = state.startup.current || startupStages.find((item) => state.startup.stages[item.id]?.status !== 'done')?.id || 'config';
     setStartupStage(current, 'failed', payload.message || '启动失败');
-  } else if (stageId) {
-    const nextIndex = startupStages.findIndex((item) => item.id === stageId);
-    startupStages.forEach((item, index) => {
-      if (index < nextIndex && state.startup.stages[item.id].status !== 'failed') setStartupStage(item.id, 'done');
-    });
-    if (payload.step === 'config-ready') setStartupStage('config', 'done', payload.message);
-    else if (payload.step === 'proxy-ready') setStartupStage('environment', 'done', payload.message);
-    else if (payload.step === 'mcp-health') {
-      setStartupStage('runtime', 'done');
-      setStartupStage('mcp', 'running', payload.message);
-    } else if (payload.step === 'tunnel-start') {
-      setStartupStage('mcp', 'done');
-      setStartupStage('tunnel', 'running', payload.message);
-    } else if (payload.step === 'complete') {
-      setStartupStage('tunnel', 'done', payload.message);
-      state.startup.active = false;
-    } else {
-      setStartupStage(stageId, 'running', payload.message);
-    }
-    state.startup.current = stageId;
+    const failedIndex = startupStageIndex(current);
+    startupStages.slice(failedIndex + 1).forEach((item) => setStartupStage(item.id, 'waiting', '等待前置步骤'));
+  } else if (payload.step === 'complete') {
+    state.startup.active = false;
+    state.startup.current = '';
+  } else {
+    const transition = progressStageMap[payload.step];
+    if (transition) applyStartupProgress(transition.stage, transition.status, payload.message || '');
   }
+
   renderStartup();
   if (payload.step === 'complete' || payload.step === 'failed') {
     setTimeout(() => refreshSnapshot({ force: true, quiet: true }), 350);
@@ -517,68 +533,53 @@ function handleProgress(payload) {
 }
 
 function syncStartupFromSnapshot(snapshot) {
+  if (state.startup.active || state.startup.failed) {
+    renderStartup();
+    return;
+  }
+
   const settings = snapshot.settings || {};
   const status = snapshot.status || {};
   const env = snapshot.environment || {};
   const attachment = snapshot.chat?.mcpAttachment || {};
   const configured = Boolean(settings.workspace && snapshot.secrets?.runtimeApiKey && settings.tunnelId);
   const environmentOk = env.python?.installed !== false && env.workspace?.exists !== false;
-  const runtimeOk = Boolean(status.runtimeRunning);
+  const runtimeAndMcpOk = Boolean(status.runtimeRunning);
   const tunnelOk = Boolean(status.tunnelRunning);
   const upstreamOk = Boolean(status.connectionRunning);
   const attachmentState = attachmentHealth(attachment, upstreamOk);
-  const chainReady = configured && environmentOk && runtimeOk && tunnelOk && upstreamOk && attachmentState.ready;
 
-  if (!state.startup.failed) {
-    if (configured) setStartupStage('config', 'done', '必要配置已就绪');
-    if (environmentOk) setStartupStage('environment', 'done', '运行环境与网络检查通过');
-    if (runtimeOk) {
-      setStartupStage('runtime', 'done', 'Runtime 正常');
-      setStartupStage('mcp', 'done', '本地 MCP 正常');
-    }
-    if (tunnelOk) setStartupStage('tunnel', 'done', 'Tunnel 运行中');
-    if (upstreamOk) setStartupStage('upstream', 'done', 'OpenAI 上游通道可达');
-    if (attachmentState.ready) {
-      setStartupStage('chat', 'done', attachmentState.firstUsePending ? 'ChatGPT 页面可用，首次调用时确认挂载' : attachmentState.meta);
-    }
-    if (chainReady) {
-      state.startup.active = false;
-      state.startup.current = '';
-      state.startup.message = '服务已就绪，启动链路已按实时状态校验完成。';
-      renderStartup();
-      return;
+  const readiness = {
+    config: { ready: configured, done: '必要配置已就绪', wait: '需要补全配置' },
+    environment: { ready: environmentOk, done: '运行环境与网络检查通过', wait: '等待环境检查' },
+    runtime: { ready: runtimeAndMcpOk, done: 'Runtime 已启动', wait: '待启动' },
+    mcp: { ready: runtimeAndMcpOk, done: '本地 MCP 已通过健康检查', wait: '待验证' },
+    tunnel: { ready: tunnelOk, done: 'Tunnel 已启动', wait: '待启动' },
+    upstream: { ready: upstreamOk, done: 'OpenAI 通道可达', wait: '待验证' },
+    chat: { ready: attachmentState.ready, done: attachmentState.firstUsePending ? '页面可用，首次调用时确认挂载' : attachmentState.meta, wait: upstreamOk ? '首次调用时确认 MCP 挂载' : '等待 OpenAI 通道' }
+  };
+
+  let prefixReady = true;
+  let firstBlocked = '';
+  for (const item of startupStages) {
+    const probe = readiness[item.id];
+    const done = prefixReady && Boolean(probe.ready);
+    if (done) {
+      setStartupStage(item.id, 'done', probe.done);
+    } else {
+      if (!firstBlocked) firstBlocked = item.label;
+      prefixReady = false;
+      const stage = state.startup.stages[item.id];
+      stage.startedAt = 0;
+      stage.endedAt = 0;
+      setStartupStage(item.id, 'waiting', probe.wait);
     }
   }
-
-  if (state.startup.active || state.startup.failed) {
-    if (!state.startup.failed && upstreamOk && !attachmentState.ready) {
-      setStartupStage('chat', 'waiting', '首次调用时确认 MCP 挂载');
-    }
-    renderStartup();
-    return;
-  }
-
-  state.startup.stages.config.status = configured ? 'done' : 'waiting';
-  state.startup.stages.config.message = configured ? '必要配置已就绪' : '需要补全配置';
-  state.startup.stages.environment.status = environmentOk ? 'done' : 'waiting';
-  state.startup.stages.environment.message = environmentOk ? '运行环境可用' : '等待环境检查';
-  state.startup.stages.runtime.status = runtimeOk ? 'done' : 'waiting';
-  state.startup.stages.runtime.message = runtimeOk ? 'Runtime 正常' : '待启动';
-  state.startup.stages.mcp.status = runtimeOk ? 'done' : 'waiting';
-  state.startup.stages.mcp.message = runtimeOk ? '本地 MCP 正常' : '待验证';
-  state.startup.stages.tunnel.status = tunnelOk ? 'done' : 'waiting';
-  state.startup.stages.tunnel.message = tunnelOk ? 'Tunnel 运行中' : '待启动';
-  state.startup.stages.upstream.status = upstreamOk ? 'done' : 'waiting';
-  state.startup.stages.upstream.message = upstreamOk ? 'OpenAI 通道可达' : '待验证';
-  state.startup.stages.chat.status = attachmentState.ready ? 'done' : 'waiting';
-  state.startup.stages.chat.message = attachmentState.ready
-    ? (attachmentState.firstUsePending ? '页面可用，首次调用时确认挂载' : attachmentState.meta)
-    : upstreamOk ? '首次调用时确认 MCP 挂载' : '待检查';
-  state.startup.message = chainReady
-    ? '服务已就绪，启动链路已按实时状态校验完成。'
-    : upstreamOk
-      ? '基础服务已就绪；ChatGPT MCP 挂载将在首次调用时确认。'
-      : '当前显示实时服务状态；启动时会切换为真实阶段进度。';
+  const allDone = startupStages.every((item) => state.startup.stages[item.id]?.status === 'done');
+  state.startup.current = '';
+  state.startup.message = allDone
+    ? '服务链路已按顺序全部验证完成。'
+    : `当前按顺序验证服务链路；下一项：${firstBlocked || '等待状态刷新'}。`;
   renderStartup();
 }
 
@@ -1066,7 +1067,7 @@ function renderMemoryItems(items) {
   if (!pageItems.length) {
     const empty = document.createElement('span');
     empty.className = 'task-muted';
-    empty.textContent = '没有匹配的本地记忆。';
+    empty.textContent = '没有匹配的长期上下文。';
     target.appendChild(empty);
     syncMemorySelection([]);
     renderMemoryPagination(items.length);
@@ -1209,7 +1210,7 @@ async function loadMemoryPage() {
     renderCandidates(candidates?.items || []);
     await loadMemoryItems();
   } catch (error) {
-    $('#memoryListMeta').textContent = '本地记忆读取失败';
+    $('#memoryListMeta').textContent = '长期上下文读取失败';
     $('#memoryList').textContent = `读取失败：${error.message}`;
   }
 }
@@ -1323,8 +1324,8 @@ function bindEvents() {
   };
   $('#memoryBatchArchive').onclick = () => archiveSelectedMemories().catch((error) => { setBusy(false); toast('批量归档失败', error.message, 'error'); });
   $('#memoryAutoMode').onchange = async () => { try { memoryResult(await api.memorySetConfig($('#memoryAutoMode').value)); await loadMemoryPage(); } catch (error) { toast('模式更新失败', error.message, 'error'); } };
-  $('#memoryExport').onclick = async () => { try { const result = memoryResult(await api.memoryExport()); if (!result?.canceled) toast('本地记忆已导出', textOr(result?.path, 'ZIP 备份已保存')); } catch (error) { toast('导出失败', error.message, 'error'); } };
-  $('#memoryImport').onclick = async () => { if (!confirm('导入本地记忆备份？')) return; try { const result = memoryResult(await api.memoryImport(false)); if (!result?.canceled) { toast('本地记忆已导入', `导入 ${Number(result?.imported || 0)} 条`); await loadMemoryPage(); } } catch (error) { toast('导入失败', error.message, 'error'); } };
+  $('#memoryExport').onclick = async () => { try { const result = memoryResult(await api.memoryExport()); if (!result?.canceled) toast('长期上下文已导出', textOr(result?.path, 'ZIP 备份已保存')); } catch (error) { toast('导出失败', error.message, 'error'); } };
+  $('#memoryImport').onclick = async () => { if (!confirm('导入长期上下文备份？')) return; try { const result = memoryResult(await api.memoryImport(false)); if (!result?.canceled) { toast('长期上下文已导入', `导入 ${Number(result?.imported || 0)} 条`); await loadMemoryPage(); } } catch (error) { toast('导入失败', error.message, 'error'); } };
 
   $('#runDiagnostics').onclick = runDiagnostics;
   $('#repairHealth').onclick = repairHealth;

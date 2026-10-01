@@ -5,7 +5,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
-test('0.8.3 progress band opens a native owned Activity Detail window without resizing ChatGPT', () => {
+test('0.8.4 compact progress trigger opens a native owned Activity Detail window without resizing ChatGPT', () => {
   const html = read('renderer/browser.html');
   const js = read('renderer/browser.js');
   const preload = read('electron/browserPreload.js');
@@ -13,11 +13,13 @@ test('0.8.3 progress band opens a native owned Activity Detail window without re
   const main = read('electron/main.js');
   const controller = read('electron/chatViewController.js');
   assert.match(html, /id="progressBand"/);
+  assert.match(html, /id="progressDetailTrigger"/);
   assert.doesNotMatch(html, /id="activityPanel"|aria-controls="activityPanel"/);
   assert.match(js, /activityDetailShow/);
   assert.match(js, /buildActivityDetailPayload/);
   assert.match(js, /commandRunning[\s\S]*?正在执行本地命令/);
-  assert.match(js, /\$\('#progressBand'\)\?\.addEventListener\('mouseenter'/);
+  assert.match(js, /progressDetailTrigger\?\.addEventListener\('mouseenter'/);
+  assert.doesNotMatch(js, /\$\('#progressBand'\)\?\.addEventListener\('mouseenter'/);
   assert.match(preload, /activityDetailShow|activityDetailUpdate|onActivityDetailState/);
   assert.match(main, /activityDetailWindow = new BrowserWindow\(\{[\s\S]*?parent: chatWindow && !chatWindow\.isDestroyed\(\) \? chatWindow : undefined/);
   assert.match(main, /loadFile\(path\.join\(__dirname, '\.\.', 'renderer', 'activity-detail\.html'\)\)/);

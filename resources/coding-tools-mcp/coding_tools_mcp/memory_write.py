@@ -228,6 +228,27 @@ class MemoryCandidateStore:
         _atomic_json(self._path(candidate_id), payload)
         return dict(payload)
 
+    def remember_direct(self, *, scope: str, memory_type: str = "note", title: str, content: str,
+                        project_id: str = "", source: str = "model_summary",
+                        confidence: float = 0.9, pinned: bool = False) -> dict[str, Any]:
+        """Persist one model-selected stable context item without a staging candidate."""
+        values = self._validate(
+            scope=scope, memory_type=memory_type, title=title, content=content,
+            project_id=project_id, task_id="", source=source, confidence=confidence,
+            pinned=pinned, allow_sensitive_personal=False,
+        )
+        relation, existing = self._relation(values)
+        if relation == "duplicate" and existing is not None:
+            return {"status": "duplicate", "memory": self._summary(existing)}
+        if relation == "conflict" and existing is not None:
+            memory = self.memory_store.update(
+                str(existing["memory_id"]), title=values["title"], content=values["content"],
+                source=values["source"], confidence=values["confidence"], pinned=values["pinned"],
+            )
+            return {"status": "updated", "memory": self._summary(memory)}
+        memory = self.memory_store.create(**values)
+        return {"status": "remembered", "memory": self._summary(memory)}
+
     def confirm(self, candidate_id: str, *, resolution: str = "") -> dict[str, Any]:
         candidate = self.get(candidate_id)
         if candidate is None:

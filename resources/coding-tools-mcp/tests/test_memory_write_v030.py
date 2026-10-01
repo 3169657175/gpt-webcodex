@@ -114,7 +114,7 @@ class MemoryWriteRuntimeTests(unittest.TestCase):
         self.assertIn("健康 Tunnel 不因页面异常重启", str(after["memory_bootstrap"]["items"]))
         prepared = self.runtime.prepare_coding_context({"objective": "页面异常重连"})
         self.assertIn("健康 Tunnel", str(prepared["memory_search"]["items"]))
-        self.assertEqual(len(self.runtime.list_tools()["tools"]), 9)
+        self.assertEqual(len(self.runtime.list_tools()["tools"]), 10)
 
     def test_private_memory_ingest_auto_and_suggest_modes_use_existing_store(self) -> None:
         status, _ = self.post({"action": "set_config", "auto_memory": "auto"})
@@ -136,7 +136,50 @@ class MemoryWriteRuntimeTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(candidate["result"]["status"], "candidate")
         self.assertEqual(len(self.runtime.memory_candidates.list()), 1)
-        self.assertEqual(len(self.runtime.list_tools()["tools"]), 9)
+        self.assertEqual(len(self.runtime.list_tools()["tools"]), 10)
+
+    def test_model_remember_context_creates_updates_deduplicates_and_rejects_unsafe_data(self) -> None:
+        tools = {item["name"]: item for item in self.runtime.list_tools()["tools"]}
+        self.assertIn("remember_context", tools)
+        self.assertIn("stable", tools["remember_context"]["description"].lower())
+
+        created = self.runtime.remember_context({
+            "scope": "global", "memory_type": "working_style",
+            "title": "长期协作方式", "content": "长任务应连续执行到完成，不要每一步都停下来确认。",
+            "confidence": 0.96,
+        })
+        self.assertEqual(created["status"], "remembered")
+        self.assertEqual(len(self.runtime.memory_store.list(scope="global", limit=20)), 1)
+
+        updated = self.runtime.remember_context({
+            "scope": "global", "memory_type": "working_style",
+            "title": "长期协作方式", "content": "长任务应持续执行并主动汇报关键进度，不要频繁停下来确认。",
+            "confidence": 0.98,
+        })
+        self.assertEqual(updated["status"], "updated")
+        records = self.runtime.memory_store.list(scope="global", limit=20)
+        self.assertEqual(len(records), 1)
+        self.assertIn("主动汇报关键进度", records[0]["content"])
+
+        duplicate = self.runtime.remember_context({
+            "scope": "global", "memory_type": "working_style",
+            "title": "长期协作方式", "content": "长任务应持续执行并主动汇报关键进度，不要频繁停下来确认。",
+        })
+        self.assertEqual(duplicate["status"], "duplicate")
+        self.assertEqual(len(self.runtime.memory_store.list(scope="global", limit=20)), 1)
+
+        secret = self.runtime.remember_context({
+            "scope": "global", "title": "登录凭据", "content": "password=supersecret123",
+        })
+        self.assertEqual(secret["status"], "rejected")
+        self.assertEqual(secret["code"], "SECRET_REJECTED")
+
+        sensitive = self.runtime.remember_context({
+            "scope": "global", "title": "个人病史", "content": "我的病史包括一次骨折。",
+        })
+        self.assertEqual(sensitive["status"], "rejected")
+        self.assertEqual(sensitive["code"], "SENSITIVE_PERSONAL_CONFIRMATION_REQUIRED")
+        self.assertEqual(len(self.runtime.memory_store.list(scope="global", limit=20)), 1)
 
     def test_private_memory_control_blocks_secret_and_requires_confirmation_for_delete(self) -> None:
         status, body = self.post({"action": "propose", "scope": "global", "title": "secret", "content": "password=supersecret123"})

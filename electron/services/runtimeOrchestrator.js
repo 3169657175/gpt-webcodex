@@ -346,6 +346,7 @@ class RuntimeOrchestrator {
       }
 
       const launch = await this.native.start(settings, token, this.progress.bind(this));
+      this.progress('runtime-ready', 60, 'Runtime 进程已启动');
 
       this.progress('mcp-health', 64, '正在验证 Coding Tools MCP');
       let identity = null;
@@ -370,15 +371,24 @@ class RuntimeOrchestrator {
         throw new Error('MCP tools discovery 与健康检查身份不一致，已拒绝继续启动 Tunnel。');
       }
       recordSchemaDiscovery(discovered);
+      this.progress('mcp-ready', 70, '本地 MCP 已通过身份与工具发现校验');
 
       await this.tunnel.start({ ...settings, effectiveProxyUrl: proxy.resolvedUrl }, runtimeApiKey, token, this.progress.bind(this));
+      this.progress('tunnel-ready', 86, 'OpenAI Tunnel 本地通道已启动');
+      this.progress('upstream-check', 90, '正在验证 OpenAI 上游网络通道');
+      const upstreamState = await this.tunnel.connectionStatus(settings, { cacheMs: 0 }).catch(() => ({ localReady: true, upstreamReachable: false }));
+      if (upstreamState.upstreamReachable) {
+        this.progress('upstream-ready', 96, 'OpenAI 上游网络通道可达');
+      } else {
+        this.log.warn('Tunnel 已启动，但 OpenAI 上游网络通道暂未通过验证');
+      }
       this.setManualStop(false);
       this.autoRecoveryBlocked = false;
       this.lastStartFailure = '';
       this.heartbeatFailures = 0;
       this.recoveryAttempts = 0;
       this.nextRecoveryAt = 0;
-      this.progress('complete', 100, '部署完成，MCP 与 OpenAI Tunnel 均已运行');
+      this.progress('complete', 100, '服务启动流程结束，正在按实时状态校验完整链路');
       this.invalidateSnapshot();
       return await this.snapshot({ force: true, reason: 'started' });
     } catch (error) {

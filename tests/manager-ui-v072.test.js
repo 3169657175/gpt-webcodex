@@ -11,7 +11,7 @@ test('0.7.3 manager uses one navigation language and compact sidebar health summ
   const html = read('renderer/index.html');
   const css = read('renderer/manager-v2.css');
 
-  assert.equal(pkg.version, '0.8.3');
+  assert.equal(pkg.version, '0.8.4');
   assert.match(html, /class="nav-item" data-page="setup-guide"/);
   assert.doesNotMatch(html, /class="nav-subitem"/);
   assert.match(html, /class="sidebar-health"/);
@@ -31,8 +31,9 @@ test('0.7.3 treats first attachment observation as informational when the upstre
   assert.match(app, /function attachmentHealth\(attachment = \{\}, upstreamReady = false\)/);
   assert.match(app, /firstUsePending = detail === 'waiting-first-attachment'/);
   assert.match(app, /firstUsePending && upstreamReady/);
-  assert.match(app, /服务已就绪，启动链路已按实时状态校验完成/);
-  assert.match(app, /setStartupStage\('chat', 'done'/);
+  assert.match(app, /let prefixReady = true/);
+  assert.match(app, /prefixReady && Boolean\(probe.ready\)/);
+  assert.match(app, /下一项：\$\{firstBlocked/);
   assert.match(app, /value\.status === 'running' \? '•' : '○'/);
 
   assert.match(controller, /'waiting-first-attachment', 'available'\)/);
@@ -46,7 +47,7 @@ test('0.7.3 keeps Desktop and bundled Runtime versions aligned', () => {
   const pyproject = read('resources/coding-tools-mcp/pyproject.toml');
   const contract = JSON.parse(read('resources/coding-tools-mcp/schema-contract.json'));
 
-  assert.equal(pkg.version, '0.8.3');
+  assert.equal(pkg.version, '0.8.4');
   assert.ok(runtimeInit.includes(`__version__ = "${pkg.version}"`));
   assert.ok(pyproject.includes(`version = "${pkg.version}"`));
   assert.equal(contract.runtime_version, pkg.version);

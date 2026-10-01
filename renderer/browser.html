@@ -49,9 +49,11 @@
       <button id="addAuthorizedRootQuick" class="add-workspace secondary-action" title="授权一个额外目录，无需切换主工作区">＋ 授权目录</button>
       <button id="addWorkspace" class="add-workspace">＋ 添加工作区</button>
     </div>
-    <div class="progress-band" id="progressBand" role="button" tabindex="0" aria-live="polite" aria-expanded="false" aria-label="悬停或按 Enter 查看详细运行状态">
-      <span class="progress-band-icon" id="progressIcon"></span>
-      <div class="progress-band-copy"><b id="progressMessage">正在读取任务进度…</b><small id="progressDetail">本地任务状态会持续更新</small></div>
+    <div class="progress-band" id="progressBand" aria-live="polite">
+      <div class="progress-detail-trigger" id="progressDetailTrigger" role="button" tabindex="0" aria-expanded="false" aria-label="悬停或按 Enter 查看详细运行状态">
+        <span class="progress-band-icon" id="progressIcon"></span>
+        <div class="progress-band-copy"><b id="progressMessage">正在读取任务进度…</b><small id="progressDetail">本地任务状态会持续更新</small></div>
+      </div>
       <time id="progressElapsed"></time>
       <button id="activityToggle" class="progress-action activity-toggle" type="button" aria-expanded="false" hidden>活动详情</button>
       <button id="progressAction" class="progress-action" type="button" hidden></button>

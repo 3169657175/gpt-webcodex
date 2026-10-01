@@ -76,7 +76,7 @@ class RuleRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.approvals.policies, before); self.assertEqual(self.runtime.agent_mode, mode)
         denied = self.runtime.call_tool("exec_command", {"cmd": "echo blocked"})
         self.assertTrue(denied["isError"]); self.assertEqual(self.runtime.approvals.policies["command"], "deny")
-        self.assertEqual(len(self.runtime.list_tools()["tools"]), 9)
+        self.assertEqual(len(self.runtime.list_tools()["tools"]), 10)
 
 
 if __name__ == "__main__": unittest.main()

@@ -63,7 +63,7 @@ class SkillRuntimeTests(unittest.TestCase):
         self.assertEqual(skill["trust_label"], "local_project_skill"); self.assertNotIn("instructions", skill)
         full = self.runtime.prepare_coding_context({"objective": "检查项目"})["skills"]["enabled"][0]
         self.assertIn("只读取必要文件", full["instructions"]); self.assertEqual(full["trust_label"], "local_project_skill")
-        self.assertEqual(len(self.runtime._exposed_tool_names), 9)
+        self.assertEqual(len(self.runtime._exposed_tool_names), 10)
 
     def test_manifest_change_removes_enabled_skill_from_context(self) -> None:
         self.post({"action": "enable", "skill_id": "project-review"})

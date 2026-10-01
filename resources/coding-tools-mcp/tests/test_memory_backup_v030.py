@@ -150,7 +150,7 @@ class MemoryBackupRuntimeTests(unittest.TestCase):
         self.assertEqual(self.post({"action": "import", "source": str(backup)})[1]["code"], "CONFIRMATION_REQUIRED")
         status, imported = self.post({"action": "import", "source": str(backup), "confirm": True})
         self.assertEqual(status, 200); self.assertTrue(imported["result"]["ok"])
-        self.assertEqual(len(self.runtime.list_tools()["tools"]), 9)
+        self.assertEqual(len(self.runtime.list_tools()["tools"]), 10)
 
 
 if __name__ == "__main__":

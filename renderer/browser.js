@@ -63,7 +63,7 @@ function clearActivityTimers() {
 }
 
 function activityAnchorPayload(anchor) {
-  const rect = (anchor || $('#progressBand')).getBoundingClientRect();
+  const rect = (anchor || $('#progressDetailTrigger')).getBoundingClientRect();
   return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
 }
 
@@ -78,7 +78,7 @@ function openActivityPanel(anchor, { pin = false } = {}) {
     payload: buildActivityDetailPayload()
   });
   $('#activityToggle')?.setAttribute('aria-expanded', 'true');
-  $('#progressBand')?.setAttribute('aria-expanded', 'true');
+  $('#progressDetailTrigger')?.setAttribute('aria-expanded', 'true');
   if ($('#activityToggle')) $('#activityToggle').textContent = activityPopoverPinned ? '收起详情' : '活动详情';
 }
 
@@ -90,7 +90,7 @@ function closeActivityPanel({ force = false } = {}) {
     activityDetailVisible = false;
     void api.activityDetailClose?.();
     $('#activityToggle')?.setAttribute('aria-expanded', 'false');
-    $('#progressBand')?.setAttribute('aria-expanded', 'false');
+    $('#progressDetailTrigger')?.setAttribute('aria-expanded', 'false');
   } else {
     void api.activityDetailHide?.();
   }
@@ -474,21 +474,21 @@ $('#progressAction').onclick = async () => {
 $('#activityToggle').onclick = (event) => {
   event.stopPropagation();
   if (activityDetailVisible && activityPopoverPinned) closeActivityPanel({ force: true });
-  else openActivityPanel($('#progressBand'), { pin: true });
+  else openActivityPanel($('#progressDetailTrigger'), { pin: true });
 };
-$('#progressBand')?.addEventListener('mouseenter', () => scheduleActivityOpen($('#progressBand')));
-$('#progressBand')?.addEventListener('mouseleave', scheduleActivityClose);
-$('#progressBand').addEventListener('click', (event) => {
-  if (event.target.closest('button')) return;
+const progressDetailTrigger = $('#progressDetailTrigger');
+progressDetailTrigger?.addEventListener('mouseenter', () => scheduleActivityOpen(progressDetailTrigger));
+progressDetailTrigger?.addEventListener('mouseleave', scheduleActivityClose);
+progressDetailTrigger?.addEventListener('click', (event) => {
   event.stopPropagation();
   if (activityDetailVisible && activityPopoverPinned) closeActivityPanel({ force: true });
-  else openActivityPanel($('#progressBand'), { pin: true });
+  else openActivityPanel(progressDetailTrigger, { pin: true });
 });
-$('#progressBand').addEventListener('keydown', (event) => {
+progressDetailTrigger?.addEventListener('keydown', (event) => {
   if (!['Enter', ' '].includes(event.key)) return;
   event.preventDefault();
   if (activityDetailVisible && activityPopoverPinned) closeActivityPanel({ force: true });
-  else openActivityPanel($('#progressBand'), { pin: true });
+  else openActivityPanel(progressDetailTrigger, { pin: true });
 });
 $('#workspaceHealthButton').onclick = (event) => {
   event.stopPropagation();
@@ -505,9 +505,9 @@ document.addEventListener('click', (event) => {
     popover.hidden = true;
     $('#workspaceHealthButton').setAttribute('aria-expanded', 'false');
   }
-  const progressBand = $('#progressBand');
+  const progressDetailTrigger = $('#progressDetailTrigger');
   const activityToggle = $('#activityToggle');
-  if (activityPopoverPinned && !progressBand?.contains(event.target) && !activityToggle?.contains(event.target)) closeActivityPanel({ force: true });
+  if (activityPopoverPinned && !progressDetailTrigger?.contains(event.target) && !activityToggle?.contains(event.target)) closeActivityPanel({ force: true });
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && activityDetailVisible) closeActivityPanel({ force: true });
@@ -516,7 +516,7 @@ api.onActivityDetailState?.((state) => {
   activityDetailVisible = Boolean(state?.visible);
   activityPopoverPinned = Boolean(state?.pinned);
   $('#activityToggle')?.setAttribute('aria-expanded', String(activityDetailVisible));
-  $('#progressBand')?.setAttribute('aria-expanded', String(activityDetailVisible));
+  $('#progressDetailTrigger')?.setAttribute('aria-expanded', String(activityDetailVisible));
   if ($('#activityToggle')) $('#activityToggle').textContent = activityPopoverPinned ? '收起详情' : '活动详情';
 });
 $('#managerButton').onclick = () => api.openManager();

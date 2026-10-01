@@ -72,7 +72,7 @@ class TrustBoundaryTests(unittest.TestCase):
                 runtime = Runtime(Path(temp), permission_mode="safe")
                 try:
                     tools = runtime.list_tools()["tools"]
-                    self.assertEqual(len(tools), 9)
+                    self.assertEqual(len(tools), 10)
                     encoded = json.dumps(tools, ensure_ascii=False)
                     for forbidden in ("agentMode", "toolPermissions", "approvalDecide", "authorizedRoots"):
                         self.assertNotIn(forbidden, encoded)
