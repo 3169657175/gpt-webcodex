@@ -90,7 +90,7 @@ from .skill_store import SkillStore
 from .rule_store import RuleStore
 from .memory_store import MemoryStore
 from .memory_write import MemoryCandidateStore, MemoryWriteError
-from .auto_memory import ingest_auto_memory
+from .auto_memory import ingest_auto_memory, migrate_legacy_auto_memories
 from .memory_backup import MemoryBackupService
 from .build_verify import detect_project as detect_build_project, profile_project_execution, verify_build as run_build_verification
 from .document_tools import create_docx, create_text_document, convert_document, extract_document
@@ -1775,6 +1775,10 @@ class Runtime:
             self.memory_store = MemoryStore(Path(configured_root)) if configured_root else MemoryStore()
             self.memory_candidates = MemoryCandidateStore(self.memory_store)
             self.memory_backup = MemoryBackupService(self.memory_store)
+            try:
+                migrate_legacy_auto_memories(self.memory_store)
+            except Exception as migration_exc:
+                self.memory_warning = f"Memory profile migration warning: {type(migration_exc).__name__}: {migration_exc}"[:2000]
         except Exception as exc:
             self.memory_warning = f"MemoryStore unavailable: {type(exc).__name__}: {exc}"[:2000]
 

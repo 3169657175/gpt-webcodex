@@ -27,7 +27,7 @@ class MemoryBackupStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "memory"
             store = MemoryStore(root)
-            self.assertEqual(store.config()["auto_memory"], "off")
+            self.assertEqual(store.config()["auto_memory"], "auto")
             self.assertEqual(store.set_auto_memory("suggest")["auto_memory"], "suggest")
             self.assertEqual(MemoryStore(root).config()["auto_memory"], "suggest")
             item = store.create(scope="global", memory_type="working_style", title="工作方式", content="版本一")
@@ -135,7 +135,7 @@ class MemoryBackupRuntimeTests(unittest.TestCase):
         self.assertEqual(self.post({"action": "status"}, None)[0], 401)
         status, body = self.post({"action": "status"})
         self.assertEqual(status, 200); self.assertEqual(body["result"]["profile"], "local-default")
-        self.assertEqual(body["result"]["config"]["auto_memory"], "off")
+        self.assertEqual(body["result"]["config"]["auto_memory"], "auto")
         self.assertEqual(self.post({"action": "set_config", "auto_memory": "auto"})[1]["result"]["auto_memory"], "auto")
 
         item = self.runtime.memory_store.create(scope="global", memory_type="working_style", title="恢复测试", content="版本一")

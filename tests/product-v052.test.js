@@ -9,7 +9,7 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 test('0.6.0 exposes four business entries without restoring old control-console pages', () => {
   const html = read('renderer/index.html');
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(pkg.version, '0.8.2');
+  assert.equal(pkg.version, '0.8.3');
   for (const page of ['status', 'workspace', 'memory', 'settings']) {
     assert.match(html, new RegExp('data-page="' + page + '"'));
   }

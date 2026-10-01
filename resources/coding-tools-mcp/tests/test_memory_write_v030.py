@@ -132,7 +132,7 @@ class MemoryWriteRuntimeTests(unittest.TestCase):
         self.assertEqual(duplicate["result"]["status"], "duplicate")
         status, _ = self.post({"action": "set_config", "auto_memory": "suggest"})
         self.assertEqual(status, 200)
-        status, candidate = self.post({"action": "ingest", "user_text": "我的计划是今年把日语学到 N2 水平。"})
+        status, candidate = self.post({"action": "ingest", "user_text": "我习惯长任务从头到尾连续执行，不要每一步都停下来问我，这是我长期的工作方式。"})
         self.assertEqual(status, 200)
         self.assertEqual(candidate["result"]["status"], "candidate")
         self.assertEqual(len(self.runtime.memory_candidates.list()), 1)

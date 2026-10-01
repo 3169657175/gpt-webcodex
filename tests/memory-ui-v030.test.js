@@ -11,7 +11,10 @@ test('Manager exposes a simplified Chinese local-memory page through semantic pr
   const preload = read('electron/preload.js');
   assert.match(html, /data-page="memory"/);
   assert.match(html, /data-page-view="memory"/);
-  assert.match(html, /自动记忆模式/);
+  assert.match(html, /自动画像模式/);
+  assert.match(html, /核心画像/);
+  assert.match(app, /设为核心画像/);
+  assert.doesNotMatch(app, /取消置顶|['"]置顶['"]/);
   assert.match(html, /id="memoryList"/);
   assert.match(html, /id="memoryCandidatePanel" hidden/);
   assert.match(preload, /memoryStatus/);

@@ -1,7 +1,7 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const crypto = require('node:crypto');
-const { app, BrowserWindow, dialog, ipcMain, shell, Tray, Menu, nativeImage, session, Notification } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, Tray, Menu, nativeImage, session, Notification, screen } = require('electron');
 const { SettingsStore } = require('./services/settingsStore');
 const { SecretStore } = require('./services/secretStore');
 const { LogService } = require('./services/logService');
@@ -25,6 +25,12 @@ const { notificationStateFile, dataRoot } = require('./paths');
 let chatWindow;
 let managerWindow;
 let workspaceWindow;
+let activityDetailWindow;
+let activityDetailPayload = null;
+let activityDetailAnchor = null;
+let activityDetailPinned = false;
+let activityDetailHover = false;
+let activityDetailHideTimer = null;
 let chatController;
 let orchestrator;
 let forceQuit = false;
@@ -206,9 +212,17 @@ function createChatWindow() {
   chatController.mount();
 
   chatWindow.once('ready-to-show', () => chatWindow.show());
+  chatWindow.on('move', () => {
+    if (activityDetailWindow && !activityDetailWindow.isDestroyed() && activityDetailWindow.isVisible()) positionActivityDetailWindow();
+  });
+  chatWindow.on('resize', () => {
+    if (activityDetailWindow && !activityDetailWindow.isDestroyed() && activityDetailWindow.isVisible()) positionActivityDetailWindow();
+  });
   chatWindow.on('closed', () => {
     if (chatController) chatController.dispose();
     chatController = null;
+    if (activityDetailWindow && !activityDetailWindow.isDestroyed()) activityDetailWindow.destroy();
+    activityDetailWindow = null;
     chatWindow = null;
     if (managerWindow && !managerWindow.isDestroyed()) managerWindow.destroy();
     if (workspaceWindow && !workspaceWindow.isDestroyed()) workspaceWindow.destroy();
@@ -219,6 +233,7 @@ function createChatWindow() {
     if (settings.load().keepRunningOnClose) {
       if (managerWindow && !managerWindow.isDestroyed()) managerWindow.hide();
       if (workspaceWindow && !workspaceWindow.isDestroyed()) workspaceWindow.hide();
+      if (activityDetailWindow && !activityDetailWindow.isDestroyed()) activityDetailWindow.hide();
       chatWindow.hide();
       return;
     }
@@ -286,6 +301,113 @@ function openWorkspaceWindow() {
   });
   workspaceWindow.on('closed', () => { workspaceWindow = null; });
   return workspaceWindow;
+}
+
+function sendActivityDetailState() {
+  const state = {
+    visible: Boolean(activityDetailWindow && !activityDetailWindow.isDestroyed() && activityDetailWindow.isVisible()),
+    pinned: activityDetailPinned
+  };
+  if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('activity-detail:state', state);
+  if (activityDetailWindow && !activityDetailWindow.isDestroyed()) activityDetailWindow.webContents.send('activity-detail:state', state);
+}
+
+function clearActivityDetailHideTimer() {
+  if (activityDetailHideTimer) clearTimeout(activityDetailHideTimer);
+  activityDetailHideTimer = null;
+}
+
+function ensureActivityDetailWindow() {
+  if (activityDetailWindow && !activityDetailWindow.isDestroyed()) return activityDetailWindow;
+  activityDetailWindow = new BrowserWindow({
+    width: 860,
+    height: 560,
+    parent: chatWindow && !chatWindow.isDestroyed() ? chatWindow : undefined,
+    modal: false,
+    show: false,
+    skipTaskbar: true,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    hasShadow: true,
+    backgroundColor: '#f7f8f8',
+    title: '网页 MCP 助手 · 运行详情',
+    webPreferences: {
+      preload: path.join(__dirname, 'activityDetailPreload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  activityDetailWindow.removeMenu();
+  activityDetailWindow.loadFile(path.join(__dirname, '..', 'renderer', 'activity-detail.html'));
+  activityDetailWindow.webContents.on('did-finish-load', () => {
+    if (activityDetailPayload) activityDetailWindow.webContents.send('activity-detail:payload', activityDetailPayload);
+    sendActivityDetailState();
+  });
+  activityDetailWindow.on('closed', () => {
+    activityDetailWindow = null;
+    activityDetailPinned = false;
+    activityDetailHover = false;
+    sendActivityDetailState();
+  });
+  return activityDetailWindow;
+}
+
+function positionActivityDetailWindow() {
+  if (!activityDetailWindow || activityDetailWindow.isDestroyed() || !chatWindow || chatWindow.isDestroyed() || !activityDetailAnchor) return;
+  const content = chatWindow.getContentBounds();
+  const anchor = activityDetailAnchor;
+  const width = Math.max(560, Math.min(860, content.width - 28));
+  const height = Math.max(420, Math.min(560, content.height - 90));
+  const desired = {
+    x: Math.round(content.x + Math.max(12, Number(anchor.left || 0) + 12)),
+    y: Math.round(content.y + Math.max(0, Number(anchor.bottom || 0)) + 6),
+    width,
+    height
+  };
+  const display = screen.getDisplayMatching(desired);
+  const work = display.workArea;
+  desired.x = Math.min(Math.max(work.x + 8, desired.x), work.x + work.width - width - 8);
+  if (desired.y + height > work.y + work.height - 8) {
+    desired.y = Math.max(work.y + 8, Math.round(content.y + Number(anchor.top || 0) - height - 6));
+  }
+  activityDetailWindow.setBounds(desired, false);
+}
+
+function showActivityDetail({ anchor = null, payload = null, pinned = false } = {}) {
+  clearActivityDetailHideTimer();
+  if (anchor && typeof anchor === 'object') activityDetailAnchor = anchor;
+  if (payload && typeof payload === 'object') activityDetailPayload = payload;
+  if (pinned) activityDetailPinned = true;
+  const detail = ensureActivityDetailWindow();
+  positionActivityDetailWindow();
+  if (activityDetailPayload && !detail.webContents.isLoading()) detail.webContents.send('activity-detail:payload', activityDetailPayload);
+  detail.showInactive();
+  sendActivityDetailState();
+  return { visible: true, pinned: activityDetailPinned };
+}
+
+function scheduleActivityDetailHide(delay = 220) {
+  clearActivityDetailHideTimer();
+  if (activityDetailPinned || activityDetailHover) return;
+  activityDetailHideTimer = setTimeout(() => {
+    activityDetailHideTimer = null;
+    if (activityDetailPinned || activityDetailHover) return;
+    if (activityDetailWindow && !activityDetailWindow.isDestroyed()) activityDetailWindow.hide();
+    sendActivityDetailState();
+  }, Math.max(0, Number(delay) || 0));
+}
+
+function closeActivityDetail({ force = false } = {}) {
+  clearActivityDetailHideTimer();
+  if (!force && activityDetailPinned) return { visible: true, pinned: true };
+  activityDetailPinned = false;
+  if (activityDetailWindow && !activityDetailWindow.isDestroyed()) activityDetailWindow.hide();
+  sendActivityDetailState();
+  return { visible: false, pinned: false };
 }
 
 function openApprovalWindow() {
@@ -665,6 +787,34 @@ function registerIpc() {
     return true;
   }));
   secureHandle('manager:open', () => invokeSafely(async () => { openManagerWindow(); return true; }));
+  secureHandle('activity-detail:show', (_event, options = {}) => invokeSafely(async () => showActivityDetail(options || {})));
+  secureHandle('activity-detail:update', (_event, payload = {}) => invokeSafely(async () => {
+    activityDetailPayload = payload && typeof payload === 'object' ? payload : null;
+    if (activityDetailWindow && !activityDetailWindow.isDestroyed() && activityDetailPayload) {
+      activityDetailWindow.webContents.send('activity-detail:payload', activityDetailPayload);
+    }
+    return true;
+  }));
+  secureHandle('activity-detail:hide', () => invokeSafely(async () => { scheduleActivityDetailHide(); return true; }));
+  secureHandle('activity-detail:hover', (_event, value) => invokeSafely(async () => {
+    activityDetailHover = Boolean(value);
+    if (activityDetailHover) clearActivityDetailHideTimer();
+    else scheduleActivityDetailHide(260);
+    return true;
+  }));
+  secureHandle('activity-detail:close', () => invokeSafely(async () => closeActivityDetail({ force: true })));
+  secureHandle('activity-detail:pin', () => invokeSafely(async () => {
+    activityDetailPinned = true;
+    clearActivityDetailHideTimer();
+    sendActivityDetailState();
+    return true;
+  }));
+  secureHandle('activity-detail:unpin', () => invokeSafely(async () => {
+    activityDetailPinned = false;
+    sendActivityDetailState();
+    if (!activityDetailHover) scheduleActivityDetailHide(260);
+    return true;
+  }));
   secureHandle('workspace-window:open', () => invokeSafely(async () => { openWorkspaceWindow(); return true; }));
   secureHandle('approval-window:open', () => invokeSafely(async () => {
     openApprovalWindow();

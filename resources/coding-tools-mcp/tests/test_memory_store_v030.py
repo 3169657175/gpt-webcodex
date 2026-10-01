@@ -29,7 +29,7 @@ class MemoryStoreM0Tests(unittest.TestCase):
                 for name in ("system", "projects", "tasks", "archive", "events", "snapshots"):
                     self.assertTrue((store.root / name).is_dir())
                 config = json.loads(store.config_path.read_text(encoding="utf-8"))
-                self.assertEqual(config["auto_memory"], "off")
+                self.assertEqual(config["auto_memory"], "auto")
 
     def test_crud_scopes_markdown_truth_and_archive(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

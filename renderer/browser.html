@@ -49,40 +49,15 @@
       <button id="addAuthorizedRootQuick" class="add-workspace secondary-action" title="授权一个额外目录，无需切换主工作区">＋ 授权目录</button>
       <button id="addWorkspace" class="add-workspace">＋ 添加工作区</button>
     </div>
-    <div class="progress-band" id="progressBand" role="button" tabindex="0" aria-live="polite" aria-expanded="false" aria-controls="activityPanel" aria-label="悬停或按 Enter 查看详细运行状态">
+    <div class="progress-band" id="progressBand" role="button" tabindex="0" aria-live="polite" aria-expanded="false" aria-label="悬停或按 Enter 查看详细运行状态">
       <span class="progress-band-icon" id="progressIcon"></span>
       <div class="progress-band-copy"><b id="progressMessage">正在读取任务进度…</b><small id="progressDetail">本地任务状态会持续更新</small></div>
       <time id="progressElapsed"></time>
-      <button id="activityToggle" class="progress-action activity-toggle" type="button" aria-expanded="false" aria-controls="activityPanel" hidden>活动详情</button>
+      <button id="activityToggle" class="progress-action activity-toggle" type="button" aria-expanded="false" hidden>活动详情</button>
       <button id="progressAction" class="progress-action" type="button" hidden></button>
       <button id="nativeLoginFinish" class="login-action" type="button" hidden>登录完成，返回助手</button>
       <button id="nativeLoginCancel" class="login-action secondary" type="button" hidden>取消登录</button>
     </div>
-    <aside id="activityPanel" class="activity-panel" aria-label="详细运行状态" hidden>
-      <div class="activity-panel-head">
-        <div><span>本地执行活动</span><b id="activityStatus">等待状态</b></div>
-        <time id="activityCapturedAt"></time>
-      </div>
-      <div class="activity-facts">
-        <div><span>当前状态</span><b id="activityState">-</b></div>
-        <div><span>当前阶段</span><b id="activityStage">-</b></div>
-        <div><span>已运行</span><b id="activityElapsed">-</b></div>
-        <div><span>最近活动</span><b id="activityLastSeen">-</b></div>
-        <div><span>后台心跳</span><b id="activityHeartbeat">-</b></div>
-        <div><span>本地进程</span><b id="activityProcess">-</b></div>
-        <div><span>等待原因</span><b id="activityWaitReason">-</b></div>
-        <div><span>下一步</span><b id="activityNextStep">-</b></div>
-        <div><span>反馈通道</span><b id="activityChannel">桌面实时状态</b></div>
-        <div class="activity-id"><span>Task ID</span><b id="activityTaskId">-</b></div>
-        <div class="activity-id"><span>Run ID</span><b id="activityRunId">-</b></div>
-        <div class="activity-id"><span>Operation ID</span><b id="activityOperationId">-</b></div>
-        <div><span>最近结果</span><b id="activityLastResult">-</b></div>
-      </div>
-      <div class="activity-diagnosis"><span>状态判断</span><b id="activityDiagnosis">当前没有发现异常。</b></div>
-      <div class="activity-command" id="activityCommandBlock" hidden><span>命令</span><code id="activityCommand"></code></div>
-      <div class="activity-output"><span>最新输出</span><pre id="activityOutput">尚无命令输出</pre></div>
-      <div class="activity-timeline"><span>最近事件</span><ol id="activityTimeline"></ol></div>
-    </aside>
   </header>
   <main class="loading-stage">
     <div class="loading-card"><div class="spinner"></div><h1>正在打开 ChatGPT</h1><p>聊天页面与本地工作区权限相互隔离。</p></div>

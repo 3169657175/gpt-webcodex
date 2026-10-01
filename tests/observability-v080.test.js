@@ -6,11 +6,13 @@ const root = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 test('0.8.0 exposes heartbeat, process and diagnosis without internal IDs in the default chat strip', () => {
-  const html = read('renderer/browser.html');
+  const html = read('renderer/activity-detail.html');
+  const detailJs = read('renderer/activity-detail.js');
   const js = read('renderer/browser.js');
-  assert.match(html, /id="activityHeartbeat"/);
-  assert.match(html, /id="activityProcess"/);
-  assert.match(html, /id="activityDiagnosis"/);
+  assert.match(html, /id="facts"/);
+  assert.match(html, /id="diagnosis"/);
+  assert.match(detailJs, /'heartbeat'/);
+  assert.match(detailJs, /'process'/);
   assert.match(js, /waiting_model/);
   assert.match(js, /疑似停滞/);
   assert.match(js, /疑似卡住/);

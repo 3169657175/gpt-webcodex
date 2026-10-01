@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self';style-src 'self';script-src 'self';">
+  <title>运行详情</title>
+  <link rel="stylesheet" href="activity-detail.css">
+</head>
+<body>
+  <main class="activity-shell">
+    <header class="activity-head">
+      <div><span class="eyebrow">本地执行活动</span><h1 id="status">等待状态</h1><p id="capturedAt">状态读取 —</p></div>
+      <div class="head-actions"><button id="pinButton" type="button">固定</button><button id="closeButton" type="button" aria-label="关闭">×</button></div>
+    </header>
+    <section class="facts" id="facts"></section>
+    <section class="diagnosis"><span>状态判断</span><b id="diagnosis">当前没有发现异常。</b></section>
+    <section class="command" id="commandBlock" hidden><span>正在执行</span><code id="command"></code></section>
+    <section class="output"><div><span>最新输出</span><small id="outputMeta"></small></div><pre id="output">尚无命令输出</pre></section>
+    <section class="timeline"><span>最近事件</span><ol id="timeline"></ol></section>
+  </main>
+  <script src="activity-detail.js"></script>
+</body>
+</html>

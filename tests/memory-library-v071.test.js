@@ -14,7 +14,7 @@ test('0.7.1 local memory library exposes pagination and bulk archive controls', 
   for (const id of ['memorySelectPage', 'memoryBatchArchive', 'memoryPageSize', 'memoryPrevPage', 'memoryNextPage', 'memoryPageLabel']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
-  assert.match(html, /按页加载/);
+  assert.match(html, /少量长期画像/);
   assert.match(app, /function renderMemoryPagination/);
   assert.match(app, /function archiveSelectedMemories/);
   assert.match(app, /api\.memoryArchive\(memoryId\)/);

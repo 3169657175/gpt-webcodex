@@ -16,6 +16,7 @@ from typing import Any
 
 
 MEMORY_SCHEMA_VERSION = 1
+MEMORY_POLICY_VERSION = 2
 DEFAULT_MEMORY_PROFILE = "local-default"
 MEMORY_SCOPES = frozenset({"global", "project", "task"})
 MEMORY_TYPES = frozenset({
@@ -115,7 +116,9 @@ class MemoryStore:
             _atomic_write(self.config_path, (json.dumps({
                 "schema_version": MEMORY_SCHEMA_VERSION,
                 "profile": self.profile,
-                "auto_memory": "off",
+                "auto_memory": "auto",
+                "auto_memory_policy_version": MEMORY_POLICY_VERSION,
+                "auto_memory_user_set": False,
             }, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"))
 
     def config(self) -> dict[str, Any]:
@@ -123,16 +126,38 @@ class MemoryStore:
             payload = json.loads(self.config_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             payload = {}
-        mode = str(payload.get("auto_memory") or "off").strip().lower()
+        policy_version = int(payload.get("auto_memory_policy_version", 0) or 0)
+        user_set = bool(payload.get("auto_memory_user_set", False))
+        mode = str(payload.get("auto_memory") or "auto").strip().lower()
         if mode not in AUTO_MEMORY_MODES:
-            mode = "off"
-        return {"schema_version": MEMORY_SCHEMA_VERSION, "profile": self.profile, "auto_memory": mode}
+            mode = "auto"
+        # v1 wrote `off` as an implementation default, so existing installations could
+        # silently stop collecting memory after an upgrade. Migrate that legacy default
+        # once; a mode explicitly chosen under v2 is marked with auto_memory_user_set.
+        if policy_version < MEMORY_POLICY_VERSION and not user_set and mode == "off":
+            mode = "auto"
+        normalized = {
+            "schema_version": MEMORY_SCHEMA_VERSION,
+            "profile": self.profile,
+            "auto_memory": mode,
+            "auto_memory_policy_version": MEMORY_POLICY_VERSION,
+            "auto_memory_user_set": user_set,
+        }
+        if any(payload.get(key) != value for key, value in normalized.items()):
+            _atomic_write(self.config_path, (json.dumps(normalized, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"))
+        return normalized
 
     def set_auto_memory(self, mode: str) -> dict[str, Any]:
         normalized = str(mode or "").strip().lower()
         if normalized not in AUTO_MEMORY_MODES:
             raise ValueError("auto_memory must be one of: off, suggest, auto")
-        payload = {"schema_version": MEMORY_SCHEMA_VERSION, "profile": self.profile, "auto_memory": normalized}
+        payload = {
+            "schema_version": MEMORY_SCHEMA_VERSION,
+            "profile": self.profile,
+            "auto_memory": normalized,
+            "auto_memory_policy_version": MEMORY_POLICY_VERSION,
+            "auto_memory_user_set": True,
+        }
         _atomic_write(self.config_path, (json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"))
         return payload
 
@@ -418,7 +443,7 @@ class MemoryStore:
             "content_bytes": used,
             "truncated": len(result) < len(candidates),
             "source_of_truth": "local_markdown",
-            "auto_memory": "off",
+            "auto_memory": self.config()["auto_memory"],
         }
 
     @staticmethod

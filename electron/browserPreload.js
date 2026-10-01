@@ -53,5 +53,14 @@ contextBridge.exposeInMainWorld('browserAssistant', {
   },
   taskState: () => ipcRenderer.invoke('task-state:read'),
   taskRuntime: (options = {}) => ipcRenderer.invoke('mcp:task-runtime', options),
-  stopTask: () => ipcRenderer.invoke('task-state:stop')
+  stopTask: () => ipcRenderer.invoke('task-state:stop'),
+  activityDetailShow: (options = {}) => ipcRenderer.invoke('activity-detail:show', options),
+  activityDetailUpdate: (payload = {}) => ipcRenderer.invoke('activity-detail:update', payload),
+  activityDetailHide: () => ipcRenderer.invoke('activity-detail:hide'),
+  activityDetailClose: () => ipcRenderer.invoke('activity-detail:close'),
+  onActivityDetailState: (listener) => {
+    const wrapped = (_event, payload) => listener(payload);
+    ipcRenderer.on('activity-detail:state', wrapped);
+    return () => ipcRenderer.removeListener('activity-detail:state', wrapped);
+  }
 });

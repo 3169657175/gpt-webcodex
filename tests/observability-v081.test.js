@@ -5,20 +5,27 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
-test('0.8.2 progress band owns the detailed hover card and the top task strip stays compact', () => {
+test('0.8.3 progress band opens a native owned Activity Detail window without resizing ChatGPT', () => {
   const html = read('renderer/browser.html');
-  const css = read('renderer/browser.css');
   const js = read('renderer/browser.js');
-  assert.match(html, /id="progressBand"[^>]+aria-controls="activityPanel"/);
-  assert.doesNotMatch(html, /id="taskStrip"[^>]+aria-controls="activityPanel"/);
-  assert.match(html, /id="activityTaskId"/);
-  assert.match(html, /id="activityRunId"/);
-  assert.match(html, /id="activityOperationId"/);
-  assert.match(html, /id="activityLastResult"/);
-  assert.match(css, /\.activity-panel\{[^}]*width:min\(780px/);
+  const preload = read('electron/browserPreload.js');
+  const detailHtml = read('renderer/activity-detail.html');
+  const main = read('electron/main.js');
+  const controller = read('electron/chatViewController.js');
+  assert.match(html, /id="progressBand"/);
+  assert.doesNotMatch(html, /id="activityPanel"|aria-controls="activityPanel"/);
+  assert.match(js, /activityDetailShow/);
+  assert.match(js, /buildActivityDetailPayload/);
+  assert.match(js, /commandRunning[\s\S]*?正在执行本地命令/);
   assert.match(js, /\$\('#progressBand'\)\?\.addEventListener\('mouseenter'/);
-  assert.doesNotMatch(js, /\$\('#taskStrip'\)\.addEventListener\('mouseenter'/);
-  assert.match(js, /activityPopoverPinned/);
+  assert.match(preload, /activityDetailShow|activityDetailUpdate|onActivityDetailState/);
+  assert.match(main, /activityDetailWindow = new BrowserWindow\(\{[\s\S]*?parent: chatWindow && !chatWindow\.isDestroyed\(\) \? chatWindow : undefined/);
+  assert.match(main, /loadFile\(path\.join\(__dirname, '\.\.', 'renderer', 'activity-detail\.html'\)\)/);
+  assert.doesNotMatch(main, /activity-detail:[\s\S]{0,600}toolbarHeight\s*=|activity-detail:[\s\S]{0,600}chatController\.resize/);
+  assert.match(controller, /y: this\.toolbarHeight/);
+  assert.match(detailHtml, /id="facts"/);
+  assert.match(detailHtml, /id="diagnosis"/);
+  assert.match(detailHtml, /id="timeline"/);
   assert.match(js, /setInterval\(refreshTask, 1000\)/);
 });
 

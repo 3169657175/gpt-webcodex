@@ -5,7 +5,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const pageMeta = {
   status: ['运行', '首页', '运行状态、当前任务与最近异常集中在这里。'],
   workspace: ['项目', '工作区', '查看当前主工作区与额外授权边界。'],
-  memory: ['记忆', '本地记忆', '管理跨 ChatGPT 账号保留的本机长期记忆。'],
+  memory: ['记忆', '本地记忆', '管理真正会影响协作方式的用户画像、长期偏好和项目背景。'],
   settings: ['配置', '设置与诊断', '常用设置保持简单，连接、教程和故障处理按需展开。'],
   'setup-guide': ['配置', '配置教程', '按新版 OpenAI Platform 与 ChatGPT 插件流程完成首次接入。']
 };
@@ -1012,7 +1012,9 @@ function renderMemoryStatus(status) {
   const mode = ['off', 'suggest', 'auto'].includes(status?.config?.auto_memory) ? status.config.auto_memory : 'off';
   $('#memoryAutoMode').value = mode;
   const capture = status?.auto_capture || {};
-  $('#memoryAutoCaptureStatus').textContent = mode === 'off' ? '自动记忆已关闭' : `自动采集运行中 · 已处理 ${Number(capture.processed || 0)} 轮`;
+  $('#memoryAutoCaptureStatus').textContent = mode === 'off'
+    ? '自动画像已关闭（可随时重新开启）'
+    : `画像提炼运行中 · 已检查 ${Number(capture.processed || 0)} 轮 · 已更新 ${Number(capture.remembered || 0)} 次`;
 }
 
 function memoryButton(label, className, handler) {
@@ -1084,13 +1086,23 @@ function renderMemoryItems(items) {
     const title = document.createElement('b'); title.textContent = textOr(item.title, '未命名记忆');
     const meta = document.createElement('small'); meta.textContent = `${memoryScopeLabel(item.scope)} · ${memoryTypeLabel(item.memory_type)} · ${memoryDate(item.updated_at)}`;
     copy.append(title, meta);
-    const badge = document.createElement('span'); badge.className = `soft-badge ${item.pinned ? 'positive' : 'neutral'}`; badge.textContent = item.pinned ? '已置顶' : '普通';
+    const isCoreProfile = Boolean(item.pinned && item.scope === 'global' && ['core_preference', 'working_style'].includes(String(item.memory_type || '')));
+    const badge = document.createElement('span');
+    badge.className = `soft-badge ${isCoreProfile ? 'positive' : 'neutral'}`;
+    badge.textContent = isCoreProfile ? '核心画像' : item.scope === 'project' ? '项目记忆' : '长期记忆';
     summary.append(copy, badge);
     const body = document.createElement('pre'); body.className = 'memory-content'; body.textContent = textOr(item.content, '（空内容）');
     const actions = document.createElement('div'); actions.className = 'memory-actions';
     const editor = document.createElement('div'); editor.className = 'memory-editor'; editor.hidden = true;
+    const coreEligible = item.scope === 'global' && ['core_preference', 'working_style'].includes(String(item.memory_type || ''));
+    if (coreEligible) {
+      actions.append(memoryButton(
+        item.pinned ? '移出核心画像' : '设为核心画像',
+        'secondary-button',
+        () => updateMemoryItem(item, { pinned: !item.pinned }).catch((error) => toast('更新失败', error.message, 'error'))
+      ));
+    }
     actions.append(
-      memoryButton(item.pinned ? '取消置顶' : '置顶', 'secondary-button', () => updateMemoryItem(item, { pinned: !item.pinned }).catch((error) => toast('更新失败', error.message, 'error'))),
       memoryButton('编辑', 'secondary-button', () => { editor.hidden = !editor.hidden; }),
       memoryButton('归档', 'secondary-button', async () => {
         if (!confirm('归档这条记忆？')) return;

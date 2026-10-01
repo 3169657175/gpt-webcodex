@@ -14,7 +14,7 @@ let taskRefreshWarning = '';
 let nativeLoginState = { status: 'idle', message: '' };
 let loginState = { status: 'idle', mode: '', prompt: false };
 let activityPopoverPinned = false;
-let activityPopoverAnchor = null;
+let activityDetailVisible = false;
 let activityOpenTimer = null;
 let activityCloseTimer = null;
 
@@ -62,23 +62,21 @@ function clearActivityTimers() {
   activityCloseTimer = null;
 }
 
-function positionActivityPanel(anchor) {
-  const panel = $('#activityPanel');
-  if (!panel || !anchor) return;
-  const rect = anchor.getBoundingClientRect();
-  const width = Math.min(780, Math.max(360, window.innerWidth - 24));
-  const left = Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - width - 12));
-  panel.style.left = `${Math.round(left)}px`;
+function activityAnchorPayload(anchor) {
+  const rect = (anchor || $('#progressBand')).getBoundingClientRect();
+  return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
 }
 
 function openActivityPanel(anchor, { pin = false } = {}) {
-  const panel = $('#activityPanel');
-  if (!panel || $('#activityToggle')?.hidden) return;
+  if ($('#activityToggle')?.hidden) return;
   clearActivityTimers();
-  activityPopoverAnchor = anchor || activityPopoverAnchor || $('#progressBand');
   if (pin) activityPopoverPinned = true;
-  positionActivityPanel(activityPopoverAnchor);
-  panel.hidden = false;
+  activityDetailVisible = true;
+  void api.activityDetailShow?.({
+    anchor: activityAnchorPayload(anchor),
+    pinned: activityPopoverPinned,
+    payload: buildActivityDetailPayload()
+  });
   $('#activityToggle')?.setAttribute('aria-expanded', 'true');
   $('#progressBand')?.setAttribute('aria-expanded', 'true');
   if ($('#activityToggle')) $('#activityToggle').textContent = activityPopoverPinned ? '收起详情' : '活动详情';
@@ -87,12 +85,15 @@ function openActivityPanel(anchor, { pin = false } = {}) {
 function closeActivityPanel({ force = false } = {}) {
   if (activityPopoverPinned && !force) return;
   clearActivityTimers();
-  activityPopoverPinned = false;
-  const panel = $('#activityPanel');
-  if (panel) panel.hidden = true;
-  $('#activityToggle')?.setAttribute('aria-expanded', 'false');
-  $('#progressBand')?.setAttribute('aria-expanded', 'false');
-  renderActivityPanel();
+  if (force) {
+    activityPopoverPinned = false;
+    activityDetailVisible = false;
+    void api.activityDetailClose?.();
+    $('#activityToggle')?.setAttribute('aria-expanded', 'false');
+    $('#progressBand')?.setAttribute('aria-expanded', 'false');
+  } else {
+    void api.activityDetailHide?.();
+  }
 }
 
 function scheduleActivityOpen(anchor) {
@@ -104,94 +105,91 @@ function scheduleActivityOpen(anchor) {
 function scheduleActivityClose() {
   if (activityPopoverPinned) return;
   if (activityOpenTimer) clearTimeout(activityOpenTimer);
-  activityCloseTimer = setTimeout(() => closeActivityPanel(), 220);
+  activityCloseTimer = setTimeout(() => closeActivityPanel(), 180);
+}
+
+function buildActivityDetailPayload() {
+  const { task, operation, activity, runtimeLayers, feedbackCapabilities, available, stale } = progressInput;
+  const command = activity?.command && typeof activity.command === 'object'
+    ? activity.command
+    : (task?.current_command && typeof task.current_command === 'object' ? task.current_command : null);
+  const lastCommand = task?.last_command && typeof task.last_command === 'object' ? task.last_command : null;
+  const timeline = Array.isArray(activity?.timeline) ? activity.timeline : [];
+  const view = window.progressPresentation.describe(task, operation, lastStreamState, Date.now(), available, activity, stale, runtimeLayers);
+  const stateLabel = {
+    testing: '正在测试', building: '正在构建', waiting_model: '等待 ChatGPT', waiting_user: '等待处理', quiet: '仍在运行',
+    suspected_stall: '疑似停滞', stalled: '疑似卡住', local_running: '本地运行中', planning: '正在规划', recovering: '正在恢复',
+    completed: '已完成', failed: '失败', stopped: '已停止', generating: '模型处理中'
+  }[view.userState || view.key] || view.key || '—';
+  const commandRunning = command?.status === 'running'
+    || command?.execution_lifecycle_state === 'running'
+    || runtimeLayers?.process?.state === 'running'
+    || runtimeLayers?.execution?.state === 'running';
+  const stage = commandRunning
+    ? '正在执行本地命令'
+    : (task?.current_step || operation?.phase || operation?.status || (task?.status === 'completed' ? '本地任务已完成' : '—'));
+  const lastActivityAt = command?.last_output_at || lastCommand?.finished_at || timeline.at(-1)?.timestamp || task?.updated_at || operation?.updated_at;
+  let waitReason = '—';
+  const lifecycle = String(task?.lifecycle_state || '');
+  if (!available) waitReason = '等待本地状态连接恢复';
+  else if (commandRunning) waitReason = command?.last_output_at ? '等待命令继续输出或结束' : '命令已启动，等待首段输出';
+  else if (lifecycle === 'waiting_model') waitReason = '等待 ChatGPT 发起下一次工具调用';
+  else if (operation && ['running', 'queued'].includes(String(operation.status || ''))) waitReason = operation.status === 'queued' ? '等待后台执行槽位' : '等待后台阶段完成';
+  else if (lastStreamState.status === 'generating') waitReason = '等待网页端发起本地工具调用';
+  const nativeStatus = feedbackCapabilities?.chatgpt_tool_invocation_status?.supported;
+  const desktopStream = feedbackCapabilities?.desktop_activity_stream?.supported;
+  const lastResultStatus = lastCommand?.status || task?.latest_test_result?.status || task?.latest_build_result?.status || '';
+  const lastExitCode = lastCommand?.exit_code;
+  const lastResult = lastResultStatus
+    ? `${lastResultStatus}${lastExitCode == null ? '' : ` · exit ${lastExitCode}`}${lastCommand?.elapsed_ms == null ? '' : ` · ${formatActivityDuration(lastCommand.elapsed_ms)}`}`
+    : '—';
+  const output = String(command?.latest_output || '').trim();
+  return {
+    status: view.message,
+    capturedAt: `${stale ? '最后成功读取 ' : '状态读取 '}${formatActivityTime(activity?.captured_at || task?.updated_at)}`,
+    state: stateLabel,
+    stage,
+    elapsed: view.elapsed || formatActivityDuration(command?.elapsed_ms ?? lastCommand?.elapsed_ms),
+    lastSeen: formatActivityTime(lastActivityAt),
+    heartbeat: view.heartbeatAge == null ? '—' : `${Math.floor(view.heartbeatAge)} 秒前`,
+    process: runtimeLayers?.process?.state === 'running' ? '运行中' : runtimeLayers?.process?.state === 'background' ? '后台任务' : (view.canStop ? '运行中' : '无本地命令'),
+    waitReason,
+    nextStep: task?.next_step || (view.userState === 'waiting_model' ? '等待 ChatGPT 继续' : '—'),
+    channel: nativeStatus && desktopStream ? 'ChatGPT 调用提示 + 桌面实时状态' : desktopStream ? '桌面实时状态' : '任务状态快照',
+    taskId: task?.task_id || '—',
+    runId: task?.run_id || operation?.run_id || '—',
+    operationId: operation?.operation_id || '—',
+    lastResult,
+    diagnosis: view.diagnostic || (view.userState === 'waiting_model' ? '本地执行已经结束，目前在等待 ChatGPT 继续。' : '当前没有发现异常。'),
+    command: command?.command || '',
+    output: output || (commandRunning ? '命令已启动，尚无输出。' : '尚无命令输出。'),
+    outputMeta: commandRunning ? '实时更新' : '',
+    timeline: timeline.slice(-8).reverse().map((event) => ({
+      label: event.label || event.type || '状态更新',
+      detail: event.detail || event.step || '',
+      time: formatActivityTime(event.timestamp)
+    }))
+  };
 }
 
 function renderActivityPanel() {
   const toggle = $('#activityToggle');
-  const panel = $('#activityPanel');
-  if (!toggle || !panel) return;
-  const { task, operation, activity, runtimeLayers, feedbackCapabilities, available, stale } = progressInput;
-  const command = activity?.command && typeof activity.command === 'object' ? activity.command : null;
-  const lastCommand = task?.last_command && typeof task.last_command === 'object' ? task.last_command : null;
-  const timeline = Array.isArray(activity?.timeline) ? activity.timeline : [];
-  const hasContent = Boolean(task || operation || command || timeline.length || runtimeLayers);
+  if (!toggle) return;
+  const { task, operation, activity, runtimeLayers } = progressInput;
+  const command = activity?.command || task?.current_command;
+  const hasContent = Boolean(task || operation || command || (Array.isArray(activity?.timeline) && activity.timeline.length) || runtimeLayers);
   toggle.hidden = !hasContent;
   if (!hasContent) {
-    panel.hidden = true;
     activityPopoverPinned = false;
+    activityDetailVisible = false;
     toggle.setAttribute('aria-expanded', 'false');
     toggle.textContent = '活动详情';
+    void api.activityDetailClose?.();
     return;
   }
-  const view = window.progressPresentation.describe(task, operation, lastStreamState, Date.now(), available, activity, stale, runtimeLayers);
-  if (panel.hidden) toggle.textContent = ['quiet', 'suspected_stall', 'stalled'].includes(view.userState) ? '为什么看起来卡住了？' : '活动详情';
-  $('#activityStatus').textContent = view.message;
-  $('#activityCapturedAt').textContent = `${stale ? '最后成功读取 ' : '状态读取 '}${formatActivityTime(activity?.captured_at || task?.updated_at)}`;
-  const stateLabel = {
-    testing: '正在测试', building: '正在构建', waiting_model: '等待 ChatGPT', waiting_user: '等待处理', quiet: '仍在运行',
-    suspected_stall: '疑似停滞', stalled: '疑似卡住', local_running: '本地运行中', planning: '正在规划', recovering: '正在恢复',
-    completed: '已完成', failed: '失败', stopped: '已停止'
-  }[view.userState || view.key] || view.key || '—';
-  $('#activityState').textContent = stateLabel;
-  $('#activityStage').textContent = task?.current_step || operation?.phase || operation?.status || (command?.status === 'running' ? '命令执行中' : task?.status === 'completed' ? '本地任务已完成' : '—');
-  $('#activityElapsed').textContent = view.elapsed || formatActivityDuration(command?.elapsed_ms ?? lastCommand?.elapsed_ms);
-  const lastActivityAt = command?.last_output_at || lastCommand?.finished_at || timeline.at(-1)?.timestamp || task?.updated_at || operation?.updated_at;
-  $('#activityLastSeen').textContent = formatActivityTime(lastActivityAt);
-  $('#activityHeartbeat').textContent = view.heartbeatAge == null ? '—' : `${Math.floor(view.heartbeatAge)} 秒前`;
-  $('#activityProcess').textContent = runtimeLayers?.process?.state === 'running' ? '运行中' : runtimeLayers?.process?.state === 'background' ? '后台任务' : (view.canStop ? '运行中' : '无本地命令');
-  $('#activityNextStep').textContent = task?.next_step || (view.userState === 'waiting_model' ? '等待 ChatGPT 继续' : '-');
-  $('#activityDiagnosis').textContent = view.diagnostic || (view.userState === 'waiting_model' ? '本地执行已经结束，目前在等待 ChatGPT 继续。' : '当前没有发现异常。');
-  let waitReason = '-';
-  const lifecycle = String(task?.lifecycle_state || '');
-  if (!available) waitReason = '等待本地状态连接恢复';
-  else if (lifecycle === 'waiting_model') waitReason = '等待 ChatGPT 发起下一次工具调用';
-  else if (command?.status === 'running') waitReason = command?.last_output_at ? '等待命令继续输出或结束' : '命令已启动，等待首段输出';
-  else if (operation && ['running', 'queued'].includes(String(operation.status || ''))) waitReason = operation.status === 'queued' ? '等待后台执行槽位' : '等待后台阶段完成';
-  else if (lastStreamState.status === 'generating') waitReason = '等待网页端发起本地工具调用';
-  $('#activityWaitReason').textContent = waitReason;
-  const nativeStatus = feedbackCapabilities?.chatgpt_tool_invocation_status?.supported;
-  const desktopStream = feedbackCapabilities?.desktop_activity_stream?.supported;
-  $('#activityChannel').textContent = nativeStatus && desktopStream ? 'ChatGPT 调用提示 + 桌面实时状态' : desktopStream ? '桌面实时状态' : '任务状态快照';
-  $('#activityChannel').title = feedbackCapabilities?.mcp_events?.supported
-    ? 'MCP Events 已启用'
-    : feedbackCapabilities?.mcp_events?.reason || '实时反馈不依赖向聊天输入框发送消息';
-  $('#activityTaskId').textContent = task?.task_id || '—';
-  $('#activityRunId').textContent = task?.run_id || operation?.run_id || '—';
-  $('#activityOperationId').textContent = operation?.operation_id || '—';
-  const lastResultStatus = lastCommand?.status || task?.latest_test_result?.status || task?.latest_build_result?.status || '';
-  const lastExitCode = lastCommand?.exit_code;
-  $('#activityLastResult').textContent = lastResultStatus
-    ? `${lastResultStatus}${lastExitCode == null ? '' : ` · exit ${lastExitCode}`}${lastCommand?.elapsed_ms == null ? '' : ` · ${formatActivityDuration(lastCommand.elapsed_ms)}`}`
-    : '—';
-  const commandBlock = $('#activityCommandBlock');
-  commandBlock.hidden = !command?.command;
-  $('#activityCommand').textContent = command?.command || '';
-  const output = String(command?.latest_output || '').trim();
-  $('#activityOutput').textContent = output || (command?.status === 'running' ? '命令已启动，尚无输出。' : '尚无命令输出。');
-  const list = $('#activityTimeline');
-  list.replaceChildren();
-  for (const event of timeline.slice(-8).reverse()) {
-    const item = document.createElement('li');
-    const label = document.createElement('b');
-    label.textContent = event.label || event.type || '状态更新';
-    item.append(label);
-    const eventDetail = event.detail || event.step;
-    if (eventDetail) {
-      const step = document.createElement('div');
-      step.textContent = eventDetail;
-      item.append(step);
-    }
-    const time = document.createElement('time');
-    time.textContent = formatActivityTime(event.timestamp);
-    item.append(time);
-    list.append(item);
-  }
-  if (!timeline.length) {
-    const item = document.createElement('li');
-    item.textContent = '暂无持久化事件';
-    list.append(item);
-  }
+  const view = window.progressPresentation.describe(progressInput.task, progressInput.operation, lastStreamState, Date.now(), progressInput.available, progressInput.activity, progressInput.stale, progressInput.runtimeLayers);
+  if (!activityDetailVisible) toggle.textContent = ['quiet', 'suspected_stall', 'stalled'].includes(view.userState) ? '为什么看起来卡住了？' : '活动详情';
+  if (activityDetailVisible) void api.activityDetailUpdate?.(buildActivityDetailPayload());
 }
 
 function renderChatState(state) {
@@ -475,26 +473,21 @@ $('#progressAction').onclick = async () => {
 };
 $('#activityToggle').onclick = (event) => {
   event.stopPropagation();
-  const panel = $('#activityPanel');
-  if (!panel.hidden && activityPopoverPinned) closeActivityPanel({ force: true });
+  if (activityDetailVisible && activityPopoverPinned) closeActivityPanel({ force: true });
   else openActivityPanel($('#progressBand'), { pin: true });
 };
 $('#progressBand')?.addEventListener('mouseenter', () => scheduleActivityOpen($('#progressBand')));
 $('#progressBand')?.addEventListener('mouseleave', scheduleActivityClose);
-$('#activityPanel').addEventListener('mouseenter', () => {
-  if (activityCloseTimer) clearTimeout(activityCloseTimer);
-});
-$('#activityPanel').addEventListener('mouseleave', scheduleActivityClose);
 $('#progressBand').addEventListener('click', (event) => {
   if (event.target.closest('button')) return;
   event.stopPropagation();
-  if (!$('#activityPanel').hidden && activityPopoverPinned) closeActivityPanel({ force: true });
+  if (activityDetailVisible && activityPopoverPinned) closeActivityPanel({ force: true });
   else openActivityPanel($('#progressBand'), { pin: true });
 });
 $('#progressBand').addEventListener('keydown', (event) => {
   if (!['Enter', ' '].includes(event.key)) return;
   event.preventDefault();
-  if (!$('#activityPanel').hidden && activityPopoverPinned) closeActivityPanel({ force: true });
+  if (activityDetailVisible && activityPopoverPinned) closeActivityPanel({ force: true });
   else openActivityPanel($('#progressBand'), { pin: true });
 });
 $('#workspaceHealthButton').onclick = (event) => {
@@ -512,16 +505,19 @@ document.addEventListener('click', (event) => {
     popover.hidden = true;
     $('#workspaceHealthButton').setAttribute('aria-expanded', 'false');
   }
-  const activityPanel = $('#activityPanel');
   const progressBand = $('#progressBand');
   const activityToggle = $('#activityToggle');
-  if (activityPopoverPinned && activityPanel && !activityPanel.contains(event.target) && !progressBand?.contains(event.target) && !activityToggle?.contains(event.target)) closeActivityPanel({ force: true });
+  if (activityPopoverPinned && !progressBand?.contains(event.target) && !activityToggle?.contains(event.target)) closeActivityPanel({ force: true });
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !$('#activityPanel')?.hidden) closeActivityPanel({ force: true });
+  if (event.key === 'Escape' && activityDetailVisible) closeActivityPanel({ force: true });
 });
-window.addEventListener('resize', () => {
-  if (!$('#activityPanel')?.hidden) positionActivityPanel(activityPopoverAnchor || $('#progressBand'));
+api.onActivityDetailState?.((state) => {
+  activityDetailVisible = Boolean(state?.visible);
+  activityPopoverPinned = Boolean(state?.pinned);
+  $('#activityToggle')?.setAttribute('aria-expanded', String(activityDetailVisible));
+  $('#progressBand')?.setAttribute('aria-expanded', String(activityDetailVisible));
+  if ($('#activityToggle')) $('#activityToggle').textContent = activityPopoverPinned ? '收起详情' : '活动详情';
 });
 $('#managerButton').onclick = () => api.openManager();
 $('#workspacePickerButton').onclick = (event) => {
