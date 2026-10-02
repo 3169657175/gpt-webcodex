@@ -460,6 +460,15 @@ class ChatViewController {
     const url = parseUrl(contents.getURL());
     const key = `${url?.hostname || ''}${url?.pathname || ''}:${kind}`;
     if (!force && this.loginPromptSeen.has(key)) return;
+    const embeddedAuthView = this.authViews.some((view) => view.webContents === contents);
+    // Passive probes on the primary ChatGPT view must never hide the chat behind
+    // the shell's modal login dialog. The live ChatGPT page can render its own
+    // sign-in state; only an explicit user action or an actual embedded auth view
+    // failure may take over the shell UI.
+    if (!force && !embeddedAuthView) {
+      this.loginPromptSeen.add(key);
+      return;
+    }
     this.loginPromptSeen.add(key);
     this.setLogin({ status: 'prompt', prompt: true, kind, returning: false,
       message: kind === 'blocked' ? 'Google 拒绝了当前登录环境。可以在应用内重新发起登录，也可以选择浏览器备用登录，成功后会自动返回。'

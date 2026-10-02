@@ -114,6 +114,24 @@ test('automatic return closes auth only after authenticated session AND primary 
   assert.equal(f.controller.view.visible, true); assert.equal(f.controller.view.webContents.focused, true);
 });
 
+test('passive primary-view login detection never covers ChatGPT, while explicit login still may', async (t) => {
+  const f = fixture(t), main = f.controller.view.webContents;
+  main.ui = { kind: 'entry', composer: false };
+  await f.controller.probeLogin(main);
+  assert.equal(f.controller.login.prompt, false);
+  assert.equal(f.controller.view.visible, true);
+
+  main.url = 'https://chatgpt.com/c/test';
+  main.ui = { kind: 'blocked', composer: false };
+  await f.controller.probeLogin(main);
+  assert.equal(f.controller.login.prompt, false);
+  assert.equal(f.controller.view.visible, true);
+
+  f.controller.offerLogin('entry', main, true);
+  assert.equal(f.controller.login.prompt, true);
+  assert.equal(f.controller.view.visible, false);
+});
+
 test('central refusal prompt hides native views, dismissal does not reopen the same prompt', async (t) => {
   const f = fixture(t), child = new Contents('https://accounts.google.com/signin');
   child.ui = { kind: 'blocked', composer: false };

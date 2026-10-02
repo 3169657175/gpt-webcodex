@@ -93,32 +93,6 @@ function setSwitchState(message = '', tone = 'success', clearAfterMs = 0) {
   }, clearAfterMs);
 }
 
-function closeWorkspaceQuickMenu() {
-  const menu = $('#workspaceQuickMenu');
-  if (menu) menu.hidden = true;
-  $('#workspacePickerButton')?.setAttribute('aria-expanded', 'false');
-}
-
-function renderWorkspaceQuickMenu() {
-  const list = $('#workspaceQuickList');
-  if (!list) return;
-  list.replaceChildren();
-  const items = Array.isArray(workspaceHubState?.workspaces) ? workspaceHubState.workspaces.slice(0, 8) : [];
-  if (!items.length) {
-    const empty = document.createElement('div'); empty.className = 'workspace-quick-empty'; empty.textContent = '暂无最近工作区'; list.appendChild(empty); return;
-  }
-  for (const item of items) {
-    const workspace = String(item?.path || item?.workspace || '');
-    if (!workspace) continue;
-    const button = document.createElement('button'); button.type = 'button'; button.className = 'workspace-quick-item';
-    const copy = document.createElement('span'); const title = document.createElement('b'); title.textContent = item?.name || baseName(workspace); const path = document.createElement('small'); path.textContent = workspace; copy.append(title, path);
-    const marker = document.createElement('em'); marker.textContent = workspace === activeWorkspace ? '当前' : '切换';
-    button.append(copy, marker); button.disabled = workspace === activeWorkspace;
-    button.onclick = async (event) => { event.stopPropagation(); closeWorkspaceQuickMenu(); await switchWorkspace(workspace); };
-    list.appendChild(button);
-  }
-}
-
 function unwrap(result) {
   if (!result?.ok) throw new Error(result?.error || '操作失败');
   return result.data;
@@ -524,7 +498,6 @@ function renderWorkspace(hub) {
     ? hub.workspaces
     : (hub.recentWorkspaces || []).filter(Boolean).map((workspace) => ({ path: workspace, name: baseName(workspace), active: workspace === activeWorkspace, status: 'ready' }));
   $('#workspacePickerButton').textContent = `全部工作区（${workspaces.length}）${Number(hub.invalidCount || 0) ? ` · ⚠ ${hub.invalidCount}` : ''}`;
-  renderWorkspaceQuickMenu();
 }
 
 async function refreshWorkspace() {
@@ -649,7 +622,6 @@ document.addEventListener('click', (event) => {
   const progressDetailTrigger = $('#progressDetailTrigger');
   const activityToggle = $('#activityToggle');
   if (activityPopoverPinned && !progressDetailTrigger?.contains(event.target) && !activityToggle?.contains(event.target)) closeActivityPanel({ force: true });
-  if (!$('#workspacePicker')?.contains(event.target)) closeWorkspaceQuickMenu();
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && activityDetailVisible) closeActivityPanel({ force: true });
@@ -664,18 +636,6 @@ api.onActivityDetailState?.((state) => {
 $('#managerButton').onclick = () => api.openManager();
 $('#workspacePickerButton').onclick = (event) => {
   event.stopPropagation();
-  const menu = $('#workspaceQuickMenu');
-  if (!menu) return;
-  if (!menu.hidden) closeWorkspaceQuickMenu();
-  else {
-    renderWorkspaceQuickMenu();
-    menu.hidden = false;
-    $('#workspacePickerButton').setAttribute('aria-expanded', 'true');
-  }
-};
-$('#workspaceQuickCenter').onclick = (event) => {
-  event.stopPropagation();
-  closeWorkspaceQuickMenu();
   api.openWorkspaceWindow?.().catch((error) => setSwitchState(`打开失败：${error.message}`, 'error'));
 };
 $('#stopTask').onclick = async () => {

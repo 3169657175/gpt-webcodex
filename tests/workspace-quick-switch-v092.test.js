@@ -6,13 +6,12 @@ const html = fs.readFileSync('renderer/browser.html', 'utf8');
 const js = fs.readFileSync('renderer/browser.js', 'utf8');
 const css = fs.readFileSync('renderer/browser.css', 'utf8');
 
-test('0.9.2 offers recent-workspace quick switching while retaining Workspace Center', () => {
-  assert.match(html, /id="workspaceQuickMenu"/);
-  assert.match(html, /id="workspaceQuickCenter"/);
-  assert.match(js, /renderWorkspaceQuickMenu/);
-  assert.match(js, /await switchWorkspace\(workspace\)/);
+test('0.9.2 keeps the full Workspace Center as the primary workspace picker', () => {
+  assert.doesNotMatch(html, /id="workspaceQuickMenu"/);
+  assert.doesNotMatch(js, /renderWorkspaceQuickMenu/);
+  assert.match(html, /title="打开独立工作区中心"/);
   assert.match(js, /api\.openWorkspaceWindow/);
-  assert.match(css, /\.workspace-quick-menu/);
+  assert.doesNotMatch(css, /\.workspace-quick-menu/);
 });
 
 test('0.9.2 uses local switch feedback and shared tone classes', () => {

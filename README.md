@@ -36,9 +36,10 @@
 - **连接与恢复**：Tunnel 主通道健康进入轻量状态判断，失效 MCP Session 会清理旧 session 并安全重新 discovery；页面/Tunnel 异常不会误重启健康 Runtime。
 - **唯一状态源**：首页和 React 摘要统一消费 canonical service / assistant state，正常态自动收起启动链，运行、恢复和异常时才展开细节。
 - **运行信息减噪**：顶部空闲态真实压缩，心跳不再作为用户进度条展示，最近事件仅保留命令、阶段、错误和恢复等有意义变化，并尽量中文化。
+- **登录层防误触发**：主 ChatGPT 页面的被动登录探测不会再自动隐藏聊天或拉起模态遮罩；只有用户主动登录或嵌入式登录真实失败时才进入登录中心。
 - **长期上下文闭环**：增加“有效 / 候选 / 已归档”三视图，归档原因与时间可见，并支持恢复为有效和永久删除。
 - **浅色主题**：保留现有深色主题，新增纯白浅色与“跟随系统”，统一青绿色主操作色、按钮层级、字号和 semantic tokens。
-- **工作区效率**：ChatGPT 顶部增加最近工作区快速切换，同时保留独立 Workspace Center 处理新增、授权和维护。
+- **工作区中心**：ChatGPT 顶部“全部工作区”直接打开完整 Workspace Center，可快速切换工作区、清理失效目录并统一查看和管理授权目录。
 - **真实 Renderer 验证**：发布链新增 production Electron BrowserWindow smoke，真实加载 preload + React bundle，分别验证浅/深主题、React portal、横向溢出和截图，避免“Vite 构建通过但真实窗口失败”的假绿。
 
 详细变化见 [v0.9.2 发布说明](docs/RELEASE_NOTES_0.9.2.md)。
