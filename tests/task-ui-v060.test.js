@@ -3,13 +3,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
 const source = fs.readFileSync('renderer/app.js', 'utf8');
+const assistantState = fs.readFileSync('renderer/assistantState.js', 'utf8');
 
 test('0.6.0 hides clean worktrees and exposes stalled task state', () => {
   assert.match(source, /function worktreeHasPendingChanges/);
   assert.match(source, /has_unapplied_changes/);
   assert.match(source, /changed_count/);
-  assert.match(source, /unified\.state === 'stalled'/);
-  assert.match(source, /疑似卡住/);
+  assert.match(source, /window\.assistantState\.describe/);
+  assert.match(assistantState, /stalled/);
+  assert.match(assistantState, /疑似卡住/);
   assert.match(source, /秒无活动/);
 });
 

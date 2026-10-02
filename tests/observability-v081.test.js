@@ -28,7 +28,8 @@ test('0.8.4 compact progress trigger opens a native owned Activity Detail window
   assert.match(detailHtml, /id="facts"/);
   assert.match(detailHtml, /id="diagnosis"/);
   assert.match(detailHtml, /id="timeline"/);
-  assert.match(js, /setInterval\(refreshTask, 1000\)/);
+  assert.match(js, /api\.onTaskEvent/);
+  assert.match(js, /setInterval\(refreshTask, 30000\)/);
 });
 
 test('0.8.2 runtime settles elapsed time and terminal workflow state cleanly', () => {

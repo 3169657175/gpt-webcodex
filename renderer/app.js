@@ -51,7 +51,8 @@ const state = {
     items: [],
     page: 1,
     pageSize: 12,
-    selected: new Set()
+    selected: new Set(),
+    status: null
   },
   startup: {
     active: false,
@@ -62,6 +63,43 @@ const state = {
     stages: Object.fromEntries(startupStages.map((item) => [item.id, { status: 'waiting', startedAt: 0, endedAt: 0, message: '' }]))
   }
 };
+
+function managerAssistantState() {
+  const runtime = state.taskRuntime;
+  const task = runtime?.state || null;
+  const operation = Array.isArray(runtime?.operations)
+    ? runtime.operations.filter((item) => ['running', 'queued'].includes(String(item?.status || ''))).slice(-1)[0]
+    : null;
+  const view = window.assistantState?.describe
+    ? window.assistantState.describe(task, operation, null, Date.now(), !state.taskRuntimeError, null, Boolean(state.taskRuntimeError), runtime?.runtime_layers)
+    : { userState: 'idle', key: 'idle', message: '当前没有运行中的本地任务', detail: '' };
+  const label = window.assistantState?.labelFor ? window.assistantState.labelFor(view) : '空闲';
+  const tone = window.assistantState?.toneFor ? window.assistantState.toneFor(view) : 'neutral';
+  return {
+    userState: String(view?.userState || view?.key || 'idle'),
+    label: state.taskRuntimeError && task ? `${label} · 状态待确认` : label,
+    tone: state.taskRuntimeError && task ? 'warning' : tone,
+    message: String(view?.message || ''),
+    detail: String(view?.detail || ''),
+    canStop: Boolean(view?.canStop),
+    heartbeatAgeSeconds: Number(runtime?.runtime_layers?.user?.heartbeat_age_seconds ?? -1),
+    taskId: String(task?.task_id || ''),
+    runId: String(task?.run_id || operation?.run_id || '')
+  };
+}
+
+function publishManagerState() {
+  const detail = {
+    page: state.currentPage,
+    snapshot: state.snapshot,
+    workspaceHub: state.workspaceHub,
+    taskRuntime: state.taskRuntime,
+    memoryStatus: state.memory.status,
+    assistantState: managerAssistantState()
+  };
+  window.__MCP_MANAGER_STATE__ = detail;
+  window.dispatchEvent(new CustomEvent('mcp-manager-state', { detail }));
+}
 
 function unwrap(result) {
   if (!result?.ok) {
@@ -178,6 +216,7 @@ function navigate(page) {
   if (page === 'memory') loadMemoryPage();
   if (page === 'settings') loadLogs();
   if (page === 'setup-guide') renderSetupGuide();
+  publishManagerState();
 }
 
 function populateForms(snapshot, force = false) {
@@ -326,7 +365,20 @@ function serviceState(card, valueNode, metaNode, status, value, meta) {
 function renderSnapshot(snapshot, forceForms = false) {
   if (!snapshot) return;
   state.snapshot = snapshot;
+  publishManagerState();
   populateForms(snapshot, forceForms);
+
+  const appVersion = String(snapshot.appVersion || '').trim();
+  const brandVersion = $('#brandVersion');
+  const aboutVersion = $('#aboutVersion');
+  if (brandVersion) {
+    brandVersion.hidden = !appVersion;
+    brandVersion.textContent = appVersion ? `· ${appVersion}` : '';
+  }
+  if (aboutVersion) {
+    aboutVersion.hidden = !appVersion;
+    aboutVersion.textContent = appVersion ? `v${appVersion}` : '';
+  }
 
   const settings = snapshot.settings || {};
   const status = snapshot.status || {};
@@ -437,6 +489,7 @@ function renderWorkspaceSummary() {
   $('#recentWorkspaceCount').textContent = String((hub?.workspaces || []).length);
   $('#authorizedRootCount').textContent = String((hub?.authorizedRoots || []).length);
   $('#invalidWorkspaceCount').textContent = String(Number(hub?.invalidCount || 0) + Number(hub?.invalidAuthorizedRootCount || 0));
+  publishManagerState();
 
   const target = $('#workspaceAuthPreview');
   target.replaceChildren();
@@ -641,18 +694,9 @@ async function runRuntime(action) {
   }
 }
 
-function taskStatusView(task, operation) {
-  const lifecycle = String(task?.lifecycle_state || '');
-  const status = String(task?.status || '');
-  if (['running', 'queued'].includes(String(operation?.status || ''))
-    || ['active', 'running', 'created', 'planning', 'preparing', 'verifying', 'recovering'].includes(status)
-    || ['created', 'planning', 'ready', 'preparing', 'running', 'recovering', 'verifying'].includes(lifecycle)) return ['执行中', 'warning'];
-  if (['needs_user', 'waiting_user', 'waiting_approval', 'paused'].includes(lifecycle) || ['paused', 'waiting'].includes(status)) return ['等待处理', 'warning'];
-  if (lifecycle === 'waiting_model') return ['等待模型', 'warning'];
-  if (lifecycle === 'failed' || status === 'failed') return ['失败', 'danger'];
-  if (lifecycle === 'cancelled' || status === 'stopped') return ['已停止', 'neutral'];
-  if (lifecycle === 'completed' || status === 'completed') return ['已完成', 'positive'];
-  return ['空闲', 'neutral'];
+function taskStatusView(task, operation, runtimeLayers = null) {
+  const view = window.assistantState.describe(task, operation, null, Date.now(), !state.taskRuntimeError, null, Boolean(state.taskRuntimeError), runtimeLayers);
+  return [window.assistantState.labelFor(view), window.assistantState.toneFor(view), view];
 }
 
 function worktreeHasPendingChanges(worktree) {
@@ -672,15 +716,7 @@ function renderTaskRuntime() {
     ? runtime.operations.filter((item) => ['running', 'queued'].includes(String(item?.status || ''))).slice(-1)[0]
     : null;
   const unified = runtime?.runtime_layers?.user || {};
-  let [label, tone] = taskStatusView(task, operation);
-  if (unified.state === 'testing') label = '测试中';
-  else if (unified.state === 'building') label = '构建中';
-  else if (unified.state === 'planning') label = '正在分析';
-  else if (unified.state === 'waiting_model') label = '等待模型';
-  else if (unified.state === 'quiet') label = '仍在运行';
-  else if (unified.state === 'suspected_stall') { label = '疑似停滞'; tone = 'warning'; }
-  else if (unified.state === 'stalled') { label = '疑似卡住'; tone = 'danger'; }
-  else if (unified.state === 'recovering') label = '正在恢复';
+  let [label, tone, assistantView] = taskStatusView(task, operation, runtime?.runtime_layers);
   if (state.taskRuntimeError && task) {
     label = `${label} · 状态待确认`;
     tone = 'warning';
@@ -702,7 +738,7 @@ function renderTaskRuntime() {
   const lastActivity = relativeTime(task.last_heartbeat_at || task.updated_at);
   $('#taskActivity').textContent = state.taskRuntimeError
     ? `状态读取暂时失败，保留上次进度 · ${lastActivity}`
-    : unified.state === 'stalled'
+    : assistantView?.userState === 'stalled'
       ? `${Math.max(0, Number(unified.heartbeat_age_seconds || 0))} 秒无活动，建议查看诊断`
       : lastActivity;
   $('#taskId').textContent = textOr(task.task_id);
@@ -722,6 +758,7 @@ async function refreshTaskRuntime() {
   try {
     state.taskRuntime = unwrap(await api.taskRuntime({ detail: 'full' }));
     state.taskRuntimeError = null;
+    publishManagerState();
     renderTaskRuntime();
     await refreshWorktrees();
   } catch (error) {
@@ -1004,18 +1041,22 @@ function memoryTypeLabel(value) {
 }
 
 function renderMemoryStatus(status) {
+  state.memory.status = status || null;
+  publishManagerState();
   $('#memoryTotal').textContent = String(status?.count ?? 0);
   $('#memoryActive').textContent = String(status?.active_count ?? 0);
   $('#memoryArchived').textContent = String(status?.archived_count ?? 0);
   $('#memoryCandidateCount').textContent = String(status?.candidate_count ?? 0);
+  const sourceCounts = status?.source_counts || {};
+  $('#memoryModelWritten').textContent = String(sourceCounts.model_summary ?? 0);
   $('#memoryUpdated').textContent = status?.last_updated ? memoryDate(status.last_updated) : '尚无记忆';
   $('#memoryProfile').textContent = textOr(status?.profile, 'local-default');
   const mode = ['off', 'suggest', 'auto'].includes(status?.config?.auto_memory) ? status.config.auto_memory : 'off';
   $('#memoryAutoMode').value = mode;
   const capture = status?.auto_capture || {};
   $('#memoryAutoCaptureStatus').textContent = mode === 'off'
-    ? '自动画像已关闭（可随时重新开启）'
-    : `画像提炼运行中 · 已检查 ${Number(capture.processed || 0)} 轮 · 已更新 ${Number(capture.remembered || 0)} 次`;
+    ? '自动发现已关闭（模型仍可主动写入长期上下文）'
+    : `候选发现运行中 · 已扫描 ${Number(capture.processed || 0)} 轮 · 发现 ${Number(capture.discovered || 0)} 条 · 跳过 ${Number(capture.skipped || 0)} 条 · 错误 ${Number(capture.errors || 0)} 次`;
 }
 
 function memoryButton(label, className, handler) {
@@ -1191,13 +1232,22 @@ function renderCandidates(items) {
   for (const candidate of values) {
     const card = document.createElement('article'); card.className = 'memory-card candidate';
     const title = document.createElement('b'); title.textContent = textOr(candidate.title, '未命名候选');
-    const body = document.createElement('pre'); body.className = 'memory-content'; body.textContent = textOr(candidate.content, '（空内容）');
+    const comparison = candidate.existing_memory || candidate.conflicting_candidate || null;
+    if (candidate.status === 'conflict' && comparison) {
+      const hint = document.createElement('p'); hint.className = 'memory-conflict-hint'; hint.textContent = '发现同主题但内容不同的信息，请比较后决定如何保留。';
+      const compare = document.createElement('div'); compare.className = 'memory-conflict-grid';
+      const oldSide = document.createElement('div'); const oldLabel = document.createElement('span'); oldLabel.textContent = '已有内容'; const oldBody = document.createElement('pre'); oldBody.textContent = textOr(comparison.content, '（无可比较内容）'); oldSide.append(oldLabel, oldBody);
+      const newSide = document.createElement('div'); const newLabel = document.createElement('span'); newLabel.textContent = '新内容'; const newBody = document.createElement('pre'); newBody.textContent = textOr(candidate.content, '（空内容）'); newSide.append(newLabel, newBody);
+      compare.append(oldSide, newSide); card.append(title, hint, compare);
+    } else {
+      const body = document.createElement('pre'); body.className = 'memory-content'; body.textContent = textOr(candidate.content, '（空内容）'); card.append(title, body);
+    }
     const actions = document.createElement('div'); actions.className = 'memory-actions';
     if (candidate.status === 'conflict') {
-      actions.append(memoryButton('覆盖现有', 'primary-button', () => confirmCandidate(candidate, 'update')), memoryButton('另存新记忆', 'secondary-button', () => confirmCandidate(candidate, 'create_new')));
+      actions.append(memoryButton('采用新内容', 'primary-button', () => confirmCandidate(candidate, 'update')), memoryButton('两条都保留', 'secondary-button', () => confirmCandidate(candidate, 'create_new')));
     } else actions.append(memoryButton('确认', 'primary-button', () => confirmCandidate(candidate)));
-    actions.append(memoryButton('拒绝', 'danger-button', async () => { memoryResult(await api.memoryReject(candidate.candidate_id)); await loadMemoryPage(); }));
-    card.append(title, body, actions);
+    actions.append(memoryButton('拒绝新内容', 'danger-button', async () => { memoryResult(await api.memoryReject(candidate.candidate_id)); await loadMemoryPage(); }));
+    card.append(actions);
     target.appendChild(card);
   }
 }
@@ -1353,8 +1403,11 @@ async function initialize() {
   api.onHeartbeat?.(() => {
     if (state.currentPage === 'status') {
       refreshSnapshot({ quiet: true });
-      refreshTaskRuntime();
+      renderTaskRuntime();
     }
+  });
+  api.onTaskEvent?.(() => {
+    if (state.currentPage === 'status') refreshTaskRuntime();
   });
   api.onChatState?.((chat) => {
     if (!state.snapshot) return;
@@ -1377,10 +1430,10 @@ async function initialize() {
 
   setInterval(() => {
     if (state.currentPage === 'status') refreshTaskRuntime();
-  }, 4000);
+  }, 30000);
   setInterval(() => {
     if (state.currentPage === 'status' || state.currentPage === 'workspace') refreshWorkspaceHub();
-  }, 12000);
+  }, 60000);
 }
 
 initialize().catch((error) => {

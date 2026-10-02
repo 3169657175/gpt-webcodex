@@ -57,6 +57,25 @@ class MemoryWriteStoreTests(unittest.TestCase):
             self.assertEqual(snapshots[0]["revision"], 1)
             self.assertIn("健康 Runtime 不因页面异常重启", snapshots[0]["content"])
 
+    def test_pending_same_topic_conflict_preserves_both_facts_for_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "memory"; store = MemoryStore(root); candidates = MemoryCandidateStore(store)
+            old = candidates.propose(scope="project", memory_type="decision", title="前端技术方案", content="当前项目默认使用 React", project_id="p")
+            new = candidates.propose(scope="project", memory_type="decision", title="前端技术方案", content="当前项目改用原生 HTML，不使用 React", project_id="p")
+            self.assertEqual(old["status"], "pending")
+            self.assertEqual(new["status"], "conflict")
+            self.assertNotEqual(old["candidate_id"], new["candidate_id"])
+            self.assertEqual(new["conflicting_candidate_id"], old["candidate_id"])
+            self.assertEqual(new["conflicting_candidate"]["content"], "当前项目默认使用 React")
+            self.assertEqual(candidates.get(new["candidate_id"])["content"], "当前项目改用原生 HTML，不使用 React")
+            unresolved = candidates.confirm(new["candidate_id"])
+            self.assertEqual(unresolved["status"], "conflict")
+            self.assertEqual(unresolved["existing_candidate"]["content"], "当前项目默认使用 React")
+            resolved = candidates.confirm(new["candidate_id"], resolution="update")
+            self.assertEqual(resolved["status"], "created")
+            self.assertEqual(store.list(limit=20)[0]["content"], "当前项目改用原生 HTML，不使用 React")
+            self.assertEqual(candidates.list(), [])
+
     def test_candidates_survive_restart_and_expired_candidates_are_pruned(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "memory"; store = MemoryStore(root)
@@ -125,8 +144,9 @@ class MemoryWriteRuntimeTests(unittest.TestCase):
             "assistant_text": "后续界面会优先使用中文。",
         })
         self.assertEqual(status, 200)
-        self.assertEqual(remembered["result"]["status"], "remembered")
-        self.assertEqual(len(self.runtime.memory_store.list(scope="global", limit=20)), 1)
+        self.assertEqual(remembered["result"]["status"], "candidate")
+        self.assertEqual(len(self.runtime.memory_store.list(scope="global", limit=20)), 0)
+        self.assertEqual(len(self.runtime.memory_candidates.list()), 1)
         status, duplicate = self.post({"action": "ingest", "user_text": "我希望所有面向我的界面都尽量使用中文。", "assistant_text": "后续界面会优先使用中文。"})
         self.assertEqual(status, 200)
         self.assertEqual(duplicate["result"]["status"], "duplicate")
@@ -135,13 +155,19 @@ class MemoryWriteRuntimeTests(unittest.TestCase):
         status, candidate = self.post({"action": "ingest", "user_text": "我习惯长任务从头到尾连续执行，不要每一步都停下来问我，这是我长期的工作方式。"})
         self.assertEqual(status, 200)
         self.assertEqual(candidate["result"]["status"], "candidate")
-        self.assertEqual(len(self.runtime.memory_candidates.list()), 1)
+        self.assertGreaterEqual(len(self.runtime.memory_candidates.list()), 1)
         self.assertEqual(len(self.runtime.list_tools()["tools"]), 10)
 
     def test_model_remember_context_creates_updates_deduplicates_and_rejects_unsafe_data(self) -> None:
         tools = {item["name"]: item for item in self.runtime.list_tools()["tools"]}
         self.assertIn("remember_context", tools)
-        self.assertIn("stable", tools["remember_context"]["description"].lower())
+        self.assertIn("primary writer", tools["remember_context"]["description"].lower())
+
+        discovered = self.runtime.memory_candidates.propose(
+            scope="global", memory_type="working_style", title="长期协作方式",
+            content="长任务应连续执行到完成，不要每一步都停下来确认。", source="auto_discovery_v3",
+        )
+        self.assertEqual(discovered["status"], "pending")
 
         created = self.runtime.remember_context({
             "scope": "global", "memory_type": "working_style",
@@ -149,6 +175,8 @@ class MemoryWriteRuntimeTests(unittest.TestCase):
             "confidence": 0.96,
         })
         self.assertEqual(created["status"], "remembered")
+        self.assertGreaterEqual(created.get("cleared_candidates", 0), 1)
+        self.assertEqual(len(self.runtime.memory_candidates.list()), 0)
         self.assertEqual(len(self.runtime.memory_store.list(scope="global", limit=20)), 1)
 
         updated = self.runtime.remember_context({

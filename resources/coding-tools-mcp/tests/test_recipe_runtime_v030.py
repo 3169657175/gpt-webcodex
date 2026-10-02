@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -32,6 +33,22 @@ class RecipeRuntimeTests(unittest.TestCase):
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.port = int(self.server.server_address[1])
+        self._wait_server_ready()
+
+    def _wait_server_ready(self) -> None:
+        url = f"http://127.0.0.1:{self.port}/.well-known/mcp.json"
+        deadline = time.monotonic() + 2.0
+        last_error: BaseException | None = None
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(url, timeout=0.5) as response:
+                    response.read()
+                    if int(response.status) == 200:
+                        return
+            except (OSError, urllib.error.URLError) as error:
+                last_error = error
+            time.sleep(0.02)
+        self.fail(f"RuntimeHTTPServer did not become ready: {last_error}")
 
     def tearDown(self) -> None:
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=2)

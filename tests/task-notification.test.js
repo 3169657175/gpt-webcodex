@@ -56,7 +56,7 @@ function makeService(overrides = {}) {
     getTray: () => null,
     showChatWindow: () => shown.push('chat'),
     NotificationClass: FakeNotification,
-    now: () => Date.parse('2026-08-11T10:10:00Z')
+    now: overrides.now || (() => Date.parse('2026-08-11T10:10:00Z'))
   });
   return {
     service, window, shown,
@@ -328,4 +328,24 @@ test('persisted cursor resumes after the last event and semantic keys survive re
   assert.equal(saved.at(-1).lastEventId, 225);
   assert.ok(saved.at(-1).notifiedKeys.includes('run:new-run:completed'));
   ctx.service.stop();
+});
+
+
+test('0.9.1 stalled heartbeat transition notifies once even when task state object is unchanged', async () => {
+  FakeNotification.instances.length = 0;
+  let now = Date.parse('2026-10-02T10:10:00Z');
+  const ctx = makeService({ now: () => now });
+  ctx.setState({ task_id: 'stall-1', run_id: 'run-stall-1', status: 'active', lifecycle_state: 'running', objective: '长任务', current_step: '执行测试', last_heartbeat_at: '2026-10-02T10:09:00Z', created_at: '2026-10-02T10:00:00Z' });
+  await ctx.service.poll();
+  assert.equal(FakeNotification.instances.length, 0);
+  now = Date.parse('2026-10-02T10:10:35Z');
+  await ctx.service.poll();
+  assert.equal(FakeNotification.instances.length, 1);
+  assert.match(FakeNotification.instances[0].options.title, /疑似卡住/);
+  await ctx.service.poll();
+  assert.equal(FakeNotification.instances.length, 1);
+  ctx.setState({ task_id: 'stall-1', run_id: 'run-stall-1', status: 'waiting', lifecycle_state: 'waiting_model', current_step: 'Waiting for model', objective: '长任务', last_heartbeat_at: '2026-10-02T10:09:00Z', created_at: '2026-10-02T10:00:00Z' });
+  now = Date.parse('2026-10-02T10:12:00Z');
+  await ctx.service.poll();
+  assert.equal(FakeNotification.instances.length, 1);
 });

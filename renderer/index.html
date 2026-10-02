@@ -17,7 +17,7 @@
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-mark"><span></span><span></span><span></span></div>
-      <div><strong>网页 MCP 助手</strong><small>本地开发助手 · 0.8.4</small></div>
+      <div><strong>网页 MCP 助手</strong><small>本地开发助手 <span id="brandVersion" hidden></span></small></div>
     </div>
     <nav class="nav-list" aria-label="主导航">
       <div class="nav-section-label">工作</div>
@@ -50,6 +50,7 @@
 
     <div class="content-viewport">
       <section class="page active" data-page-view="status">
+        <div class="react-manager-slot" data-react-slot="status"></div>
         <article class="hero-status panel" id="overallCard">
           <div class="hero-state">
             <span class="hero-orb" id="overallOrb"></span>
@@ -114,6 +115,7 @@
       </section>
 
       <section class="page workspace-page" data-page-view="workspace">
+        <div class="react-manager-slot" data-react-slot="workspace"></div>
         <div class="section-header"><div><span class="section-kicker">项目边界</span><h2>工作区</h2><p>这里查看当前状态；完整的切换、清理和授权管理在独立工作区中心完成。</p></div><button class="primary-button" id="openWorkspacePageCenter">打开工作区中心</button></div>
         <article class="panel workspace-summary-card">
           <div class="workspace-big-icon">W</div>
@@ -132,13 +134,15 @@
       </section>
 
       <section class="page memory-page" data-page-view="memory">
+        <div class="react-manager-slot" data-react-slot="memory"></div>
         <div class="section-header"><div><span class="section-kicker">跨账号 · 跨会话</span><h2>长期上下文</h2><p>保存真正会影响未来协作的稳定信息：由 ChatGPT 主动总结为主，自动画像作为辅助兜底；这里不是聊天历史。</p></div><div class="inline-actions"><button class="secondary-button" id="memoryImport">导入</button><button class="secondary-button" id="memoryExport">导出</button><button class="primary-button" id="memoryRefresh">刷新</button></div></div>
         <div class="memory-status-grid">
           <article class="status-card"><h3>有效记忆</h3><strong id="memoryActive">0</strong><p>总计 <span id="memoryTotal">0</span> · 归档 <span id="memoryArchived">0</span></p></article>
           <article class="status-card"><h3>待确认</h3><strong id="memoryCandidateCount">0</strong><p>只有出现候选时才需要处理</p></article>
+          <article class="status-card"><h3>模型写入</h3><strong id="memoryModelWritten">0</strong><p>由 ChatGPT 理解语境后主动总结</p></article>
           <article class="status-card"><h3>最后更新</h3><strong id="memoryUpdated">—</strong><p id="memoryProfile">local-default</p></article>
         </div>
-        <article class="panel memory-mode-panel"><div><b>自动画像辅助</b><p>主要由 ChatGPT 在使用 MCP 时自行判断并调用长期上下文写入；自动画像只负责辅助兜底。一次性问题、临时 Bug、闲聊、凭据和敏感个人信息不会进入长期上下文。</p><small id="memoryAutoCaptureStatus">等待读取状态</small></div><select id="memoryAutoMode"><option value="off">关闭</option><option value="suggest">建议</option><option value="auto">自动</option></select></article>
+        <article class="panel memory-mode-panel"><div><b>模型主导 · 自动发现辅助</b><p>ChatGPT 负责理解语境并总结真正稳定的信息；DOM/规则观察只发现候选，不再直接写入。一次性问题、临时 Bug、闲聊、凭据和敏感个人信息不会自动进入长期上下文。</p><small id="memoryAutoCaptureStatus">等待读取状态</small></div><select id="memoryAutoMode"><option value="off">关闭自动发现</option><option value="suggest">候选建议</option><option value="auto">自动发现候选</option></select></article>
         <article class="panel memory-candidate-panel" id="memoryCandidatePanel" hidden><div class="panel-title"><div><h3>需要你确认的候选</h3><p>只有真的存在候选时才显示。</p></div></div><div class="memory-list" id="memoryCandidates"></div></article>
         <article class="panel memory-library-panel"><div class="panel-title"><div><h3>长期画像与项目上下文</h3><p>“核心画像”是跨项目长期上下文，会优先提供给助手；“项目上下文”只在相关工作区使用。模型主动总结和自动画像都会在这里汇总、去重。</p></div></div><div class="memory-toolbar"><input id="memorySearch" type="search" placeholder="搜索标题或正文"><select id="memoryScope"><option value="all">当前上下文</option><option value="project">当前项目</option><option value="global">全局</option></select><button class="secondary-button" id="memorySearchButton">搜索</button></div><div class="memory-bulk-toolbar"><label class="memory-select-label"><input id="memorySelectPage" type="checkbox">选择本页</label><button class="secondary-button" id="memoryBatchArchive" type="button" disabled>归档已选</button><label class="memory-page-size-label" for="memoryPageSize">每页<select id="memoryPageSize"><option value="8">8</option><option value="12" selected>12</option><option value="24">24</option></select>条</label></div><div class="history-meta" id="memoryListMeta">等待读取长期上下文</div><div class="memory-list" id="memoryList"><span class="task-muted">暂无长期上下文</span></div><div class="memory-pagination" id="memoryPagination" aria-label="长期上下文分页"><button class="secondary-button" id="memoryPrevPage" type="button" disabled>上一页</button><span id="memoryPageLabel">第 1 / 1 页</span><button class="secondary-button" id="memoryNextPage" type="button" disabled>下一页</button></div></article>
       </section>
@@ -243,6 +247,7 @@
 
 
       <section class="page settings-page" data-page-view="settings">
+        <div class="react-manager-slot" data-react-slot="settings"></div>
         <div class="section-header"><div><span class="section-kicker">配置与维护</span><h2>设置与诊断</h2><p>常用选项保持简单；连接、教程和故障处理需要时再展开。</p></div><button class="primary-button" id="openGuideSettings">打开配置教程</button></div>
         <div class="settings-grid">
           <section class="settings-section">
@@ -293,7 +298,7 @@
         </div>
         <details class="panel diagnostic-details" id="doctorDetails"><summary><span><b>技术诊断详情</b><small>只有排查连接问题时需要展开</small></span><span>展开</span></summary><div class="diagnostic-detail-list" id="doctorResults"><span class="task-muted">运行一键诊断后显示详细证据。</span></div></details>
         <details class="panel diagnostic-details"><summary><span><b>运行日志</b><small>密钥、Token 和 Cookie 会自动脱敏</small></span><span>展开</span></summary><div class="compact-log-toolbar"><span id="logCount">0 条日志</span><div><button class="secondary-button" id="refreshLogs">刷新</button><button class="danger-button" id="clearLogs">清空</button></div></div><div class="log-output" id="logOutput"><div class="empty-state"><b>暂无日志</b><span>出现运行或连接异常时再查看。</span></div></div></details>
-        <article class="panel about-panel"><div class="brand-mark large"><span></span><span></span><span></span></div><div><h3>网页 MCP 助手 <span>v0.8.3</span></h3><p>自动完成日常开发流程，同时保留必要的查看、配置和异常处理能力。</p></div></article>
+        <article class="panel about-panel"><div class="brand-mark large"><span></span><span></span><span></span></div><div><h3>网页 MCP 助手 <span id="aboutVersion" hidden></span></h3><p>自动完成日常开发流程，同时保留必要的查看、配置和异常处理能力。</p></div></article>
       </section>
     </div>
   </main>
@@ -301,6 +306,10 @@
 
 <div class="toast-stack" id="toastStack"></div>
 <div class="busy-overlay" id="busyOverlay"><div class="loader"></div><b>正在处理</b><span>请稍候</span></div>
+<script src="progressPresentation.js"></script>
+<div id="reactManagerRoot" hidden></div>
+<script src="assistantState.js"></script>
 <script src="app.js"></script>
+<script src="react-dist/manager-react.js"></script>
 </body>
 </html>

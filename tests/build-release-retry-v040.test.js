@@ -10,7 +10,7 @@ const { currentBuildArtifacts, resolveBuilderCli, resolveElectronDist, runWithRe
 
 test('0.4.0 dist uses bounded electron-builder retry after tests', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-  assert.match(pkg.scripts.dist, /npm test && node scripts\/run-electron-builder-release\.js/);
+  assert.match(pkg.scripts.dist, /npm run release:verify && node scripts\/run-electron-builder-release\.js/);
   assert.doesNotMatch(pkg.scripts.dist, /electron-builder --win nsis/);
 });
 

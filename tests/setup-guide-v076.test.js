@@ -48,8 +48,8 @@ test('0.7.7 keeps Desktop and bundled Runtime versions aligned', () => {
   const runtimeInit = read('resources/coding-tools-mcp/coding_tools_mcp/__init__.py');
   const pyproject = read('resources/coding-tools-mcp/pyproject.toml');
   const contract = JSON.parse(read('resources/coding-tools-mcp/schema-contract.json'));
-  assert.equal(pkg.version, '0.8.4');
-  assert.ok(runtimeInit.includes('__version__ = "0.8.4"'));
-  assert.ok(pyproject.includes('version = "0.8.4"'));
-  assert.equal(contract.runtime_version, '0.8.4');
+  assert.match(pkg.version, /^0\.9\.\d+$/);
+  assert.ok(runtimeInit.includes(`__version__ = "${pkg.version}"`));
+  assert.ok(pyproject.includes(`version = "${pkg.version}"`));
+  assert.equal(contract.runtime_version, pkg.version);
 });

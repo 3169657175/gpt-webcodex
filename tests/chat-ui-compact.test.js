@@ -76,8 +76,12 @@ test('Workspace Center separates workspaces and authorized roots into secondary 
 test('package and Manager identify the 0.7.3 management UI release', () => {
   const pkg = JSON.parse(read('package.json'));
   const manager = read('renderer/index.html');
-  assert.equal(pkg.version, '0.8.4');
-  assert.ok(manager.includes(pkg.version));
+  assert.match(pkg.version, /0\.9\.[1-9]\d*$/);
+  const app = read('renderer/app.js');
+  const main = read('electron/main.js');
+  assert.match(main, /appVersion: app\.getVersion\(\)/);
+  assert.match(app, /snapshot\.appVersion/);
+  assert.match(app, /aboutVersion\.textContent = appVersion/);
   assert.match(manager, /data-page="status"/);
   assert.match(manager, /data-page="workspace"/);
   assert.doesNotMatch(manager, /data-page="task"|data-page="build"|data-page="guide"/);

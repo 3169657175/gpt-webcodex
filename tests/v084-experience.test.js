@@ -6,14 +6,14 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('0.8.4 names the product surface 长期上下文 and explains model-first capture', () => {
+test('0.9.0 names the product surface 长期上下文 and explains model-primary capture', () => {
   const html = read('renderer/index.html');
   const app = read('renderer/app.js');
   assert.match(html, />长期上下文<\/span>/);
   assert.match(html, /<h2>长期上下文<\/h2>/);
   assert.match(html, /由 ChatGPT 主动总结为主/);
-  assert.match(html, /自动画像辅助/);
-  assert.match(html, /模型主动总结和自动画像都会在这里汇总、去重/);
+  assert.match(html, /模型主导 · 自动发现辅助/);
+  assert.match(html, /DOM\/规则观察只发现候选，不再直接写入/);
   assert.doesNotMatch(html, />本地记忆<\/span>|<h2>本地记忆<\/h2>/);
   assert.match(app, /'长期上下文'/);
 });
@@ -47,14 +47,15 @@ test('0.8.4 startup UI uses an ordered readiness prefix and explicit runtime mil
   }
 });
 
-test('0.8.4 exposes remember_context as the tenth smart MCP tool with schema v13', () => {
+test('0.9.0 exposes model-primary remember_context as the tenth smart MCP tool with schema v14', () => {
   const server = read('resources/coding-tools-mcp/coding_tools_mcp/server.py');
+  const registry = read('resources/coding-tools-mcp/coding_tools_mcp/tool_registry.py');
   const contract = JSON.parse(read('resources/coding-tools-mcp/schema-contract.json'));
-  assert.match(server, /TOOL_SCHEMA_VERSION = 13/);
-  assert.match(server, /"remember_context": ToolSpec/);
+  assert.match(server, /TOOL_SCHEMA_VERSION = 14/);
+  assert.match(registry, /"remember_context": ToolSpec/);
   assert.match(server, /def remember_context\(self, args/);
-  assert.match(server, /Do NOT call it for one-off questions/);
-  assert.equal(contract.schema_version, 13);
+  assert.match(registry, /Automatic page observation is discovery-only/);
+  assert.equal(contract.schema_version, 14);
   assert.equal(contract.tool_count, 10);
-  assert.equal(contract.runtime_version, '0.8.4');
+  assert.equal(contract.runtime_version, JSON.parse(read('package.json')).version);
 });

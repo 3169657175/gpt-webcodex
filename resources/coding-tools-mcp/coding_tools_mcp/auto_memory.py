@@ -9,6 +9,8 @@ from .memory_write import MemoryCandidateStore, MemoryWriteError, inspect_memory
 
 PROFILE_SOURCE = "auto_profile_v2"
 PROFILE_MIGRATION_FILE = "auto-profile-v2.json"
+LEGACY_CLEANUP_FILE = "legacy-cleanup-v3.json"
+DISCOVERY_SOURCE = "auto_discovery_v3"
 
 _CHITCHAT = re.compile(r"^(?:你好|您好|哈喽|嗨|hi|hello|hey|早上好|早安|晚安|晚上好|谢谢|谢了|多谢|好的|好|行|可以|收到|知道了|明白了|嗯|哦|噢|哈哈+|呵呵+|lol|再见|拜拜|bye)[！!。,.，\s]*$", re.I)
 _MARKDOWN_NOISE = re.compile(r"```.*?```", re.S)
@@ -272,42 +274,32 @@ def ingest_auto_memory(store: MemoryStore, candidates: MemoryCandidateStore, *, 
     if not items:
         return {"status": extracted_status, "mode": mode}
 
-    if mode == "suggest":
-        proposed_items: list[dict[str, Any]] = []
-        relation = "duplicate"
-        for item in items:
-            try:
-                proposed = candidates.propose(
-                    scope=str(item["scope"]), memory_type=str(item["memory_type"]), title=str(item["title"]), content=str(item["content"]),
-                    project_id=str(item.get("project_id") or ""), task_id="", source=PROFILE_SOURCE,
-                    confidence=float(item.get("confidence", 0.92)), pinned=bool(item.get("pinned", False)), allow_sensitive_personal=False,
-                )
-            except MemoryWriteError as error:
-                if error.code == "SENSITIVE_PERSONAL_CONFIRMATION_REQUIRED":
-                    continue
-                if error.code == "SECRET_REJECTED":
-                    return {"status": "rejected_secret", "mode": mode, "category": error.details.get("category", "")}
-                raise
-            proposed_items.append(_candidate_meta(proposed))
-            if str(proposed.get("status") or "") == "conflict":
-                relation = "conflict"
-            elif str(proposed.get("status") or "") not in {"duplicate", ""} and relation != "conflict":
-                relation = "candidate"
-        first = items[0]
-        return {"status": relation, "mode": mode, "scope": first["scope"], "memory_type": first["memory_type"], "title": first["title"], "candidates": proposed_items}
-
-    changed: list[dict[str, Any]] = []
-    duplicate_count = 0
+    proposed_items: list[dict[str, Any]] = []
+    relation = "duplicate"
     for item in items:
-        action, memory = _upsert_profile(store, item)
-        if action == "duplicate":
-            duplicate_count += 1
-            continue
-        changed.append({"action": action, "memory_id": memory.get("memory_id"), "scope": memory.get("scope"), "memory_type": memory.get("memory_type"), "title": memory.get("title")})
+        try:
+            proposed = candidates.propose(
+                scope=str(item["scope"]), memory_type=str(item["memory_type"]), title=str(item["title"]), content=str(item["content"]),
+                project_id=str(item.get("project_id") or ""), task_id="", source=DISCOVERY_SOURCE,
+                confidence=float(item.get("confidence", 0.92)), pinned=bool(item.get("pinned", False)), allow_sensitive_personal=False,
+            )
+        except MemoryWriteError as error:
+            if error.code == "SENSITIVE_PERSONAL_CONFIRMATION_REQUIRED":
+                continue
+            if error.code == "SECRET_REJECTED":
+                return {"status": "rejected_secret", "mode": mode, "category": error.details.get("category", ""), "discovery_only": True}
+            raise
+        proposed_items.append(_candidate_meta(proposed))
+        if str(proposed.get("status") or "") == "conflict":
+            relation = "conflict"
+        elif str(proposed.get("status") or "") not in {"duplicate", ""} and relation != "conflict":
+            relation = "candidate"
     first = items[0]
-    if changed:
-        return {"status": "remembered", "mode": mode, "scope": first["scope"], "memory_type": first["memory_type"], "title": first["title"], "remembered_count": len(changed), "memories": changed, "memory": changed[0]}
-    return {"status": "duplicate", "mode": mode, "scope": first["scope"], "memory_type": first["memory_type"], "title": first["title"], "duplicate_count": duplicate_count}
+    return {
+        "status": relation, "mode": mode, "scope": first["scope"], "memory_type": first["memory_type"], "title": first["title"],
+        "candidates": proposed_items, "candidate_count": sum(1 for entry in proposed_items if entry.get("status") not in {"duplicate", ""}),
+        "discovery_only": True,
+    }
 
 
 def _legacy_user_text(content: str) -> str:
@@ -320,27 +312,68 @@ def _legacy_user_text(content: str) -> str:
     return text
 
 
-def migrate_legacy_auto_memories(store: MemoryStore) -> dict[str, Any]:
-    marker = store.system_dir / PROFILE_MIGRATION_FILE
+def _looks_like_raw_task_prompt(item: dict[str, Any]) -> bool:
+    if str(item.get("scope") or "") == "global" and bool(item.get("pinned")):
+        return False
+    if str(item.get("source") or "") in {"explicit_user", "model_summary"}:
+        return False
+    text = f"{item.get('title') or ''}\n{item.get('content') or ''}"
+    if len(text) < 320:
+        return False
+    stage_hits = len(re.findall(r"(?:【?第[一二三四五六七八九十\d]+阶段[：:】]?|第一阶段|第二阶段|第三阶段)", text, re.I))
+    task_hits = sum(1 for pattern in (
+        r"目标不是.{0,30}(?:分析|方案)", r"读取当前项目", r"根据实际代码", r"不要让我选择方案",
+        r"你自己决定", r"一步一步", r"最终(?:生成|发布|完成)", r"必须分析根因",
+    ) if re.search(pattern, text, re.I))
+    return stage_hits >= 2 and task_hits >= 2
+
+
+def _cleanup_legacy_raw_prompts(store: MemoryStore) -> dict[str, Any]:
+    marker = store.system_dir / LEGACY_CLEANUP_FILE
     if marker.exists():
         try:
             return json.loads(marker.read_text(encoding="utf-8"))
         except Exception:
-            return {"status": "already_migrated"}
-    archived = 0
-    summarized = 0
-    for old in list(store.list(archived=False, limit=200)):
-        if str(old.get("source") or "") != "auto_chat":
+            return {"status": "already_cleaned", "archived_raw_prompts": 0}
+    archived_ids: list[str] = []
+    for item in list(store.list(archived=False, limit=200)):
+        if not _looks_like_raw_task_prompt(item):
             continue
-        raw = _legacy_user_text(str(old.get("content") or ""))
-        items, _ = extract_profile_memories(raw, project_id=str(old.get("project_id") or ""), task_id=str(old.get("task_id") or ""))
-        for item in items:
-            action, _memory = _upsert_profile(store, item)
-            if action in {"created", "updated"}:
-                summarized += 1
-        store.archive(str(old["memory_id"]))
-        archived += 1
-    result = {"status": "migrated", "policy_version": 2, "archived_legacy": archived, "summarized": summarized, "migrated_at": utc_now()}
+        store.archive(str(item["memory_id"]))
+        archived_ids.append(str(item["memory_id"]))
+    result = {
+        "status": "cleaned", "policy_version": 3,
+        "archived_raw_prompts": len(archived_ids), "archived_memory_ids": archived_ids,
+        "cleaned_at": utc_now(),
+    }
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return result
+
+
+def migrate_legacy_auto_memories(store: MemoryStore) -> dict[str, Any]:
+    marker = store.system_dir / PROFILE_MIGRATION_FILE
+    if marker.exists():
+        try:
+            result = json.loads(marker.read_text(encoding="utf-8"))
+        except Exception:
+            result = {"status": "already_migrated", "policy_version": 2, "archived_legacy": 0, "summarized": 0}
+    else:
+        archived = 0
+        summarized = 0
+        for old in list(store.list(archived=False, limit=200)):
+            if str(old.get("source") or "") != "auto_chat":
+                continue
+            raw = _legacy_user_text(str(old.get("content") or ""))
+            items, _ = extract_profile_memories(raw, project_id=str(old.get("project_id") or ""), task_id=str(old.get("task_id") or ""))
+            for item in items:
+                action, _memory = _upsert_profile(store, item)
+                if action in {"created", "updated"}:
+                    summarized += 1
+            store.archive(str(old["memory_id"]))
+            archived += 1
+        result = {"status": "migrated", "policy_version": 2, "archived_legacy": archived, "summarized": summarized, "migrated_at": utc_now()}
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    cleanup = _cleanup_legacy_raw_prompts(store)
+    return {**result, "legacy_cleanup": cleanup, "archived_raw_prompts": int(cleanup.get("archived_raw_prompts") or 0)}

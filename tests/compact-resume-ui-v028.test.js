@@ -14,7 +14,7 @@ test('Compact and Resume remain private Runtime capabilities', () => {
   assert.match(server, /handle_control_compact/);
   assert.match(client, /compactLocalSession\(\)/);
   assert.match(main, /secureHandle\('local-session:compact'/);
-  assert.equal(contract.schema_version, 13);
+  assert.equal(contract.schema_version, 14);
   assert.equal(contract.tool_count, 10);
 });
 

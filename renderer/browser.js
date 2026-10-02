@@ -36,8 +36,8 @@ function baseName(value) {
 }
 
 function taskPresentation(task, runningOperation, streamState, available = true, activity = null, runtimeLayers = null) {
-  const view = window.progressPresentation.describe(task, runningOperation, streamState, Date.now(), available, activity, !available, runtimeLayers);
-  return { key: view.key, label: view.userState === 'testing' ? '测试中' : view.userState === 'building' ? '构建中' : view.userState === 'waiting_model' ? '等待模型' : view.userState === 'waiting_user' ? '等待处理' : view.userState === 'quiet' ? '仍在运行' : view.userState === 'suspected_stall' ? '疑似停滞' : view.userState === 'stalled' ? '疑似卡住' : view.userState === 'generating' ? '模型处理中' : view.key === 'failed' ? '失败' : view.key === 'completed' ? '已完成' : view.key === 'stopped' ? '已停止' : view.key === 'idle' ? '空闲' : '执行中', detail: view.message, canStop: Boolean(view.canStop) };
+  const view = window.assistantState.describe(task, runningOperation, streamState, Date.now(), available, activity, !available, runtimeLayers);
+  return { key: view.key, label: window.assistantState.labelFor(view), detail: view.message, canStop: Boolean(view.canStop) };
 }
 
 function formatActivityTime(value) {
@@ -53,6 +53,40 @@ function formatActivityDuration(ms) {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`;
   return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+}
+
+function formatActivityAge(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return '';
+  if (value < 3) return '刚刚';
+  if (value < 60) return `${Math.floor(value)} 秒前`;
+  const minutes = Math.floor(value / 60);
+  const rest = Math.floor(value % 60);
+  return minutes < 60 ? `${minutes} 分${rest ? ` ${rest} 秒` : ''}前` : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分前`;
+}
+
+function localizeActivityText(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const exact = { 'Waiting for model': '等待 ChatGPT', 'Command started': '命令已启动', 'Command completed': '命令已完成', running: '运行中', completed: '已完成', failed: '失败', exited: '已结束', queued: '排队中', cancelled: '已取消' };
+  if (exact[text]) return exact[text];
+  return text.replace(/Waiting for model/gi, '等待 ChatGPT').replace(/\bexited\b/gi, '已结束').replace(/\brunning\b/gi, '运行中').replace(/\bcompleted\b/gi, '已完成').replace(/\bfailed\b/gi, '失败').replace(/\bexit\s+(-?\d+)/gi, '退出码 $1');
+}
+
+function meaningfulTimeline(items) {
+  const noisy = /waiting[_ -]?model|等待\s*ChatGPT|heartbeat|心跳/i;
+  const result = [];
+  for (const event of Array.isArray(items) ? items : []) {
+    const type = String(event?.type || '').trim();
+    const label = localizeActivityText(event?.label || type || event?.event || '');
+    const detail = localizeActivityText(event?.detail || event?.step || '');
+    if (!label || noisy.test(`${type} ${label} ${detail}`)) continue;
+    const item = { label, detail, time: formatActivityTime(event?.timestamp) };
+    const previous = result.at(-1);
+    if (previous && previous.label === item.label && previous.detail === item.detail) continue;
+    result.push(item);
+  }
+  return result.slice(-8).reverse();
 }
 
 function clearActivityTimers() {
@@ -127,7 +161,7 @@ function buildActivityDetailPayload() {
     || runtimeLayers?.execution?.state === 'running';
   const stage = commandRunning
     ? '正在执行本地命令'
-    : (task?.current_step || operation?.phase || operation?.status || (task?.status === 'completed' ? '本地任务已完成' : '—'));
+    : localizeActivityText(task?.current_step || operation?.phase || operation?.status || (task?.status === 'completed' ? '本地任务已完成' : ''));
   const lastActivityAt = command?.last_output_at || lastCommand?.finished_at || timeline.at(-1)?.timestamp || task?.updated_at || operation?.updated_at;
   let waitReason = '—';
   const lifecycle = String(task?.lifecycle_state || '');
@@ -141,34 +175,32 @@ function buildActivityDetailPayload() {
   const lastResultStatus = lastCommand?.status || task?.latest_test_result?.status || task?.latest_build_result?.status || '';
   const lastExitCode = lastCommand?.exit_code;
   const lastResult = lastResultStatus
-    ? `${lastResultStatus}${lastExitCode == null ? '' : ` · exit ${lastExitCode}`}${lastCommand?.elapsed_ms == null ? '' : ` · ${formatActivityDuration(lastCommand.elapsed_ms)}`}`
-    : '—';
+    ? `${localizeActivityText(lastResultStatus)}${lastExitCode == null ? '' : ` · 退出码 ${lastExitCode}`}${lastCommand?.elapsed_ms == null ? '' : ` · ${formatActivityDuration(lastCommand.elapsed_ms)}`}`
+    : '';
   const output = String(command?.latest_output || '').trim();
+  const operationRunning = operation && ['running', 'queued'].includes(String(operation.status || ''));
+  const showHeartbeat = Boolean(commandRunning || operationRunning);
   return {
     status: view.message,
     capturedAt: `${stale ? '最后成功读取 ' : '状态读取 '}${formatActivityTime(activity?.captured_at || task?.updated_at)}`,
     state: stateLabel,
     stage,
-    elapsed: view.elapsed || formatActivityDuration(command?.elapsed_ms ?? lastCommand?.elapsed_ms),
-    lastSeen: formatActivityTime(lastActivityAt),
-    heartbeat: view.heartbeatAge == null ? '—' : `${Math.floor(view.heartbeatAge)} 秒前`,
-    process: runtimeLayers?.process?.state === 'running' ? '运行中' : runtimeLayers?.process?.state === 'background' ? '后台任务' : (view.canStop ? '运行中' : '无本地命令'),
+    elapsed: commandRunning || operationRunning ? (view.elapsed || formatActivityDuration(command?.elapsed_ms)) : '',
+    lastSeen: lastActivityAt ? formatActivityTime(lastActivityAt) : '',
+    heartbeat: showHeartbeat && view.heartbeatAge != null ? `${formatActivityAge(view.heartbeatAge)} · ${view.heartbeatAge >= 90 ? '异常' : view.heartbeatAge >= 45 ? '较慢' : '正常'}` : '',
+    process: runtimeLayers?.process?.state === 'running' ? '本地进程运行中' : runtimeLayers?.process?.state === 'background' ? '后台任务运行中' : '',
     waitReason,
     nextStep: task?.next_step || (view.userState === 'waiting_model' ? '等待 ChatGPT 继续' : '—'),
     channel: nativeStatus && desktopStream ? 'ChatGPT 调用提示 + 桌面实时状态' : desktopStream ? '桌面实时状态' : '任务状态快照',
-    taskId: task?.task_id || '—',
-    runId: task?.run_id || operation?.run_id || '—',
-    operationId: operation?.operation_id || '—',
+    taskId: task?.task_id || '',
+    runId: task?.run_id || operation?.run_id || '',
+    operationId: operation?.operation_id || '',
     lastResult,
     diagnosis: view.diagnostic || (view.userState === 'waiting_model' ? '本地执行已经结束，目前在等待 ChatGPT 继续。' : '当前没有发现异常。'),
     command: command?.command || '',
-    output: output || (commandRunning ? '命令已启动，尚无输出。' : '尚无命令输出。'),
+    output,
     outputMeta: commandRunning ? '实时更新' : '',
-    timeline: timeline.slice(-8).reverse().map((event) => ({
-      label: event.label || event.type || '状态更新',
-      detail: event.detail || event.step || '',
-      time: formatActivityTime(event.timestamp)
-    }))
+    timeline: meaningfulTimeline(timeline)
   };
 }
 
@@ -581,7 +613,7 @@ refreshStatus();
 refreshWorkspace();
 refreshTask();
 refreshApprovals();
-setInterval(refreshWorkspace, 15000);
-setInterval(refreshTask, 1000);
+setInterval(refreshWorkspace, 60000);
+setInterval(refreshTask, 30000);
 setInterval(renderProgress, 1000);
-setInterval(refreshApprovals, 3000);
+setInterval(refreshApprovals, 10000);

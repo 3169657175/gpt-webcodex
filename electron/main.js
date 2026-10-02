@@ -594,7 +594,7 @@ async function controlLocalMemory(payload = {}) {
 function registerIpc() {
   secureHandle('app:snapshot', (_event, options) => invokeSafely(async () => {
     const snapshot = await orchestrator.snapshot(options || {});
-    return { ...snapshot, chat: chatController?.getState() || null };
+    return { ...snapshot, appVersion: app.getVersion(), chat: chatController?.getState() || null };
   }));
   secureHandle('app:lightweight-snapshot', () => invokeSafely(() => orchestrator.lightweightSnapshot()));
   secureHandle('workspace:hub', () => invokeSafely(() => workspaceManager.hub()));

@@ -54,10 +54,10 @@ test('runtime exposes a versioned schema contract and desktop health detects sta
   const native = read('electron/services/nativeService.js');
   const health = read('electron/services/healthService.js');
   const contract = JSON.parse(read('resources/coding-tools-mcp/schema-contract.json'));
-  assert.equal(contract.schema_version, 13);
+  assert.equal(contract.schema_version, 14);
   assert.equal(contract.tool_count, 10);
   assert.match(contract.schema_hash, /^[a-f0-9]{64}$/);
-  assert.match(server, /TOOL_SCHEMA_VERSION = 13/);
+  assert.match(server, /TOOL_SCHEMA_VERSION = 14/);
   assert.match(server, /tool_schema_hash/);
   assert.match(protocol, /schemaHash/);
   assert.match(native, /runtimeSourceFingerprint/);
@@ -75,7 +75,8 @@ test('desktop runtime hot-switches workspaces while the chat chrome stays compac
   assert.match(orchestrator, /async supervise\(\)/);
   assert.match(browser, /workspacePickerButton/);
   assert.match(browser, /function taskPresentation/);
-  assert.match(browser, /setInterval\(refreshTask, 1000\)/);
+  assert.match(browser, /api\.onTaskEvent/);
+  assert.match(browser, /setInterval\(refreshTask, 30000\)/);
   assert.doesNotMatch(browser, /backgroundOperationStatus|progressForTask|taskProgressBar/);
   assert.match(workspaceWindow, /inspectWorkspaces/);
   assert.match(workspaceWindow, /cleanupInvalidWorkspaces/);
@@ -111,7 +112,8 @@ test('browser task strip exposes only user-facing status and a real stop action'
   assert.match(browser, /buildActivityDetailPayload/);
   assert.match(browser, /progressInput = \{ \.\.\.progressInput, available: false, stale: true \}/);
   assert.match(browser, /api\.stopTask/);
-  assert.match(browser, /setInterval\(refreshTask, 1000\)/);
+  assert.match(browser, /api\.onTaskEvent/);
+  assert.match(browser, /setInterval\(refreshTask, 30000\)/);
   assert.doesNotMatch(browser, /progressForTask|backgroundOperationStatus/);
   assert.match(detail, /id="facts"/);
   assert.match(detail, /id="diagnosis"/);

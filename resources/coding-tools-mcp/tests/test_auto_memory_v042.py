@@ -41,7 +41,7 @@ class AutoMemoryV042Tests(unittest.TestCase):
         finally:
             temp.cleanup()
 
-    def test_auto_updates_bounded_profile_slots_and_skips_one_off_goal(self):
+    def test_auto_discovers_candidate_without_direct_write_and_skips_one_off_goal(self):
         temp, store, candidates = self.make()
         try:
             first = ingest_auto_memory(
@@ -50,16 +50,17 @@ class AutoMemoryV042Tests(unittest.TestCase):
                 user_text="我习惯长任务从头到尾连续执行，不要每一步都停下来问我，还要持续给我反馈进度。",
             )
             second = ingest_auto_memory(store, candidates, user_text="我的计划是今年把日语学到 N2 水平。")
-            self.assertEqual(first["status"], "remembered")
+            self.assertEqual(first["status"], "candidate")
+            self.assertTrue(first["discovery_only"])
             self.assertEqual(second["status"], "skipped_low_value")
-            items = store.list(limit=20)
-            self.assertEqual(len(items), 1)
-            self.assertEqual(items[0]["title"], "用户画像 · 工作与协作方式")
-            self.assertTrue(items[0]["pinned"])
+            self.assertEqual(store.list(limit=20), [])
+            pending = candidates.list()
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["title"], "用户画像 · 工作与协作方式")
         finally:
             temp.cleanup()
 
-    def test_identity_interest_and_project_types_are_summary_profiles(self):
+    def test_identity_interest_and_project_types_are_discovered_as_candidates(self):
         temp, store, candidates = self.make()
         try:
             result = ingest_auto_memory(
@@ -67,8 +68,9 @@ class AutoMemoryV042Tests(unittest.TestCase):
                 candidates,
                 user_text="我是研究生，经常同时有多个项目在做，平时比较感兴趣前端、后端、网页和应用开发。",
             )
-            self.assertEqual(result["status"], "remembered")
-            titles = {item["title"] for item in store.list(limit=20)}
+            self.assertEqual(result["status"], "candidate")
+            self.assertEqual(store.list(limit=20), [])
+            titles = {item["title"] for item in candidates.list()}
             self.assertIn("用户画像 · 身份与长期背景", titles)
             self.assertIn("用户画像 · 技术兴趣", titles)
         finally:
@@ -94,9 +96,29 @@ class AutoMemoryV042Tests(unittest.TestCase):
         temp, store, candidates = self.make()
         try:
             text = "我希望软件里所有面向我的界面和说明都尽量使用中文。"
-            self.assertEqual(ingest_auto_memory(store, candidates, user_text=text)["status"], "remembered")
+            self.assertEqual(ingest_auto_memory(store, candidates, user_text=text)["status"], "candidate")
             self.assertEqual(ingest_auto_memory(store, candidates, user_text=text)["status"], "duplicate")
-            self.assertEqual(len(store.list(limit=20)), 1)
+            self.assertEqual(len(store.list(limit=20)), 0)
+            self.assertEqual(len(candidates.list()), 1)
+        finally:
+            temp.cleanup()
+
+    def test_v3_cleanup_archives_raw_stage_prompt_but_keeps_explicit_memory(self):
+        temp, store, _candidates = self.make()
+        try:
+            raw = "对当前项目进行一次完整的 Codex 模式高强度自主开发测试。目标不是分析方案，而是测试完整开发流程。【第一阶段】读取当前项目并必须分析根因。【第二阶段】根据实际代码自己决定修改方案，不要让我选择方案。【第三阶段】一步一步完成修改并最终生成安装包。" * 3
+            junk = store.create(scope="project", memory_type="decision", title="项目长期规则 · Codex 高强度自主开发测试", content=raw, project_id="p", source="auto_profile_v2")
+            explicit = store.create(scope="project", memory_type="decision", title="手工保存的开发说明", content=raw, project_id="p", source="explicit_user")
+            result = migrate_legacy_auto_memories(store)
+            self.assertEqual(result["archived_raw_prompts"], 1)
+            self.assertTrue(store.get(junk["memory_id"])["archived"])
+            active_ids = {item["memory_id"] for item in store.list(archived=False, limit=20)}
+            self.assertNotIn(junk["memory_id"], active_ids)
+            self.assertIsNotNone(store.get(explicit["memory_id"]))
+            archived_ids = {item["memory_id"] for item in store.list(archived=True, limit=20)}
+            self.assertIn(junk["memory_id"], archived_ids)
+            second = migrate_legacy_auto_memories(store)
+            self.assertEqual(second["archived_raw_prompts"], 1)
         finally:
             temp.cleanup()
 

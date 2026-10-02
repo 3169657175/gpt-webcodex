@@ -66,6 +66,11 @@ contextBridge.exposeInMainWorld('mcpAssistant', {
     ipcRenderer.on('runtime:heartbeat', wrapped);
     return () => ipcRenderer.removeListener('runtime:heartbeat', wrapped);
   },
+  onTaskEvent: (listener) => {
+    const wrapped = (_event, payload) => listener(payload);
+    ipcRenderer.on('runtime:task-event', wrapped);
+    return () => ipcRenderer.removeListener('runtime:task-event', wrapped);
+  },
   onChatState: (listener) => {
     const wrapped = (_event, payload) => listener(payload);
     ipcRenderer.on('chat:state', wrapped);

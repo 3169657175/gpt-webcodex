@@ -11,10 +11,10 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.8.4** |
-| Coding Tools MCP Runtime | **v0.8.4** |
-| MCP Tool Schema | **v13 / 10 tools** |
-| Schema Hash | `ddc6ffcbf2d76157c312709b95bff9136d0e4827f7b539e42d4710ba963ea4b2` |
+| 网页 MCP 助手 Desktop | **v0.9.1** |
+| Coding Tools MCP Runtime | **v0.9.1** |
+| MCP Tool Schema | **v14 / 10 tools** |
+| Schema Hash | `631ba25229260ab745932f2fcc1cef3deb982ddc0cf3bbcb900047c458e321fd` |
 | Electron | **43.2.0** |
 | 平台 | **Windows** |
 
@@ -28,6 +28,32 @@
 - **Git / Worktree 工作流**：支持 Git 操作、隔离 Worktree、安全应用修改与清理。
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
 - **ChatGPT 页面增强**：保留原生页面渲染，提供连续 MCP 状态观察、动态资源错误提示和长时间无新内容的可操作反馈。
+
+## v0.9.1 稳定性收口版
+
+0.9.1 重点解决 0.9.0 架构收口后真实使用中暴露的几个细节：活动详情仍有噪声、心跳跨阈值后桌面卡住提醒可能被吞、长期上下文同主题新候选可能丢失，以及 React 摘要层仍有二次解释任务状态的风险。
+
+- **活动详情去噪**：隐藏无意义的等待模型心跳和空输出，最近事件统一中文化、去重，只保留命令、阶段和异常信息。
+- **卡住提醒修复**：保存“上一次实际观察到的语义事件”，心跳从正常跨过 90 秒阈值时可以真实触发一次 `stalled` 通知；重复轮询不重复弹窗，`waiting_model` 保持静默。
+- **长期上下文冲突保护**：候选与候选之间同标题不同内容时，新事实会独立保存为冲突候选，并携带旧内容和新内容供管理界面比较，不再被旧候选吞掉。
+- **Legacy V3 清理**：明显的超长阶段式一次性任务 Prompt 自动安全归档，不直接删除；显式记忆和模型正式总结不会被自动清理。
+- **React 状态统一**：`app.js` 发布经过共享 `AssistantState` 归一化后的中文状态、语义色调和诊断信息，React/TypeScript 层只消费 canonical state，不再自行解释 `task.status` / `lifecycle_state`。
+- **版本展示统一**：设置页与关于区域从 Electron 实际版本读取版本号，避免界面版本字符串滞后。
+
+详细变化见 [v0.9.1 发布说明](docs/RELEASE_NOTES_0.9.1.md)。
+
+## v0.9.0 架构收口版
+
+0.9.0 把 0.5～0.8 系列快速迭代形成的多套状态、记忆与管理界面逻辑收拢成更清晰的长期架构，同时保持 ChatGPT WebContents、Runtime/Tunnel 分层恢复和既有本地开发能力不变。
+
+- **长期上下文 V3**：`remember_context` 成为模型主导的长期信息写入链路；ChatGPT 页面 DOM/规则观察只负责发现候选，不再直接写入，并增加候选去重、模型写入后候选清理和扫描/发现/写入统计。
+- **统一 AssistantState**：管理中心、聊天顶部状态和 Windows 任务通知共用状态归一化层，减少 `waiting_model`、运行中、疑似停滞等状态的重复判断。
+- **事件驱动状态刷新**：Task/Runtime 事件优先推送，30～60 秒轮询仅作为 watchdog；保留 1 秒 UI 计时刷新但不再每秒重新读取本地任务。
+- **React + TypeScript + Vite 渐进迁移**：管理中心的首页、工作区、长期上下文和设置加入 React 组件层，现有成熟操作逻辑继续工作，ChatGPT WebContents 不改。
+- **Runtime 模块化**：将公开 Tool Registry / ToolSpec 从超大 `server.py` 拆到独立 `tool_registry.py`，保持 10 个公开工具并升级 Schema 到 v14。
+- **开发/发布分层验证**：增加 `test:quick`、`release:verify`、`release:git-ready`、React 类型检查和 release readiness 检查，做到日常开发反馈更快、正式发布验证更严。
+
+详细变化见 [v0.9.0 发布说明](docs/RELEASE_NOTES_0.9.0.md)。
 
 ## v0.8.4 长期上下文与顺序状态链路
 
@@ -144,11 +170,9 @@
 
 推荐直接从 GitHub Releases 下载最新版。
 
-本地正式安装包已生成：
+本地正式安装包：
 
-`dist/web-mcp-assistant-setup-0.8.3.exe`
-
-文件大小：`126,316,929 bytes`（约 `120.47 MiB`），FileVersion / ProductVersion 均为 `0.8.3`。
+`dist/web-mcp-assistant-setup-0.9.1.exe`
 
 安装后：
 
@@ -194,7 +218,13 @@ v0.7.3 起面向**单用户个人开发场景**，默认采用完全权限模式
 npm install
 ```
 
-运行测试：
+运行快速验证：
+
+```bash
+npm run test:quick
+```
+
+运行完整测试：
 
 ```bash
 npm run test
@@ -217,6 +247,7 @@ dist/
 ```text
 electron/                    Electron 主进程、ChatGPT 页面与 Runtime 编排
 renderer/                    桌面管理界面
+renderer-ui/                 React + TypeScript + Vite 渐进迁移层
 resources/coding-tools-mcp/  Coding Tools MCP Python Runtime
 tests/                       Electron / Node 回归测试
 scripts/                     Schema、测试与发布脚本
@@ -227,29 +258,17 @@ docs/                        正式版本发布说明
 
 正式版本发布前会执行：
 
+- React / TypeScript 类型检查与构建
 - 完整 `npm run test`
 - Schema 契约一致性检查
+- quick soak 稳定性验证
 - Windows NSIS 发行构建
 - 安装包、`app.asar`、Runtime、Schema 与版本号核对
 - Git commit / tag / clean 状态检查
 
-当前 v0.8.3 安装包 SHA-256：
+正式安装包的 SHA-256 以发布完成后的产物校验结果为准。
 
-```text
-A9EE7184C1755DF0862E9A3AA1DCC00054D7F835CF4E0F9273612F0FC60FCB72
-```
-
-上一版 v0.8.0 安装包 SHA-256：
-
-```text
-DF450652B155A6B7982B95BC2FB4E4FF029F3D1E6B951DDA3C488FE7C1968DA3
-```
-
-已公开 v0.7.3 安装包 SHA-256：
-
-```text
-8B039DCDA2DAE437983C5B64DB27151776F1D91C3990ED77AA1C8599370E0581
-```
+历史公开版本的校验值继续保留在对应 GitHub Release 与版本发布说明中。
 
 ## License
 

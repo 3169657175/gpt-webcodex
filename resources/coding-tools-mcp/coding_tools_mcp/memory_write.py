@@ -120,6 +120,14 @@ class MemoryCandidateStore:
             "memory_id", "scope", "memory_type", "title", "project_id", "task_id", "pinned", "confidence", "revision", "updated_at",
         )}
 
+    @staticmethod
+    def _comparison(item: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(item, dict):
+            return None
+        return {key: item.get(key) for key in (
+            "memory_id", "candidate_id", "scope", "memory_type", "title", "content", "project_id", "task_id", "source", "revision", "updated_at", "proposed_at",
+        ) if item.get(key) not in (None, "")}
+
     def _read(self, path: Path) -> dict[str, Any] | None:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -211,6 +219,26 @@ class MemoryCandidateStore:
             return {"status": "duplicate", "existing": self._summary(existing), "candidate": None}
         self.prune()
         pending = self.list()
+        wanted_title = _normalized_text(values.get("title"))
+        wanted_content = _normalized_text(values.get("content"))
+        pending_conflict: dict[str, Any] | None = None
+        for candidate in pending:
+            if str(candidate.get("scope") or "") != str(values.get("scope") or ""):
+                continue
+            if str(candidate.get("memory_type") or "") != str(values.get("memory_type") or ""):
+                continue
+            if str(candidate.get("project_id") or "") != str(values.get("project_id") or ""):
+                continue
+            if str(candidate.get("task_id") or "") != str(values.get("task_id") or ""):
+                continue
+            candidate_title = _normalized_text(candidate.get("title"))
+            candidate_content = _normalized_text(candidate.get("content"))
+            if wanted_content and wanted_content == candidate_content:
+                return {"status": "duplicate", "candidate_id": candidate.get("candidate_id"), "candidate": dict(candidate)}
+            title_ratio = SequenceMatcher(None, wanted_title, candidate_title).ratio() if wanted_title and candidate_title else 0.0
+            if wanted_title and (wanted_title == candidate_title or title_ratio >= 0.92):
+                pending_conflict = candidate
+                break
         if len(pending) >= MAX_PENDING_CANDIDATES:
             raise MemoryWriteError("CANDIDATE_LIMIT", "Too many pending memory candidates.")
         now = datetime.now(timezone.utc)
@@ -218,12 +246,15 @@ class MemoryCandidateStore:
         payload = {
             "schema_version": CANDIDATE_SCHEMA_VERSION,
             "candidate_id": candidate_id,
-            "status": "conflict" if relation == "conflict" else "pending",
+            "status": "conflict" if relation == "conflict" or pending_conflict is not None else "pending",
             "proposed_at": now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             "expires_at_epoch": now.timestamp() + self.ttl_seconds,
             **values,
             "allow_sensitive_personal": bool(allow_sensitive_personal),
             "existing_memory_id": str(existing.get("memory_id") or "") if existing else "",
+            "existing_memory": self._comparison(existing),
+            "conflicting_candidate_id": str(pending_conflict.get("candidate_id") or "") if pending_conflict else "",
+            "conflicting_candidate": self._comparison(pending_conflict),
         }
         _atomic_json(self._path(candidate_id), payload)
         return dict(payload)
@@ -238,16 +269,36 @@ class MemoryCandidateStore:
             pinned=pinned, allow_sensitive_personal=False,
         )
         relation, existing = self._relation(values)
+
+        def clear_related_candidates() -> int:
+            removed = 0
+            wanted_title = _normalized_text(values.get("title"))
+            wanted_content = _normalized_text(values.get("content"))
+            for candidate in list(self.list()):
+                if str(candidate.get("scope") or "") != str(values.get("scope") or ""):
+                    continue
+                if str(candidate.get("memory_type") or "") != str(values.get("memory_type") or ""):
+                    continue
+                if str(candidate.get("project_id") or "") != str(values.get("project_id") or ""):
+                    continue
+                candidate_title = _normalized_text(candidate.get("title"))
+                candidate_content = _normalized_text(candidate.get("content"))
+                title_ratio = SequenceMatcher(None, wanted_title, candidate_title).ratio() if wanted_title and candidate_title else 0.0
+                if (wanted_content and wanted_content == candidate_content) or (wanted_title and (wanted_title == candidate_title or title_ratio >= 0.92)):
+                    self._path(str(candidate.get("candidate_id") or "")).unlink(missing_ok=True)
+                    removed += 1
+            return removed
+
         if relation == "duplicate" and existing is not None:
-            return {"status": "duplicate", "memory": self._summary(existing)}
+            return {"status": "duplicate", "memory": self._summary(existing), "cleared_candidates": clear_related_candidates()}
         if relation == "conflict" and existing is not None:
             memory = self.memory_store.update(
                 str(existing["memory_id"]), title=values["title"], content=values["content"],
                 source=values["source"], confidence=values["confidence"], pinned=values["pinned"],
             )
-            return {"status": "updated", "memory": self._summary(memory)}
+            return {"status": "updated", "memory": self._summary(memory), "cleared_candidates": clear_related_candidates()}
         memory = self.memory_store.create(**values)
-        return {"status": "remembered", "memory": self._summary(memory)}
+        return {"status": "remembered", "memory": self._summary(memory), "cleared_candidates": clear_related_candidates()}
 
     def confirm(self, candidate_id: str, *, resolution: str = "") -> dict[str, Any]:
         candidate = self.get(candidate_id)
@@ -258,10 +309,18 @@ class MemoryCandidateStore:
         )}
         normalized = self._validate(allow_sensitive_personal=bool(candidate.get("allow_sensitive_personal")), **values)
         relation, existing = self._relation(normalized)
+        conflicting_candidate_id = str(candidate.get("conflicting_candidate_id") or "")
+        conflicting_candidate = self.get(conflicting_candidate_id) if conflicting_candidate_id else None
+        resolution = str(resolution or "").strip().lower()
+        if conflicting_candidate is not None and resolution not in {"update", "create_new"}:
+            return {
+                "status": "conflict", "candidate_id": candidate_id,
+                "existing_candidate": self._comparison(conflicting_candidate),
+                "requires_resolution": ["update", "create_new"],
+            }
         if relation == "duplicate":
             self._path(candidate_id).unlink(missing_ok=True)
             return {"status": "duplicate", "candidate_id": candidate_id, "existing": self._summary(existing)}
-        resolution = str(resolution or "").strip().lower()
         if relation == "conflict" and resolution not in {"update", "create_new"}:
             return {
                 "status": "conflict", "candidate_id": candidate_id,
@@ -277,6 +336,8 @@ class MemoryCandidateStore:
             memory = self.memory_store.create(**normalized)
             status = "created"
         self._path(candidate_id).unlink(missing_ok=True)
+        if resolution == "update" and conflicting_candidate_id:
+            self._path(conflicting_candidate_id).unlink(missing_ok=True)
         return {"status": status, "candidate_id": candidate_id, "memory": memory}
 
     def reject(self, candidate_id: str) -> dict[str, Any]:

@@ -11,7 +11,7 @@ class AutoMemoryService {
     this.memoryControl = memoryControl;
     this.log = log || { info() {}, warn() {}, error() {} };
     this.now = now;
-    this.state = { observing: true, processed: 0, remembered: 0, candidates: 0, skipped: 0, errors: 0, last_status: 'idle', last_at: '', last_mode: '', last_scope: '', last_type: '' };
+    this.state = { observing: true, processed: 0, discovered: 0, candidates: 0, conflicts: 0, duplicates: 0, skipped: 0, errors: 0, last_status: 'idle', last_at: '', last_mode: '', last_scope: '', last_type: '' };
   }
   getStatus() { return { ...this.state }; }
   async ingestTurn(turn = {}) {
@@ -24,9 +24,15 @@ class AutoMemoryService {
       const result = memoryResult(response);
       const status = String(result.status || 'unknown');
       this.state.last_status = status; this.state.last_at = this.now(); this.state.last_mode = String(result.mode || ''); this.state.last_scope = String(result.scope || result.memory?.scope || ''); this.state.last_type = String(result.memory_type || result.memory?.memory_type || '');
-      if (status === 'remembered') this.state.remembered += 1;
-      else if (status === 'candidate' || status === 'conflict') this.state.candidates += 1;
-      else if (status.startsWith('skipped_') || status === 'duplicate' || status === 'rejected_secret') this.state.skipped += 1;
+      if (status === 'candidate' || status === 'conflict') {
+        const count = Math.max(1, Number(result.candidate_count || 1));
+        this.state.discovered += count;
+        this.state.candidates += count;
+        if (status === 'conflict') this.state.conflicts += 1;
+      } else if (status === 'duplicate') {
+        this.state.duplicates += 1;
+        this.state.skipped += 1;
+      } else if (status.startsWith('skipped_') || status === 'rejected_secret') this.state.skipped += 1;
       this.log.info('自动记忆处理完成', { status, mode: this.state.last_mode, scope: this.state.last_scope, memoryType: this.state.last_type });
       return result;
     } catch (error) {

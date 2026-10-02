@@ -24,3 +24,6 @@ __pycache__/
 # Local development plans / dogfooding notes.
 # Keep them locally instead of publishing them in the repository root.
 00_*.md
+
+# Generated React manager bundle.
+renderer/react-dist/

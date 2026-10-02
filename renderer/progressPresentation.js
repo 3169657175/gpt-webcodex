@@ -27,7 +27,7 @@
     return plain(lines.at(-1) || '', 120);
   }
 
-  function describe(task, operation, streamState, now = Date.now(), available = true, activity = null, stale = false) {
+  function describe(task, operation, streamState, now = Date.now(), available = true, activity = null, stale = false, runtimeLayers = null) {
     const stream = String(streamState?.status || '');
     const lifecycle = String(task?.lifecycle_state || '');
     const status = String(task?.status || '');
@@ -40,15 +40,18 @@
     const failure = plain(task?.failure);
     const activityCommand = activity?.command && typeof activity.command === 'object' ? activity.command : null;
     const command = activityCommand || (task?.current_command && typeof task.current_command === 'object' ? task.current_command : null);
-    const runningCommand = command?.status === 'running';
+    const runtimeProcessRunning = runtimeLayers?.process?.state === 'running' || runtimeLayers?.execution?.state === 'running';
+    const runningCommand = command?.status === 'running' || command?.execution_lifecycle_state === 'running' || runtimeProcessRunning;
     const operationRunning = ['running', 'queued'].includes(String(operation?.status || ''));
     const operationCountsAsLocalWork = operationRunning && lifecycle !== 'waiting_model';
     const active = operationCountsAsLocalWork || runningCommand || ['active', 'running', 'planning', 'preparing', 'verifying', 'recovering'].includes(status)
       || ['created', 'planning', 'ready', 'preparing', 'running', 'recovering', 'verifying'].includes(lifecycle);
     const elapsed = secondsSince(operationRunning ? operation?.started_at || operation?.queued_at : runningCommand ? command?.started_at || task?.created_at : task?.created_at, now);
     const lastUpdate = secondsSince(command?.last_output_at || activity?.captured_at || task?.updated_at, now);
+    const runtimeHeartbeatAge = Number(runtimeLayers?.user?.heartbeat_age_seconds);
     const heartbeatAge = operationRunning && Number.isFinite(Number(operation?.heartbeat_age_seconds))
-      ? Math.max(0, Number(operation.heartbeat_age_seconds)) : null;
+      ? Math.max(0, Number(operation.heartbeat_age_seconds))
+      : Number.isFinite(runtimeHeartbeatAge) ? Math.max(0, runtimeHeartbeatAge) : null;
     const age = heartbeatAge != null
       ? heartbeatAge >= LOCAL_HEARTBEAT_WARN_SECONDS ? `后台任务心跳已 ${duration(Math.floor(heartbeatAge))}未更新` : `后台任务心跳正常（${Math.floor(heartbeatAge)} 秒前）`
       : lastUpdate != null && lastUpdate >= LOCAL_OUTPUT_QUIET_SECONDS ? `最近本地状态更新于 ${duration(lastUpdate)}前` : '';
