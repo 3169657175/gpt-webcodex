@@ -339,7 +339,7 @@ def _cleanup_legacy_raw_prompts(store: MemoryStore) -> dict[str, Any]:
     for item in list(store.list(archived=False, limit=200)):
         if not _looks_like_raw_task_prompt(item):
             continue
-        store.archive(str(item["memory_id"]))
+        store.archive(str(item["memory_id"]), reason="Legacy V3：疑似一次性阶段式任务 Prompt")
         archived_ids.append(str(item["memory_id"]))
     result = {
         "status": "cleaned", "policy_version": 3,
@@ -370,7 +370,7 @@ def migrate_legacy_auto_memories(store: MemoryStore) -> dict[str, Any]:
                 action, _memory = _upsert_profile(store, item)
                 if action in {"created", "updated"}:
                     summarized += 1
-            store.archive(str(old["memory_id"]))
+            store.archive(str(old["memory_id"]), reason="Legacy V2：旧版自动聊天记忆迁移")
             archived += 1
         result = {"status": "migrated", "policy_version": 2, "archived_legacy": archived, "summarized": summarized, "migrated_at": utc_now()}
         marker.parent.mkdir(parents=True, exist_ok=True)

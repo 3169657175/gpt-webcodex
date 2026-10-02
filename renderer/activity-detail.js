@@ -1,7 +1,7 @@
 const api = window.activityDetail;
 const $ = (selector) => document.querySelector(selector);
 let current = { pinned: false };
-const fields = [['当前状态','state'],['当前阶段','stage'],['已运行','elapsed'],['最近活动','lastSeen'],['后台心跳','heartbeat'],['本地进程','process'],['等待原因','waitReason'],['下一步','nextStep'],['反馈通道','channel'],['Task ID','taskId','mono'],['Run ID','runId','mono'],['Operation ID','operationId','mono'],['最近结果','lastResult']];
+const fields = [['当前状态','state'],['当前阶段','stage'],['已运行','elapsed'],['最近活动','lastSeen'],['本地进程','process'],['等待原因','waitReason'],['下一步','nextStep'],['反馈通道','channel'],['Task ID','taskId','mono'],['Run ID','runId','mono'],['Operation ID','operationId','mono'],['最近结果','lastResult']];
 
 function render(payload = {}) {
   $('#status').textContent = payload.status || '等待状态';

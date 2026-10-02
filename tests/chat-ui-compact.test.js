@@ -9,8 +9,10 @@ test('chat chrome reserves space for verified live progress and quick workspace 
   const css = read('renderer/browser.css');
   const html = read('renderer/browser.html');
   const main = read('electron/main.js');
-  assert.match(css, /\.browser-toolbar\{[^}]*height:164px/);
-  assert.match(main, /toolbarHeight:\s*164/);
+  assert.match(css, /--toolbar-height:154px/);
+  assert.match(css, /\.browser-toolbar\{[^}]*height:var\(--toolbar-height\)/);
+  assert.match(main, /toolbarHeight:\s*154/);
+  assert.match(main, /chat:toolbar-height/);
   assert.match(html, /id="progressBand"/);
   assert.match(html, /progressPresentation\.js/);
   assert.match(html, /id="addAuthorizedRootQuick"/);

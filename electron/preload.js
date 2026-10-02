@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('mcpAssistant', {
   memoryReject: (candidateId) => ipcRenderer.invoke('memory:control', { action: 'reject', candidate_id: candidateId }),
   memoryUpdate: (memoryId, changes = {}) => ipcRenderer.invoke('memory:control', { ...changes, action: 'update', memory_id: memoryId }),
   memoryArchive: (memoryId) => ipcRenderer.invoke('memory:control', { action: 'archive', memory_id: memoryId, confirm: true }),
+  memoryUnarchive: (memoryId) => ipcRenderer.invoke('memory:control', { action: 'unarchive', memory_id: memoryId, confirm: true }),
   memoryDelete: (memoryId) => ipcRenderer.invoke('memory:control', { action: 'delete', memory_id: memoryId, confirm: true }),
   memorySetConfig: (autoMemory) => ipcRenderer.invoke('memory:control', { action: 'set_config', auto_memory: autoMemory }),
   memoryExport: () => ipcRenderer.invoke('memory:control', { action: 'export' }),

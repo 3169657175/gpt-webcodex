@@ -987,6 +987,14 @@ class ChatViewController {
     for (const authView of this.authViews) authView.setBounds({ x: 0, y: this.toolbarHeight, width: Math.max(0, width), height: Math.max(0, height - this.toolbarHeight) });
   }
 
+  setToolbarHeight(value) {
+    const next = Math.max(140, Math.min(190, Math.round(Number(value) || 0)));
+    if (!next || next === this.toolbarHeight) return this.toolbarHeight;
+    this.toolbarHeight = next;
+    this.resize();
+    return this.toolbarHeight;
+  }
+
   emitState() {
     this.onState(this.getState());
   }

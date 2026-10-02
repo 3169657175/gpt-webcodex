@@ -288,7 +288,7 @@ class MemoryStore:
     def _render(self, record: dict[str, Any]) -> bytes:
         meta = {key: record.get(key, "") for key in (
             "memory_id", "profile", "scope", "memory_type", "title", "source", "project_id", "task_id",
-            "created_at", "updated_at", "last_verified_at", "confidence", "pinned", "archived", "revision", "supersedes",
+            "created_at", "updated_at", "last_verified_at", "confidence", "pinned", "archived", "archived_at", "archive_reason", "revision", "supersedes",
         )}
         header = _META_PREFIX + json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + _META_SUFFIX
         return (header + "\n\n# " + record["title"] + "\n\n" + record["content"] + "\n").encode("utf-8")
@@ -621,7 +621,7 @@ class MemoryStore:
         self._index_record(record)
         return dict(record)
 
-    def archive(self, memory_id: str) -> dict[str, Any]:
+    def archive(self, memory_id: str, *, reason: str = "manual") -> dict[str, Any]:
         current = self.get(memory_id)
         if current is None:
             raise KeyError(memory_id)
@@ -630,11 +630,36 @@ class MemoryStore:
         self._snapshot_revision(current)
         old_path = self.root / current["file_path"]
         previous_revision = int(current.get("revision", 1) or 1)
+        now = utc_now()
         record = {
-            **current, "archived": True, "updated_at": utc_now(), "revision": previous_revision + 1,
-            "supersedes": f"{memory_id}@{previous_revision}",
+            **current, "archived": True, "archived_at": now, "archive_reason": str(reason or "manual")[:240],
+            "updated_at": now, "revision": previous_revision + 1, "supersedes": f"{memory_id}@{previous_revision}",
         }
         new_dir = self._directory_for(record["scope"], record.get("project_id", ""), record.get("task_id", ""), archived=True)
+        new_path = new_dir / f"{memory_id}.md"
+        data = self._render(record)
+        _atomic_write(new_path, data)
+        if old_path != new_path:
+            old_path.unlink(missing_ok=True)
+        record["file_path"] = str(new_path.relative_to(self.root)).replace("\\", "/")
+        record["content_sha256"] = _sha256(data)
+        self._index_record(record)
+        return dict(record)
+
+    def unarchive(self, memory_id: str) -> dict[str, Any]:
+        current = self.get(memory_id)
+        if current is None:
+            raise KeyError(memory_id)
+        if not current.get("archived"):
+            return current
+        self._snapshot_revision(current)
+        old_path = self.root / current["file_path"]
+        previous_revision = int(current.get("revision", 1) or 1)
+        record = {
+            **current, "archived": False, "archived_at": "", "archive_reason": "", "updated_at": utc_now(),
+            "revision": previous_revision + 1, "supersedes": f"{memory_id}@{previous_revision}",
+        }
+        new_dir = self._directory_for(record["scope"], record.get("project_id", ""), record.get("task_id", ""), archived=False)
         new_path = new_dir / f"{memory_id}.md"
         data = self._render(record)
         _atomic_write(new_path, data)

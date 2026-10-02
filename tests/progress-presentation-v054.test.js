@@ -35,7 +35,7 @@ test('waiting for model is not displayed as a running local command', () => {
   assert.equal(result.canStop, false);
 });
 
-test('background heartbeat makes long work visibly alive even without new command output', () => {
+test('healthy background activity keeps long work useful without exposing heartbeat telemetry', () => {
   const result = describe({
     status: 'active', lifecycle_state: 'running', objective: '长任务',
     current_step: '运行完整测试', next_step: '生成安装包',
@@ -44,11 +44,12 @@ test('background heartbeat makes long work visibly alive even without new comman
     status: 'running', started_at: '2026-09-24T01:58:00Z', heartbeat_age_seconds: 5
   }, null, now);
   assert.equal(result.key, 'active');
-  assert.match(result.detail, /后台任务心跳正常/);
+  assert.match(result.detail, /下一步：生成安装包/);
+  assert.doesNotMatch(result.detail, /心跳/);
   assert.equal(result.elapsed, '2 分 0 秒');
 });
 
-test('stale background heartbeat is surfaced instead of looking silently frozen', () => {
+test('stale background activity is surfaced in user-facing language instead of looking silently frozen', () => {
   const result = describe({
     status: 'active', lifecycle_state: 'running', objective: '长任务',
     current_step: '运行完整测试', created_at: '2026-09-24T01:55:00Z'
@@ -57,7 +58,8 @@ test('stale background heartbeat is surfaced instead of looking silently frozen'
   }, null, now);
   assert.equal(result.key, 'warning');
   assert.equal(result.userState, 'suspected_stall');
-  assert.match(result.detail, /后台任务心跳已 45 秒未更新/);
+  assert.match(result.detail, /最近活动已 45 秒未更新/);
+  assert.doesNotMatch(result.detail, /心跳/);
 });
 
 test('terminal failure takes precedence over a stale page generation marker', () => {

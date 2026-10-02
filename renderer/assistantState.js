@@ -66,7 +66,29 @@
     return { progress: -1, mode: 'none' };
   }
 
-  const api = { describe, labelFor, toneFor, needsHumanAttention, taskCanBeBlockedByRuntime, eventForState, taskbarState, thresholds: presentation.thresholds };
+  function serviceState(input = {}) {
+    const workspaceReady = Boolean(input.workspaceReady);
+    const runtimeRunning = Boolean(input.runtimeRunning);
+    const tunnelRunning = Boolean(input.tunnelRunning);
+    const connectionRunning = Boolean(input.connectionRunning);
+    const attachmentReady = Boolean(input.attachmentReady);
+    const attachmentPending = Boolean(input.attachmentPending);
+    const recovering = Boolean(input.recovering);
+    const startupActive = Boolean(input.startupActive);
+    const startupFailed = Boolean(input.startupFailed);
+    const fullyReady = workspaceReady && runtimeRunning && tunnelRunning && connectionRunning && (attachmentReady || attachmentPending);
+
+    if (!workspaceReady) return { key: 'needs_workspace', tone: 'warning', label: '需要工作区', title: '还没有选择工作区', message: '先选择一个工作区，再启动本地开发服务。', showStartup: true, fullyReady: false };
+    if (startupFailed) return { key: 'failed', tone: 'danger', label: '启动失败', title: '服务启动未完成', message: '启动链路中存在失败步骤，请查看详情或运行诊断。', showStartup: true, fullyReady: false };
+    if (recovering) return { key: 'recovering', tone: 'warning', label: '正在恢复', title: '正在恢复连接', message: '本地 Runtime 保持运行，正在恢复连接通道。', showStartup: true, fullyReady: false };
+    if (fullyReady) return { key: 'ready', tone: 'positive', label: '服务正常', title: '开发环境已就绪', message: attachmentPending ? '本地工具与连接通道正常，ChatGPT MCP 将在首次调用时确认挂载。' : '本地工具、连接通道与 ChatGPT MCP 均正常。', showStartup: false, fullyReady: true };
+    if (startupActive) return { key: 'starting', tone: 'warning', label: '正在启动', title: '正在启动开发服务', message: '正在按顺序检查本地工具与连接通道。', showStartup: true, fullyReady: false };
+    if (!runtimeRunning) return { key: 'stopped', tone: 'neutral', label: '服务未运行', title: '服务当前未运行', message: '配置完成后可以启动服务。', showStartup: true, fullyReady: false };
+    if (!tunnelRunning || !connectionRunning) return { key: 'connection_wait', tone: 'warning', label: '连接未就绪', title: '连接通道尚未就绪', message: '本地 Runtime 正常，正在等待连接通道恢复。', showStartup: true, fullyReady: false };
+    return { key: 'chat_wait', tone: 'warning', label: '等待 ChatGPT MCP', title: '基础服务已就绪', message: '等待 ChatGPT 确认 MCP 挂载状态。', showStartup: true, fullyReady: false };
+  }
+
+  const api = { describe, labelFor, toneFor, needsHumanAttention, taskCanBeBlockedByRuntime, eventForState, taskbarState, serviceState, thresholds: presentation.thresholds };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.assistantState = api;
 })(globalThis);

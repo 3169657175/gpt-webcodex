@@ -27,7 +27,7 @@ test('0.7.1 local memory library exposes pagination and bulk archive controls', 
 
 test('0.7.1 memory list fetch keeps the runtime request bounded', () => {
   const app = read('renderer/app.js');
-  assert.match(app, /const options = \{ limit: 200 \};/);
+  assert.match(app, /const options = \{ limit: 200, archived: archivedView \};/);
   assert.match(app, /state\.memory\.pageSize/);
   assert.match(app, /items\.slice\(start, start \+ pageSize\)/);
 });

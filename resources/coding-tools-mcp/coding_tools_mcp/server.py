@@ -9543,7 +9543,14 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             elif action == "archive":
                 if payload.get("confirm") is not True:
                     raise MemoryWriteError("CONFIRMATION_REQUIRED", "archive requires confirm=true")
-                result = store.archive(str(payload.get("memory_id") or "")); mutated = True
+                result = store.archive(
+                    str(payload.get("memory_id") or ""),
+                    reason=str(payload.get("reason") or "用户手动归档"),
+                ); mutated = True
+            elif action == "unarchive":
+                if payload.get("confirm") is not True:
+                    raise MemoryWriteError("CONFIRMATION_REQUIRED", "unarchive requires confirm=true")
+                result = store.unarchive(str(payload.get("memory_id") or "")); mutated = True
             elif action == "delete":
                 if payload.get("confirm") is not True:
                     raise MemoryWriteError("CONFIRMATION_REQUIRED", "delete requires confirm=true")

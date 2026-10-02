@@ -20,12 +20,14 @@ test('0.6.0 schema identity change detects first discovery and actual generation
   }), current);
 });
 
-test('0.6.0 browser exposes a temporary stale-chat schema refresh hint', () => {
+test('0.9.2 browser exposes schema refresh only for a real chat/runtime identity mismatch', () => {
   const html = read('renderer/browser.html');
   const js = read('renderer/browser.js');
   assert.match(html, /id=\"schemaRefreshHint\"[^>]*hidden/);
-  assert.match(js, /chatSchemaRefreshRecommended/);
-  assert.match(js, /schemaRefreshNotice/);
+  assert.match(js, /currentChatSchemaIdentity/);
+  assert.match(js, /schemaIdentityKey/);
+  assert.match(js, /mismatchKey/);
+  assert.doesNotMatch(js, /chatSchemaRefreshRecommended/);
   assert.match(js, /新建聊天/);
 });
 

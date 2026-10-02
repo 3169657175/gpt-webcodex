@@ -49,6 +49,8 @@ const state = {
   activeWorktree: null,
   memory: {
     items: [],
+    candidates: [],
+    view: 'active',
     page: 1,
     pageSize: 12,
     selected: new Set(),
@@ -88,6 +90,23 @@ function managerAssistantState() {
   };
 }
 
+function managerServiceState() {
+  const snapshot = state.snapshot || {};
+  const status = snapshot.status || {};
+  const attachmentState = attachmentHealth(snapshot.chat?.mcpAttachment || {}, Boolean(status.connectionRunning));
+  return window.assistantState.serviceState({
+    workspaceReady: Boolean(snapshot.settings?.workspace),
+    runtimeRunning: Boolean(status.runtimeRunning),
+    tunnelRunning: Boolean(status.tunnelRunning),
+    connectionRunning: Boolean(status.connectionRunning),
+    attachmentReady: Boolean(attachmentState.ready && !attachmentState.firstUsePending),
+    attachmentPending: Boolean(attachmentState.firstUsePending),
+    recovering: Boolean(status.recovering),
+    startupActive: Boolean(state.startup.active),
+    startupFailed: Boolean(state.startup.failed)
+  });
+}
+
 function publishManagerState() {
   const detail = {
     page: state.currentPage,
@@ -95,7 +114,8 @@ function publishManagerState() {
     workspaceHub: state.workspaceHub,
     taskRuntime: state.taskRuntime,
     memoryStatus: state.memory.status,
-    assistantState: managerAssistantState()
+    assistantState: managerAssistantState(),
+    serviceState: managerServiceState()
   };
   window.__MCP_MANAGER_STATE__ = detail;
   window.dispatchEvent(new CustomEvent('mcp-manager-state', { detail }));
@@ -196,9 +216,14 @@ function attachmentHealth(attachment = {}, upstreamReady = false) {
 }
 
 function applyTheme(theme) {
-  const value = theme === 'light' ? 'light' : 'dark';
+  const mode = ['light', 'dark', 'system'].includes(theme) ? theme : 'light';
+  const value = mode === 'system'
+    ? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : mode;
   document.body.dataset.theme = value;
-  if ($('#themeSelect')) $('#themeSelect').value = value;
+  document.body.dataset.themeMode = mode;
+  document.documentElement.dataset.theme = value;
+  if ($('#themeSelect')) $('#themeSelect').value = mode;
 }
 
 function navigate(page) {
@@ -222,7 +247,7 @@ function navigate(page) {
 function populateForms(snapshot, force = false) {
   if (!snapshot || (state.formsReady && !force)) return;
   const settings = snapshot.settings || {};
-  $('#themeSelect').value = settings.theme === 'light' ? 'light' : 'dark';
+  $('#themeSelect').value = ['light', 'dark', 'system'].includes(settings.theme) ? settings.theme : 'light';
   $('#startWithWindowsToggle').checked = Boolean(settings.startWithWindows);
   $('#autoStartToggle').checked = Boolean(settings.autoStartServices);
   $('#keepRunningToggle').checked = settings.keepRunningOnClose !== false;
@@ -391,7 +416,8 @@ function renderSnapshot(snapshot, forceForms = false) {
   const upstreamOk = Boolean(status.connectionRunning);
   const attachmentState = attachmentHealth(attachment, upstreamOk);
   const attachmentOk = attachmentState.ready;
-  const fullyReady = Boolean(status.fullyReady) && attachmentOk;
+  const canonicalService = managerServiceState();
+  const fullyReady = canonicalService.fullyReady;
 
   $('#sideRuntimeText').textContent = fullyReady ? '全部就绪' : runtimeOk ? '服务运行中' : '服务未运行';
   setDot($('#sideRuntimeDot'), fullyReady ? 'ready' : runtimeOk && upstreamOk ? 'ready' : runtimeOk ? 'warn' : 'error');
@@ -400,27 +426,11 @@ function renderSnapshot(snapshot, forceForms = false) {
   $('#sideMcp').textContent = runtimeOk ? '正常' : '停止';
   $('#sideTunnel').textContent = upstreamOk ? '已连' : tunnelOk ? '等待' : '断开';
 
-  if (!workspace) {
-    $('#overallTitle').textContent = '还没有选择工作区';
-    $('#overallMeta').textContent = '先打开工作区中心选择一个项目，再完成连接配置。';
-    $('#overallOrb').className = 'hero-orb warn';
-  } else if (fullyReady) {
-    $('#overallTitle').textContent = '开发环境已就绪';
-    $('#overallMeta').textContent = `${baseName(workspace)} · Runtime、Tunnel 与 OpenAI 通道正常，ChatGPT MCP 可用`;
-    $('#overallOrb').className = 'hero-orb ready';
-  } else if (runtimeOk && tunnelOk && upstreamOk) {
-    $('#overallTitle').textContent = '开发环境已就绪';
-    $('#overallMeta').textContent = '基础链路正常；ChatGPT MCP 会在首次调用时确认本条消息的挂载状态。';
-    $('#overallOrb').className = 'hero-orb ready';
-  } else if (runtimeOk) {
-    $('#overallTitle').textContent = '本地 Runtime 已启动';
-    $('#overallMeta').textContent = '连接通道尚未完全就绪，可查看启动链路或运行诊断。';
-    $('#overallOrb').className = 'hero-orb warn';
-  } else {
-    $('#overallTitle').textContent = '服务当前未运行';
-    $('#overallMeta').textContent = '配置完整后可以启动，并在下方查看真实启动阶段。';
-    $('#overallOrb').className = 'hero-orb error';
-  }
+  $('#overallTitle').textContent = canonicalService.title;
+  $('#overallMeta').textContent = workspace && canonicalService.fullyReady
+    ? `${baseName(workspace)} · ${canonicalService.message}`
+    : canonicalService.message;
+  $('#overallOrb').className = `hero-orb ${canonicalService.tone === 'positive' ? 'ready' : canonicalService.tone === 'danger' ? 'error' : 'warn'}`;
 
   $('#runtimeActionButton').textContent = runtimeOk ? '重启服务' : '启动服务';
   $('#statusRuntimeButton').textContent = runtimeOk ? '重启服务' : '启动服务';
@@ -448,6 +458,7 @@ function renderSnapshot(snapshot, forceForms = false) {
   renderDiagnostics(snapshot);
   renderWorkspaceSummary();
   syncStartupFromSnapshot(snapshot);
+  $('#startupPanel').hidden = !managerServiceState().showStartup;
   renderSetupGuide();
 }
 
@@ -670,6 +681,8 @@ function renderStartup() {
     $('#startupBadge').textContent = allDone ? '全部就绪' : '实时状态';
     $('#startupBadge').className = `soft-badge ${allDone ? 'positive' : 'neutral'}`;
   }
+  $('#startupPanel').hidden = !managerServiceState().showStartup;
+  publishManagerState();
 }
 
 async function runRuntime(action) {
@@ -874,7 +887,7 @@ function renderIssueFromLogs() {
 
 async function saveCommonSettings() {
   const saved = unwrap(await api.saveSettings({
-    theme: $('#themeSelect').value === 'light' ? 'light' : 'dark',
+    theme: ['light', 'dark', 'system'].includes($('#themeSelect').value) ? $('#themeSelect').value : 'light',
     startWithWindows: $('#startWithWindowsToggle').checked,
     autoStartServices: $('#autoStartToggle').checked,
     keepRunningOnClose: $('#keepRunningToggle').checked,
@@ -1105,6 +1118,7 @@ function renderMemoryItems(items) {
   const pageSize = Math.max(1, Number(state.memory.pageSize) || 12);
   const start = (state.memory.page - 1) * pageSize;
   const pageItems = items.slice(start, start + pageSize);
+  const archivedView = state.memory.view === 'archived';
   if (!pageItems.length) {
     const empty = document.createElement('span');
     empty.className = 'task-muted';
@@ -1116,7 +1130,7 @@ function renderMemoryItems(items) {
   }
   for (const item of pageItems) {
     const card = document.createElement('article');
-    card.className = 'memory-card';
+    card.className = `memory-card${archivedView ? ' archived' : ''}`;
     const head = document.createElement('div'); head.className = 'memory-card-head';
     const selector = document.createElement('label'); selector.className = 'memory-select-item'; selector.title = '选择这条记忆';
     const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = state.memory.selected.has(String(item.memory_id)); checkbox.dataset.memoryId = String(item.memory_id); checkbox.setAttribute('aria-label', `选择记忆：${textOr(item.title, '未命名记忆')}`);
@@ -1126,41 +1140,58 @@ function renderMemoryItems(items) {
     const summary = document.createElement('summary'); summary.className = 'memory-card-summary';
     const copy = document.createElement('div');
     const title = document.createElement('b'); title.textContent = textOr(item.title, '未命名记忆');
-    const meta = document.createElement('small'); meta.textContent = `${memoryScopeLabel(item.scope)} · ${memoryTypeLabel(item.memory_type)} · ${memoryDate(item.updated_at)}`;
+    const meta = document.createElement('small');
+    meta.textContent = archivedView
+      ? `${memoryScopeLabel(item.scope)} · ${memoryTypeLabel(item.memory_type)} · 归档于 ${memoryDate(item.archived_at || item.updated_at)} · ${textOr(item.archive_reason, '未记录归档原因')}`
+      : `${memoryScopeLabel(item.scope)} · ${memoryTypeLabel(item.memory_type)} · ${memoryDate(item.updated_at)}`;
     copy.append(title, meta);
     const isCoreProfile = Boolean(item.pinned && item.scope === 'global' && ['core_preference', 'working_style'].includes(String(item.memory_type || '')));
     const badge = document.createElement('span');
     badge.className = `soft-badge ${isCoreProfile ? 'positive' : 'neutral'}`;
-    badge.textContent = isCoreProfile ? '核心画像' : item.scope === 'project' ? '项目记忆' : '长期记忆';
+    badge.textContent = archivedView ? '已归档' : isCoreProfile ? '核心画像' : item.scope === 'project' ? '项目记忆' : '长期记忆';
     summary.append(copy, badge);
     const body = document.createElement('pre'); body.className = 'memory-content'; body.textContent = textOr(item.content, '（空内容）');
     const actions = document.createElement('div'); actions.className = 'memory-actions';
     const editor = document.createElement('div'); editor.className = 'memory-editor'; editor.hidden = true;
     const coreEligible = item.scope === 'global' && ['core_preference', 'working_style'].includes(String(item.memory_type || ''));
-    if (coreEligible) {
+    if (!archivedView && coreEligible) {
       actions.append(memoryButton(
         item.pinned ? '移出核心画像' : '设为核心画像',
         'secondary-button',
         () => updateMemoryItem(item, { pinned: !item.pinned }).catch((error) => toast('更新失败', error.message, 'error'))
       ));
     }
-    actions.append(
-      memoryButton('编辑', 'secondary-button', () => { editor.hidden = !editor.hidden; }),
-      memoryButton('归档', 'secondary-button', async () => {
-        if (!confirm('归档这条记忆？')) return;
-        try { memoryResult(await api.memoryArchive(item.memory_id)); state.memory.selected.delete(String(item.memory_id)); await loadMemoryPage(); } catch (error) { toast('归档失败', error.message, 'error'); }
-      }),
-      memoryButton('删除', 'danger-button', async () => {
-        if (!confirm('永久删除这条记忆？')) return;
-        try { memoryResult(await api.memoryDelete(item.memory_id)); state.memory.selected.delete(String(item.memory_id)); await loadMemoryPage(); } catch (error) { toast('删除失败', error.message, 'error'); }
-      })
-    );
+    if (archivedView) {
+      actions.append(
+        memoryButton('恢复为有效', 'primary-button', async () => {
+          try { memoryResult(await api.memoryUnarchive(item.memory_id)); await loadMemoryPage(); } catch (error) { toast('恢复失败', error.message, 'error'); }
+        }),
+        memoryButton('永久删除', 'danger-button', async () => {
+          if (!confirm('永久删除这条已归档记忆？此操作不可恢复。')) return;
+          try { memoryResult(await api.memoryDelete(item.memory_id)); await loadMemoryPage(); } catch (error) { toast('删除失败', error.message, 'error'); }
+        })
+      );
+    } else {
+      actions.append(
+        memoryButton('编辑', 'secondary-button', () => { editor.hidden = !editor.hidden; }),
+        memoryButton('归档', 'secondary-button', async () => {
+          if (!confirm('归档这条记忆？')) return;
+          try { memoryResult(await api.memoryArchive(item.memory_id)); state.memory.selected.delete(String(item.memory_id)); await loadMemoryPage(); } catch (error) { toast('归档失败', error.message, 'error'); }
+        }),
+        memoryButton('删除', 'danger-button', async () => {
+          if (!confirm('永久删除这条记忆？')) return;
+          try { memoryResult(await api.memoryDelete(item.memory_id)); state.memory.selected.delete(String(item.memory_id)); await loadMemoryPage(); } catch (error) { toast('删除失败', error.message, 'error'); }
+        })
+      );
+    }
     const titleInput = document.createElement('input'); titleInput.value = item.title || '';
     const contentInput = document.createElement('textarea'); contentInput.value = item.content || ''; contentInput.rows = 6;
     const save = memoryButton('保存修改', 'primary-button', () => updateMemoryItem(item, { title: titleInput.value.trim(), content: contentInput.value }).catch((error) => toast('保存失败', error.message, 'error')));
     editor.append(titleInput, contentInput, save);
-    details.append(summary, body, actions, editor);
-    head.append(selector, details);
+    details.append(summary, body, actions);
+    if (!archivedView) details.append(editor);
+    if (!archivedView) head.append(selector);
+    head.append(details);
     card.append(head);
     target.appendChild(card);
   }
@@ -1194,19 +1225,19 @@ async function loadMemoryItems({ resetPage = false } = {}) {
   const scope = $('#memoryScope').value;
   const query = $('#memorySearch').value.trim();
   if (resetPage) state.memory.page = 1;
-  const options = { limit: 200 };
+  const archivedView = state.memory.view === 'archived';
+  const options = { limit: 200, archived: archivedView };
   if (scope !== 'all') options.scope = scope;
   const listing = memoryResult(await api.memoryList(options));
   let items = Array.isArray(listing?.items) ? listing.items : [];
   if (query) {
-    const found = memoryResult(await api.memorySearch(query, { limit: 100 }));
-    const ids = new Set((found?.items || []).map((item) => item.memory_id));
-    items = items.filter((item) => ids.has(item.memory_id));
+    const needle = query.toLocaleLowerCase('zh-CN');
+    items = items.filter((item) => `${item.title || ''}\n${item.content || ''}\n${item.archive_reason || ''}`.toLocaleLowerCase('zh-CN').includes(needle));
   }
   state.memory.items = items;
   const pageCount = Math.max(1, Math.ceil(items.length / Math.max(1, Number(state.memory.pageSize) || 12)));
   state.memory.page = Math.min(Math.max(1, state.memory.page), pageCount);
-  $('#memoryListMeta').textContent = `${items.length} 条记忆${query ? ` · 搜索“${query}”` : ''} · 第 ${state.memory.page} 页仅显示 ${Math.min(state.memory.pageSize, items.length)} 条`;
+  $('#memoryListMeta').textContent = `${items.length} 条${archivedView ? '已归档记忆' : '有效记忆'}${query ? ` · 搜索“${query}”` : ''} · 第 ${state.memory.page} 页仅显示 ${Math.min(state.memory.pageSize, items.length)} 条`;
   renderMemoryItems(items);
 }
 
@@ -1226,9 +1257,11 @@ async function confirmCandidate(candidate, resolution = '') {
 
 function renderCandidates(items) {
   const values = Array.isArray(items) ? items : [];
-  $('#memoryCandidatePanel').hidden = values.length === 0;
   const target = $('#memoryCandidates');
   target.replaceChildren();
+  if (!values.length) {
+    const empty = document.createElement('span'); empty.className = 'task-muted'; empty.textContent = '当前没有需要确认的候选。'; target.appendChild(empty); return;
+  }
   for (const candidate of values) {
     const card = document.createElement('article'); card.className = 'memory-card candidate';
     const title = document.createElement('b'); title.textContent = textOr(candidate.title, '未命名候选');
@@ -1252,13 +1285,45 @@ function renderCandidates(items) {
   }
 }
 
+function syncMemoryView() {
+  const view = ['active', 'candidates', 'archived'].includes(state.memory.view) ? state.memory.view : 'active';
+  const tabs = { active: $('#memoryViewActive'), candidates: $('#memoryViewCandidates'), archived: $('#memoryViewArchived') };
+  for (const [key, button] of Object.entries(tabs)) {
+    if (!button) continue;
+    const active = key === view;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  }
+  $('#memoryCandidatePanel').hidden = view !== 'candidates';
+  $('#memoryLibraryPanel').hidden = view === 'candidates';
+  $('#memoryBulkToolbar').hidden = view !== 'active';
+  if (view === 'archived') {
+    $('#memoryLibraryTitle').textContent = '已归档长期上下文';
+    $('#memoryLibraryDescription').textContent = '归档不会立即删除内容。你可以查看归档原因与时间、恢复为有效记忆，或确认后永久删除。';
+  } else {
+    $('#memoryLibraryTitle').textContent = '长期画像与项目上下文';
+    $('#memoryLibraryDescription').textContent = '“核心画像”是跨项目长期上下文，会优先提供给助手；“项目上下文”只在相关工作区使用。模型主动总结和自动画像都会在这里汇总、去重。';
+  }
+}
+
+async function setMemoryView(view) {
+  state.memory.view = ['active', 'candidates', 'archived'].includes(view) ? view : 'active';
+  state.memory.page = 1;
+  state.memory.selected.clear();
+  syncMemoryView();
+  if (state.memory.view === 'candidates') renderCandidates(state.memory.candidates);
+  else await loadMemoryItems({ resetPage: true });
+}
+
 async function loadMemoryPage() {
   try {
     const [statusResponse, candidateResponse] = await Promise.all([api.memoryStatus(), api.memoryCandidates()]);
     renderMemoryStatus(memoryResult(statusResponse));
     const candidates = memoryResult(candidateResponse);
-    renderCandidates(candidates?.items || []);
-    await loadMemoryItems();
+    state.memory.candidates = candidates?.items || [];
+    renderCandidates(state.memory.candidates);
+    syncMemoryView();
+    if (state.memory.view !== 'candidates') await loadMemoryItems();
   } catch (error) {
     $('#memoryListMeta').textContent = '长期上下文读取失败';
     $('#memoryList').textContent = `读取失败：${error.message}`;
@@ -1357,6 +1422,9 @@ function bindEvents() {
   };
 
   $('#memoryRefresh').onclick = loadMemoryPage;
+  $('#memoryViewActive').onclick = () => setMemoryView('active').catch((error) => toast('记忆视图切换失败', error.message, 'error'));
+  $('#memoryViewCandidates').onclick = () => setMemoryView('candidates').catch((error) => toast('记忆视图切换失败', error.message, 'error'));
+  $('#memoryViewArchived').onclick = () => setMemoryView('archived').catch((error) => toast('记忆视图切换失败', error.message, 'error'));
   $('#memorySearchButton').onclick = () => loadMemoryItems({ resetPage: true }).catch((error) => toast('搜索失败', error.message, 'error'));
   $('#memorySearch').onkeydown = (event) => { if (event.key === 'Enter') loadMemoryItems({ resetPage: true }).catch(() => {}); };
   $('#memoryScope').onchange = () => loadMemoryItems({ resetPage: true }).catch(() => {});

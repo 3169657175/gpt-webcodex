@@ -11,8 +11,8 @@
 
 | 组件 | 版本 |
 | --- | --- |
-| 网页 MCP 助手 Desktop | **v0.9.1** |
-| Coding Tools MCP Runtime | **v0.9.1** |
+| 网页 MCP 助手 Desktop | **v0.9.2** |
+| Coding Tools MCP Runtime | **v0.9.2** |
 | MCP Tool Schema | **v14 / 10 tools** |
 | Schema Hash | `631ba25229260ab745932f2fcc1cef3deb982ddc0cf3bbcb900047c458e321fd` |
 | Electron | **43.2.0** |
@@ -28,6 +28,20 @@
 - **Git / Worktree 工作流**：支持 Git 操作、隔离 Worktree、安全应用修改与清理。
 - **本地会话与开发上下文**：保存本地任务、历史、Checkpoint、Rules、Recipes、Skills 和 Memory 等开发上下文。
 - **ChatGPT 页面增强**：保留原生页面渲染，提供连续 MCP 状态观察、动态资源错误提示和长时间无新内容的可操作反馈。
+
+## v0.9.2 体验与界面收口版
+
+0.9.2 在 0.9.1 稳定性基础上继续收紧真实使用体验：修复 Tunnel / MCP Session 恢复链的缺口，减少顶部状态与活动详情噪声，补齐长期上下文归档闭环，并新增更接近 ChatGPT / Codex 的纯白主题与跟随系统主题。
+
+- **连接与恢复**：Tunnel 主通道健康进入轻量状态判断，失效 MCP Session 会清理旧 session 并安全重新 discovery；页面/Tunnel 异常不会误重启健康 Runtime。
+- **唯一状态源**：首页和 React 摘要统一消费 canonical service / assistant state，正常态自动收起启动链，运行、恢复和异常时才展开细节。
+- **运行信息减噪**：顶部空闲态真实压缩，心跳不再作为用户进度条展示，最近事件仅保留命令、阶段、错误和恢复等有意义变化，并尽量中文化。
+- **长期上下文闭环**：增加“有效 / 候选 / 已归档”三视图，归档原因与时间可见，并支持恢复为有效和永久删除。
+- **浅色主题**：保留现有深色主题，新增纯白浅色与“跟随系统”，统一青绿色主操作色、按钮层级、字号和 semantic tokens。
+- **工作区效率**：ChatGPT 顶部增加最近工作区快速切换，同时保留独立 Workspace Center 处理新增、授权和维护。
+- **真实 Renderer 验证**：发布链新增 production Electron BrowserWindow smoke，真实加载 preload + React bundle，分别验证浅/深主题、React portal、横向溢出和截图，避免“Vite 构建通过但真实窗口失败”的假绿。
+
+详细变化见 [v0.9.2 发布说明](docs/RELEASE_NOTES_0.9.2.md)。
 
 ## v0.9.1 稳定性收口版
 
@@ -172,7 +186,7 @@
 
 本地正式安装包：
 
-`dist/web-mcp-assistant-setup-0.9.1.exe`
+`dist/web-mcp-assistant-setup-0.9.2.exe`
 
 安装后：
 

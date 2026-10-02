@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 type Tone = 'neutral' | 'positive' | 'warning' | 'danger';
 type AssistantUserState = 'idle' | 'planning' | 'local_running' | 'testing' | 'building' | 'waiting_model' | 'waiting_user' | 'recovering' | 'quiet' | 'suspected_stall' | 'stalled' | 'generating' | 'completed' | 'failed' | 'stopped' | 'waiting' | string;
 type CanonicalAssistantState = { userState: AssistantUserState; label: string; tone: Tone; message: string; detail: string; canStop: boolean; heartbeatAgeSeconds: number; taskId: string; runId: string; };
+type CanonicalServiceState = { key: string; tone: Tone; label: string; title: string; message: string; showStartup: boolean; fullyReady: boolean; };
 type RuntimeStatus = { runtimeRunning?: boolean; tunnelRunning?: boolean; connectionRunning?: boolean; };
 type AppSettings = { workspace?: string; theme?: 'light' | 'dark' | string; autoStartServices?: boolean; keepRunningOnClose?: boolean; };
 type Snapshot = { appVersion?: string; status?: RuntimeStatus; settings?: AppSettings; };
@@ -19,12 +20,14 @@ type ManagerState = {
   taskRuntime: TaskRuntime | null;
   memoryStatus: MemoryStatus | null;
   assistantState: CanonicalAssistantState;
+  serviceState: CanonicalServiceState;
 };
 
 declare global { interface Window { __MCP_MANAGER_STATE__?: ManagerState; } }
 
 const emptyAssistantState: CanonicalAssistantState = { userState: 'idle', label: '空闲', tone: 'neutral', message: '', detail: '', canStop: false, heartbeatAgeSeconds: -1, taskId: '', runId: '' };
-const emptyState: ManagerState = { page: 'status', snapshot: null, workspaceHub: null, taskRuntime: null, memoryStatus: null, assistantState: emptyAssistantState };
+const emptyServiceState: CanonicalServiceState = { key: 'stopped', tone: 'neutral', label: '状态待确认', title: '正在读取服务状态', message: '', showStartup: true, fullyReady: false };
+const emptyState: ManagerState = { page: 'status', snapshot: null, workspaceHub: null, taskRuntime: null, memoryStatus: null, assistantState: emptyAssistantState, serviceState: emptyServiceState };
 
 function useManagerState() {
   const [state, setState] = useState<ManagerState>(() => window.__MCP_MANAGER_STATE__ || emptyState);
@@ -41,17 +44,12 @@ function Chip({ label, value, tone = 'neutral' }: { label: string; value: React.
 }
 
 function StatusStrip({ state }: { state: ManagerState }) {
-  const status = state.snapshot?.status || {};
   const task = state.assistantState || emptyAssistantState;
-  const running = Boolean(status.runtimeRunning);
-  const tunnel = Boolean(status.tunnelRunning);
-  const upstream = Boolean(status.connectionRunning);
+  const service = state.serviceState || emptyServiceState;
   return <div className="react-insight-strip">
-    <div><b>统一运行状态</b><span>{task.message || '事件驱动更新 · 轮询仅作兜底'}</span></div>
+    <div><b>{service.title}</b><span>{service.message || '状态由主进程统一判断'}</span></div>
     <div className="react-chip-row">
-      <Chip label="本地工具" value={running ? '运行中' : '已停止'} tone={running ? 'positive' : 'neutral'} />
-      <Chip label="连接通道" value={tunnel ? '已连接' : '未连接'} tone={tunnel ? 'positive' : 'neutral'} />
-      <Chip label="上游" value={upstream ? '正常' : '等待'} tone={upstream ? 'positive' : 'warning'} />
+      <Chip label="服务" value={service.label} tone={service.tone} />
       <Chip label="任务" value={task.label} tone={task.tone} />
     </div>
   </div>;
@@ -72,7 +70,8 @@ function MemoryStrip({ state }: { state: ManagerState }) {
 
 function SettingsStrip({ state }: { state: ManagerState }) {
   const settings = state.snapshot?.settings || {};
-  return <div className="react-insight-strip"><div><b>管理中心</b><span>React + TypeScript + Vite 渐进迁移层</span></div><div className="react-chip-row"><Chip label="主题" value={settings.theme === 'light' ? '浅色' : '深色'} /><Chip label="自动启动" value={settings.autoStartServices ? '开启' : '关闭'} /><Chip label="后台运行" value={settings.keepRunningOnClose === false ? '关闭' : '开启'} /></div></div>;
+  const themeLabel = settings.theme === 'system' ? '跟随系统' : settings.theme === 'light' ? '浅色' : '深色';
+  return <div className="react-insight-strip"><div><b>管理中心</b><span>React + TypeScript + Vite 渐进迁移层</span></div><div className="react-chip-row"><Chip label="主题" value={themeLabel} /><Chip label="自动启动" value={settings.autoStartServices ? '开启' : '关闭'} /><Chip label="后台运行" value={settings.keepRunningOnClose === false ? '关闭' : '开启'} /></div></div>;
 }
 
 function Portal({ selector, children }: { selector: string; children: React.ReactNode }) { const target = document.querySelector(selector); return target ? createPortal(children, target) : null; }

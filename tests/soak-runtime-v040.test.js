@@ -37,7 +37,7 @@ function makeOrchestrator() {
   return orchestrator;
 }
 
-test('upstream-only tunnel outage never restarts a healthy local runtime', async () => {
+test('upstream-only tunnel outage recovers only the tunnel and never restarts a healthy local runtime', async () => {
   const orchestrator = makeOrchestrator();
   let tunnelRestarts = 0;
   let fullRestarts = 0;
@@ -55,7 +55,7 @@ test('upstream-only tunnel outage never restarts a healthy local runtime', async
   });
 
   for (let index = 0; index < 12; index += 1) await orchestrator.supervise();
-  assert.equal(tunnelRestarts, 0);
+  assert.equal(tunnelRestarts, 2);
   assert.equal(fullRestarts, 0);
   assert.equal(orchestrator.heartbeatFailures, 0);
 });

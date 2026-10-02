@@ -5,13 +5,14 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
-test('0.8.0 exposes heartbeat, process and diagnosis without internal IDs in the default chat strip', () => {
+test('0.9.2 exposes recent activity, process and diagnosis without raw heartbeat terminology', () => {
   const html = read('renderer/activity-detail.html');
   const detailJs = read('renderer/activity-detail.js');
   const js = read('renderer/browser.js');
   assert.match(html, /id="facts"/);
   assert.match(html, /id="diagnosis"/);
-  assert.match(detailJs, /'heartbeat'/);
+  assert.match(detailJs, /'lastSeen'/);
+  assert.doesNotMatch(detailJs, /\['后台心跳'|'heartbeat'/);
   assert.match(detailJs, /'process'/);
   assert.match(js, /waiting_model/);
   assert.match(js, /疑似停滞/);

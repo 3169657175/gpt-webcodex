@@ -230,6 +230,9 @@ button:disabled{opacity:.5;cursor:default}
 .status-card h3{margin:0;color:var(--m-subtle);font-size:8px}.status-card strong{display:block;margin:5px 0 3px;font-size:16px}.status-card p{margin:0;color:var(--m-subtle);font-size:8px}
 .memory-mode-panel{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:12px;padding:14px 16px}.memory-mode-panel b{font-size:10px}.memory-mode-panel p{max-width:690px;margin:4px 0 2px;color:var(--m-muted);font-size:9px;line-height:1.5}.memory-mode-panel small{color:var(--m-subtle);font-size:8px}
 .memory-mode-panel select{min-width:150px;height:33px;border:1px solid var(--m-border2);border-radius:7px;background:var(--m-surface);color:var(--m-text);padding:0 9px}
+.memory-view-tabs{display:inline-flex;gap:3px;margin:0 0 10px;padding:3px;border:1px solid var(--m-border);border-radius:9px;background:var(--m-soft)}
+.memory-view-tabs button{min-width:76px;height:29px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:var(--m-muted);font-size:9px;font-weight:700;cursor:pointer}
+.memory-view-tabs button.active{background:var(--m-surface);color:var(--m-text);box-shadow:0 1px 3px rgba(0,0,0,.08)}
 .memory-candidate-panel{margin-bottom:12px}.memory-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 130px auto;gap:7px;margin-bottom:8px}
 .memory-toolbar input,.memory-toolbar select{height:33px;border:1px solid var(--m-border2);border-radius:7px;background:var(--m-surface);color:var(--m-text);padding:0 10px;font-size:9px}
 .history-meta{margin-bottom:8px;color:var(--m-subtle);font-size:8px}.memory-list{display:grid}
@@ -326,7 +329,7 @@ body[data-theme="dark"] .topbar{background:rgba(23,24,25,.78)}.topbar h1{font-si
 .memory-bulk-toolbar button{min-height:29px;padding:0 9px;font-size:8px}.memory-pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--m-border);color:var(--m-muted);font-size:8px}.memory-pagination button{min-height:29px;padding:0 10px;font-size:8px}
 .memory-card-head{align-items:flex-start}.memory-select-item{display:grid;flex:0 0 19px;place-items:start center;padding-top:4px;cursor:pointer}.memory-select-item input{accent-color:var(--m-accent)}
 .memory-card-details{min-width:0;flex:1}.memory-card-summary{display:flex;min-width:0;align-items:flex-start;justify-content:space-between;gap:10px;cursor:pointer;list-style:none}.memory-card-summary::-webkit-details-marker{display:none}.memory-card-summary::before{content:'›';display:inline-block;flex:0 0 12px;color:var(--m-subtle);font-size:14px;line-height:1;transform:translateY(-1px)}.memory-card-details[open] .memory-card-summary::before{content:'⌄'}.memory-card-summary>div{min-width:0;flex:1}.memory-card-summary b,.memory-card-summary small{display:block;overflow-wrap:anywhere}.memory-card-summary b{font-size:10px}.memory-card-summary small{margin-top:3px;color:var(--m-subtle);font-size:8px}
-.memory-card-details>.memory-content{margin-left:0}.memory-card-details>.memory-actions{margin-top:9px}
+.memory-card-details>.memory-content{margin-left:0}.memory-card-details>.memory-actions{margin-top:9px}.memory-card.archived .memory-card-summary b{color:var(--m-muted)}.memory-card.archived .memory-content{opacity:.82}
 @media(max-width:690px){.memory-bulk-toolbar{align-items:flex-start;flex-wrap:wrap}.memory-bulk-toolbar .memory-page-size-label{margin-left:0}.memory-pagination{justify-content:space-between}}
 
 /* 0.7.2 management center: compact desktop hierarchy and truthful service states. */
@@ -503,3 +506,30 @@ body[data-theme="dark"] .topbar{background:var(--m-bg)}
 .react-insight-strip>div:first-child{min-width:0}.react-insight-strip>div:first-child b{display:block;font-size:12px;color:var(--text)}.react-insight-strip>div:first-child span{display:block;margin-top:3px;font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .react-chip-row{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}.react-chip{display:grid;gap:1px;min-width:66px;padding:6px 9px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}.react-chip small{font-size:8px;color:var(--muted);font-style:normal}.react-chip b{font-size:10px;color:var(--text)}.react-chip.positive{border-color:rgba(16,185,129,.22);background:rgba(16,185,129,.06)}.react-chip.warning{border-color:rgba(245,158,11,.25);background:rgba(245,158,11,.07)}.react-chip.danger{border-color:rgba(239,68,68,.22);background:rgba(239,68,68,.06)}
 @media (max-width:900px){.react-insight-strip{align-items:flex-start;flex-direction:column}.react-chip-row{justify-content:flex-start}}
+
+/* 0.9.2 visual system */
+:root{
+  --m-sidebar:#ffffff;
+  --m-accent:#0b8f72;
+  --m-accent-hover:#08765f;
+  --m-accent-soft:#eaf6f2;
+  --color-bg:var(--m-bg);
+  --color-surface:var(--m-surface);
+  --color-surface-muted:var(--m-soft);
+  --color-border:var(--m-border);
+  --color-text:var(--m-text);
+  --color-text-muted:var(--m-muted);
+  --color-primary:var(--m-accent);
+  --color-success:var(--m-green);
+  --color-warning:var(--m-yellow);
+  --color-danger:var(--m-red);
+}
+body[data-theme="dark"]{--m-accent:#4bc495;--m-accent-hover:#66d3aa;--m-accent-soft:rgba(75,196,149,.14)}
+.section-header p,.panel-title p,.hero-state p,.memory-mode-panel p,.diagnostic-summary-main p,.setup-overview p,.setup-step-description,.setting-row small{font-size:12px;line-height:1.55}
+.service-card small,.status-card p,.memory-card-summary small,.history-meta,.task-muted,.sidebar-health-status small,.sidebar-health-workspace span,.sidebar-health-badges em{font-size:11px}
+.service-card span,.status-card h3,.task-main-grid span,.diagnostic-card span,.setup-value-grid span,.setup-status-grid span{font-size:11px}
+.panel-title h3,.setting-row b,.memory-card-summary b,.service-card strong,.diagnostic-card strong{font-size:13px}
+.primary-button,.secondary-button,.danger-button{min-height:36px;padding:0 14px;border-radius:8px;font-size:12px;font-weight:650}
+.panel,.hero-status,.settings-section,.memory-mode-panel,.memory-library-panel,.memory-candidate-panel{box-shadow:none}
+.hero-status{background:var(--m-surface)}
+body[data-theme="light"] .sidebar,body[data-theme="light"] .topbar,body[data-theme="light"] .app-shell{background:#fff}

@@ -117,7 +117,8 @@ test('browser task strip exposes only user-facing status and a real stop action'
   assert.doesNotMatch(browser, /progressForTask|backgroundOperationStatus/);
   assert.match(detail, /id="facts"/);
   assert.match(detail, /id="diagnosis"/);
-  assert.match(detailJs, /'heartbeat'/);
+  assert.match(detailJs, /'lastSeen'/);
+  assert.doesNotMatch(detailJs, /\['后台心跳'|'heartbeat'/);
   assert.match(detailJs, /'process'/);
   assert.match(detailJs, /activityDetail/);
   assert.match(preload, /stopTask: \(\) => ipcRenderer\.invoke\('task-state:stop'\)/);

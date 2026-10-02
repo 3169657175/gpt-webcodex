@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('browserAssistant', {
   stopGeneration: () => ipcRenderer.invoke('chat:stop-generation'),
   openLastDownload: () => ipcRenderer.invoke('chat:open-last-download'),
   chatStatus: () => ipcRenderer.invoke('chat:status'),
+  setToolbarHeight: (height) => ipcRenderer.invoke('chat:toolbar-height', height),
   openLogin: () => ipcRenderer.invoke('chat:login-open'),
   embeddedLogin: () => ipcRenderer.invoke('chat:login-embedded'),
   dismissLogin: () => ipcRenderer.invoke('chat:login-dismiss'),

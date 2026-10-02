@@ -17,6 +17,63 @@ let activityPopoverPinned = false;
 let activityDetailVisible = false;
 let activityOpenTimer = null;
 let activityCloseTimer = null;
+let currentConversationKey = '';
+let currentChatSchemaIdentity = '';
+let dismissedSchemaMismatch = '';
+let lastToolbarHeight = 0;
+
+function syncToolbarDensity(view, forceExpanded = false) {
+  const expandedStates = new Set(['local_running', 'testing', 'building', 'planning', 'recovering', 'quiet', 'suspected_stall', 'stalled', 'failed', 'waiting_user', 'generating']);
+  const expanded = forceExpanded || expandedStates.has(String(view?.userState || view?.key || ''));
+  const height = expanded ? 169 : 154;
+  $('#progressBand')?.classList.toggle('compact', !expanded);
+  document.documentElement.style.setProperty('--toolbar-height', `${height}px`);
+  if (height !== lastToolbarHeight) {
+    lastToolbarHeight = height;
+    void api.setToolbarHeight?.(height);
+  }
+}
+
+function schemaIdentityKey(identity = {}) {
+  const version = String(identity.version || '');
+  const schemaVersion = Number(identity.schemaVersion || identity.schema_version || 0);
+  const schemaHash = String(identity.schemaHash || identity.schema_hash || '');
+  const toolCount = Number(identity.toolCount || identity.tool_count || 0);
+  return schemaVersion && schemaHash ? `${version}|${schemaVersion}|${schemaHash}|${toolCount}` : '';
+}
+
+function chatConversationKey(url) {
+  try {
+    const parsed = new URL(String(url || ''));
+    const match = parsed.pathname.match(/\/c\/([^/]+)/i);
+    return match ? `c:${match[1]}` : 'new';
+  } catch { return 'new'; }
+}
+
+function storedChatSchemaIdentity(key) {
+  try { return String(localStorage.getItem(`mcp-chat-schema:${key}`) || ''); }
+  catch { return ''; }
+}
+
+function rememberChatSchemaIdentity(key, identity) {
+  if (!key || !identity) return;
+  currentChatSchemaIdentity = identity;
+  try { localStorage.setItem(`mcp-chat-schema:${key}`, identity); } catch {}
+}
+
+function refreshSchemaHint() {
+  const hint = $('#schemaRefreshHint');
+  if (!hint) return;
+  const runtimeIdentity = schemaIdentityKey(lastRuntimeState?.schemaIdentity || {});
+  const mismatchKey = currentChatSchemaIdentity && runtimeIdentity && currentChatSchemaIdentity !== runtimeIdentity
+    ? `${currentConversationKey}|${currentChatSchemaIdentity}|${runtimeIdentity}`
+    : '';
+  hint.hidden = !mismatchKey || dismissedSchemaMismatch === mismatchKey;
+  hint.dataset.mismatchKey = mismatchKey;
+  hint.title = mismatchKey
+    ? '当前聊天仍绑定升级前的工具定义。新建聊天后会自动使用最新版工具参数。点击可暂时关闭此提示。'
+    : '';
+}
 
 function withTimeout(promise, timeoutMs, label = '请求') {
   let timer;
@@ -24,6 +81,42 @@ function withTimeout(promise, timeoutMs, label = '请求') {
     Promise.resolve(promise),
     new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label}超时`)), timeoutMs); })
   ]).finally(() => clearTimeout(timer));
+}
+
+function setSwitchState(message = '', tone = 'success', clearAfterMs = 0) {
+  const node = $('#switchState');
+  if (!node) return;
+  node.textContent = message;
+  node.classList.toggle('error', tone === 'error');
+  if (clearAfterMs > 0) setTimeout(() => {
+    if (node.textContent === message) { node.textContent = ''; node.classList.remove('error'); }
+  }, clearAfterMs);
+}
+
+function closeWorkspaceQuickMenu() {
+  const menu = $('#workspaceQuickMenu');
+  if (menu) menu.hidden = true;
+  $('#workspacePickerButton')?.setAttribute('aria-expanded', 'false');
+}
+
+function renderWorkspaceQuickMenu() {
+  const list = $('#workspaceQuickList');
+  if (!list) return;
+  list.replaceChildren();
+  const items = Array.isArray(workspaceHubState?.workspaces) ? workspaceHubState.workspaces.slice(0, 8) : [];
+  if (!items.length) {
+    const empty = document.createElement('div'); empty.className = 'workspace-quick-empty'; empty.textContent = '暂无最近工作区'; list.appendChild(empty); return;
+  }
+  for (const item of items) {
+    const workspace = String(item?.path || item?.workspace || '');
+    if (!workspace) continue;
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'workspace-quick-item';
+    const copy = document.createElement('span'); const title = document.createElement('b'); title.textContent = item?.name || baseName(workspace); const path = document.createElement('small'); path.textContent = workspace; copy.append(title, path);
+    const marker = document.createElement('em'); marker.textContent = workspace === activeWorkspace ? '当前' : '切换';
+    button.append(copy, marker); button.disabled = workspace === activeWorkspace;
+    button.onclick = async (event) => { event.stopPropagation(); closeWorkspaceQuickMenu(); await switchWorkspace(workspace); };
+    list.appendChild(button);
+  }
 }
 
 function unwrap(result) {
@@ -37,7 +130,7 @@ function baseName(value) {
 
 function taskPresentation(task, runningOperation, streamState, available = true, activity = null, runtimeLayers = null) {
   const view = window.assistantState.describe(task, runningOperation, streamState, Date.now(), available, activity, !available, runtimeLayers);
-  return { key: view.key, label: window.assistantState.labelFor(view), detail: view.message, canStop: Boolean(view.canStop) };
+  return { key: view.key, tone: window.assistantState.toneFor(view), label: window.assistantState.labelFor(view), detail: view.message, canStop: Boolean(view.canStop) };
 }
 
 function formatActivityTime(value) {
@@ -187,7 +280,6 @@ function buildActivityDetailPayload() {
     stage,
     elapsed: commandRunning || operationRunning ? (view.elapsed || formatActivityDuration(command?.elapsed_ms)) : '',
     lastSeen: lastActivityAt ? formatActivityTime(lastActivityAt) : '',
-    heartbeat: showHeartbeat && view.heartbeatAge != null ? `${formatActivityAge(view.heartbeatAge)} · ${view.heartbeatAge >= 90 ? '异常' : view.heartbeatAge >= 45 ? '较慢' : '正常'}` : '',
     process: runtimeLayers?.process?.state === 'running' ? '本地进程运行中' : runtimeLayers?.process?.state === 'background' ? '后台任务运行中' : '',
     waitReason,
     nextStep: task?.next_step || (view.userState === 'waiting_model' ? '等待 ChatGPT 继续' : '—'),
@@ -226,6 +318,23 @@ function renderActivityPanel() {
 
 function renderChatState(state) {
   if (!state) return;
+  const nextConversationKey = chatConversationKey(state.url);
+  if (nextConversationKey !== currentConversationKey) {
+    const previousIdentity = currentChatSchemaIdentity;
+    const previousKey = currentConversationKey;
+    currentConversationKey = nextConversationKey;
+    currentChatSchemaIdentity = storedChatSchemaIdentity(nextConversationKey);
+    if (!currentChatSchemaIdentity && previousKey === 'new' && nextConversationKey.startsWith('c:') && previousIdentity) {
+      rememberChatSchemaIdentity(nextConversationKey, previousIdentity);
+    }
+    dismissedSchemaMismatch = '';
+  }
+  const attachmentReady = ['attached', 'available'].includes(String(state.mcpAttachment?.status || ''));
+  const runtimeIdentity = schemaIdentityKey(lastRuntimeState?.schemaIdentity || {});
+  if (attachmentReady && !currentChatSchemaIdentity && runtimeIdentity) {
+    rememberChatSchemaIdentity(currentConversationKey || nextConversationKey, runtimeIdentity);
+  }
+  refreshSchemaHint();
   lastStreamState = state.streamState || lastStreamState;
   nativeLoginState = state.nativeLogin || nativeLoginState;
   loginState = state.login || loginState;
@@ -253,6 +362,7 @@ function renderProgress() {
   $('#nativeLoginCancel').hidden = !activeLogin;
   $('#nativeLoginCancel').disabled = login.status === 'closing';
   if (activeLogin || ['error', 'success'].includes(login.status)) {
+    syncToolbarDensity(null, true);
     $('#progressBand').className = `progress-band ${login.status === 'error' ? 'failed' : login.status === 'success' ? 'active' : 'waiting'}`;
     $('#progressMessage').textContent = login.status === 'success' ? 'ChatGPT 登录修复完成' : login.status === 'error' ? '登录修复未完成' : '浏览器登录修复';
     $('#progressDetail').textContent = login.cleanupWarning || login.message;
@@ -262,6 +372,7 @@ function renderProgress() {
     return;
   }
   if (loginState.mode === 'embedded' && !loginState.prompt) {
+    syncToolbarDensity(null, true);
     $('#progressBand').className = 'progress-band waiting';
     $('#progressMessage').textContent = loginState.returning ? '登录已确认，正在自动返回' : '正在应用内登录 ChatGPT';
     $('#progressDetail').textContent = loginState.message;
@@ -280,7 +391,8 @@ function renderProgress() {
     progressInput.runtimeLayers
   );
   const band = $('#progressBand');
-  band.className = `progress-band ${view.key}`;
+  band.className = `progress-band ${view.key} tone-${window.assistantState.toneFor(view)}`;
+  syncToolbarDensity(view);
   $('#progressMessage').textContent = view.message;
   $('#progressDetail').textContent = view.detail;
   $('#progressElapsed').textContent = view.elapsed ? `已运行 ${view.elapsed}` : '';
@@ -297,11 +409,7 @@ function renderServiceState(state) {
   lastRuntimeState = state || null;
   lastRuntimeCheckAt = Date.now();
   const connectionRunning = state?.tunnelRunning;
-  const schemaHint = $('#schemaRefreshHint');
-  if (schemaHint) {
-    schemaHint.hidden = !state?.chatSchemaRefreshRecommended;
-    schemaHint.title = state?.schemaRefreshNotice?.message || '如果当前聊天在工具升级前已经打开，请新建聊天刷新 MCP 工具参数。';
-  }
+  refreshSchemaHint();
   const label = $('#connectionStateLabel');
   if (label) label.textContent = '连接通道';
   [['#mcpState', state?.mcpRunning], ['#tunnelState', connectionRunning]].forEach(([selector, value]) => {
@@ -369,7 +477,7 @@ async function refreshTask() {
     taskRefreshWarning = stateAvailable ? '' : '暂时无法确认本地任务状态，已保留最后一次结果并自动重试';
     renderProgress();
     const view = taskPresentation(progressInput.task, progressInput.operation, lastStreamState, progressInput.available, progressInput.activity, progressInput.runtimeLayers);
-    strip.className = `task-strip ${view.key}`;
+    strip.className = `task-strip ${view.key} tone-${view.tone}`;
     $('#taskStatusLabel').textContent = view.label;
     $('#taskTitle').textContent = view.detail;
     $('#stopTask').hidden = !view.canStop;
@@ -378,7 +486,7 @@ async function refreshTask() {
     progressInput = { ...progressInput, available: false, stale: true };
     renderProgress();
     const view = taskPresentation(progressInput.task, progressInput.operation, lastStreamState, false, progressInput.activity);
-    strip.className = `task-strip ${view.key}`;
+    strip.className = `task-strip ${view.key} tone-${view.tone}`;
     $('#taskStatusLabel').textContent = view.label;
     $('#taskTitle').textContent = view.detail;
     $('#stopTask').hidden = true;
@@ -416,6 +524,7 @@ function renderWorkspace(hub) {
     ? hub.workspaces
     : (hub.recentWorkspaces || []).filter(Boolean).map((workspace) => ({ path: workspace, name: baseName(workspace), active: workspace === activeWorkspace, status: 'ready' }));
   $('#workspacePickerButton').textContent = `全部工作区（${workspaces.length}）${Number(hub.invalidCount || 0) ? ` · ⚠ ${hub.invalidCount}` : ''}`;
+  renderWorkspaceQuickMenu();
 }
 
 async function refreshWorkspace() {
@@ -426,14 +535,13 @@ async function refreshWorkspace() {
 async function switchWorkspace(workspace, showProgress = true) {
   if (switching || !workspace || workspace === activeWorkspace) return;
   switching = true;
-  if (showProgress) $('#switchState').textContent = 'MCP 正在后台切换工作区…';
+  if (showProgress) setSwitchState('正在切换工作区…');
   try {
     unwrap(await api.switchWorkspace(workspace));
-    $('#switchState').textContent = '工作区已就绪';
+    setSwitchState('工作区已就绪', 'success', 1600);
     await Promise.all([refreshWorkspace(), refreshStatus(), refreshTask()]);
-    setTimeout(() => { $('#switchState').textContent = ''; }, 1800);
   } catch (error) {
-    $('#switchState').textContent = error.message;
+    setSwitchState(`切换失败：${error.message}`, 'error');
   } finally {
     switching = false;
   }
@@ -531,15 +639,17 @@ $('#workspaceHealthButton').onclick = (event) => {
 };
 document.addEventListener('click', (event) => {
   const label = $('#workspaceLabel');
-  if (label?.contains(event.target)) return;
-  const popover = $('#workspaceHealthPopover');
-  if (popover && !popover.hidden) {
-    popover.hidden = true;
-    $('#workspaceHealthButton').setAttribute('aria-expanded', 'false');
+  if (!label?.contains(event.target)) {
+    const popover = $('#workspaceHealthPopover');
+    if (popover && !popover.hidden) {
+      popover.hidden = true;
+      $('#workspaceHealthButton').setAttribute('aria-expanded', 'false');
+    }
   }
   const progressDetailTrigger = $('#progressDetailTrigger');
   const activityToggle = $('#activityToggle');
   if (activityPopoverPinned && !progressDetailTrigger?.contains(event.target) && !activityToggle?.contains(event.target)) closeActivityPanel({ force: true });
+  if (!$('#workspacePicker')?.contains(event.target)) closeWorkspaceQuickMenu();
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && activityDetailVisible) closeActivityPanel({ force: true });
@@ -554,7 +664,19 @@ api.onActivityDetailState?.((state) => {
 $('#managerButton').onclick = () => api.openManager();
 $('#workspacePickerButton').onclick = (event) => {
   event.stopPropagation();
-  api.openWorkspaceWindow?.().catch((error) => { $('#switchState').textContent = error.message; });
+  const menu = $('#workspaceQuickMenu');
+  if (!menu) return;
+  if (!menu.hidden) closeWorkspaceQuickMenu();
+  else {
+    renderWorkspaceQuickMenu();
+    menu.hidden = false;
+    $('#workspacePickerButton').setAttribute('aria-expanded', 'true');
+  }
+};
+$('#workspaceQuickCenter').onclick = (event) => {
+  event.stopPropagation();
+  closeWorkspaceQuickMenu();
+  api.openWorkspaceWindow?.().catch((error) => setSwitchState(`打开失败：${error.message}`, 'error'));
 };
 $('#stopTask').onclick = async () => {
   if (!window.confirm('停止当前正在执行的本地任务？')) return;
@@ -609,6 +731,10 @@ api.onDownload((item) => {
 });
 $('#openDownloadButton').onclick = () => api.openLastDownload?.().catch((error) => { $('#downloadState').textContent = error.message; });
 api.chatStatus().then((result) => renderChatState(unwrap(result))).catch(() => {});
+$('#schemaRefreshHint').onclick = (event) => {
+  dismissedSchemaMismatch = String(event.currentTarget?.dataset?.mismatchKey || '');
+  refreshSchemaHint();
+};
 refreshStatus();
 refreshWorkspace();
 refreshTask();

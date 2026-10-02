@@ -53,7 +53,7 @@
       ? Math.max(0, Number(operation.heartbeat_age_seconds))
       : Number.isFinite(runtimeHeartbeatAge) ? Math.max(0, runtimeHeartbeatAge) : null;
     const age = heartbeatAge != null
-      ? heartbeatAge >= LOCAL_HEARTBEAT_WARN_SECONDS ? `后台任务心跳已 ${duration(Math.floor(heartbeatAge))}未更新` : `后台任务心跳正常（${Math.floor(heartbeatAge)} 秒前）`
+      ? heartbeatAge >= LOCAL_HEARTBEAT_WARN_SECONDS ? `最近活动已 ${duration(Math.floor(heartbeatAge))}未更新` : ''
       : lastUpdate != null && lastUpdate >= LOCAL_OUTPUT_QUIET_SECONDS ? `最近本地状态更新于 ${duration(lastUpdate)}前` : '';
     if (status === 'failed' || lifecycle === 'failed') {
       return { key: 'failed', message: `本地任务失败：${failure || current || '请查看任务详情'}`, detail: objective, elapsed: '' };
@@ -77,18 +77,18 @@
       const pageWarning = ['interrupted', 'render_error', 'asset_error'].includes(stream) ? 'ChatGPT 页面连接异常，本地执行仍在继续' : '';
       const outputAge = secondsSince(command?.last_output_at, now);
       const quiet = runningCommand && outputAge != null && outputAge >= LOCAL_OUTPUT_QUIET_SECONDS && (heartbeatAge == null || heartbeatAge < LOCAL_HEARTBEAT_WARN_SECONDS);
-      const details = [stage, runningCommand && current ? kind : '', output ? `最新输出：${output}` : '', next && next !== current ? `下一步：${next}` : '', pageWarning, age, quiet ? `最近输出 ${duration(outputAge)}前 · 进程与心跳正常` : ''].filter(Boolean);
+      const details = [stage, runningCommand && current ? kind : '', output ? `最新输出：${output}` : '', next && next !== current ? `下一步：${next}` : '', pageWarning, age, quiet ? `最近输出 ${duration(outputAge)}前 · 本地进程仍在运行` : ''].filter(Boolean);
       if (!available) {
         return { key: 'waiting', userState: 'waiting', message: `本地任务状态暂不可确认：${message}`, detail: [stale ? '显示最后一次成功读取的状态' : '', ...details].filter(Boolean).join(' · '), elapsed: duration(elapsed), canStop: false };
       }
       if (heartbeatAge != null && heartbeatAge >= LOCAL_HEARTBEAT_STALL_SECONDS) {
-        return { key: 'stalled', userState: 'stalled', message: `${message}，后台心跳长时间未更新`, detail: details.join(' · '), elapsed: duration(elapsed), canStop: true, diagnostic: '后台心跳超过 90 秒未更新，任务疑似卡住。' };
+        return { key: 'stalled', userState: 'stalled', message: `${message}，较长时间没有活动`, detail: details.join(' · '), elapsed: duration(elapsed), canStop: true, diagnostic: '超过 90 秒没有新的本地活动，任务疑似卡住。' };
       }
       if (heartbeatAge != null && heartbeatAge >= LOCAL_HEARTBEAT_WARN_SECONDS) {
-        return { key: 'warning', userState: 'suspected_stall', message: `${message}，较长时间没有活动`, detail: details.join(' · '), elapsed: duration(elapsed), canStop: true, diagnostic: '后台心跳超过 45 秒未更新，正在观察；尚未达到确认卡死阈值。' };
+        return { key: 'warning', userState: 'suspected_stall', message: `${message}，较长时间没有活动`, detail: details.join(' · '), elapsed: duration(elapsed), canStop: true, diagnostic: '超过 45 秒没有新的本地活动，正在观察；尚未达到确认卡死阈值。' };
       }
       if (quiet) {
-        return { key: 'active', userState: 'quiet', message: `${message}，暂时没有新输出`, detail: details.join(' · '), elapsed: duration(elapsed), canStop: true, diagnostic: '没有新 stdout 不代表卡死；进程和心跳仍然正常。' };
+        return { key: 'active', userState: 'quiet', message: `${message}，暂时没有新输出`, detail: details.join(' · '), elapsed: duration(elapsed), canStop: true, diagnostic: '没有新输出不代表卡死；本地进程仍在运行。' };
       }
       return { key: 'active', userState: command?.kind === 'test' ? 'testing' : command?.kind === 'build' ? 'building' : lifecycle === 'planning' ? 'planning' : lifecycle === 'recovering' ? 'recovering' : 'local_running', message, detail: details.join(' · ') || objective || '本地任务正在运行', elapsed: duration(elapsed), canStop: true, diagnostic: '本地任务状态健康。' };
     }

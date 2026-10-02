@@ -66,7 +66,7 @@ function runtimeIdentityMatches(identity, launch) {
 
 function recoveryLayerFor(status = {}) {
   if (!status.mcpRunning) return 'runtime';
-  if (!status.tunnelRunning) return 'tunnel';
+  if (!status.tunnelRunning || status.connectionRunning === false) return 'tunnel';
   return '';
 }
 
@@ -119,6 +119,11 @@ function recordSchemaDiscovery(identity) {
     return { ...state, lastDiscoveredSchema: current, schemaRefreshNotice: notice || null };
   });
   return activeNotice;
+}
+
+function currentSchemaIdentity() {
+  const state = readJson(stateFile(), {});
+  return compactSchemaIdentity(state.lastDiscoveredSchema || {});
 }
 
 
@@ -613,7 +618,7 @@ class RuntimeOrchestrator {
   async lightweightSnapshot() {
     const settings = this.settingsStore.load();
     const token = this.secrets.get('mcpAuthToken');
-    const schemaRefreshNotice = activeSchemaRefreshNotice();
+    const schemaIdentity = currentSchemaIdentity();
     const [mcpRunning, tunnelState] = await Promise.all([
       token ? probeMcp(settings.mcpPort, token, settings.workspace) : Promise.resolve(false),
       this.tunnel.connectionStatus(settings).catch(() => ({ localReady: false, upstreamReachable: false }))
@@ -636,8 +641,7 @@ class RuntimeOrchestrator {
       failureLayer,
       recoveryBlocked: this.autoRecoveryBlocked,
       lastStartFailure: this.lastStartFailure,
-      chatSchemaRefreshRecommended: Boolean(schemaRefreshNotice),
-      schemaRefreshNotice
+      schemaIdentity
     };
   }
 
@@ -708,7 +712,7 @@ class RuntimeOrchestrator {
   async _collectSnapshot(reason) {
     const settings = this.settingsStore.load();
     const environment = await this.environment.inspect(settings);
-    const schemaRefreshNotice = activeSchemaRefreshNotice();
+    const schemaIdentity = currentSchemaIdentity();
     const token = this.secrets.get('mcpAuthToken');
     const runtimeRunning = token
       ? await probeMcp(settings.mcpPort, token, settings.workspace)
@@ -741,15 +745,14 @@ class RuntimeOrchestrator {
         localMcpUrl: `http://127.0.0.1:${settings.mcpPort}/mcp`,
         tunnelUiUrl: `http://127.0.0.1:${settings.healthPort}/ui`,
         manuallyStopped: this.isManuallyStopped(),
-        chatSchemaRefreshRecommended: Boolean(schemaRefreshNotice),
-        schemaRefreshNotice
+        schemaIdentity
       }
     }, reason);
   }
 }
 
 module.exports = { RuntimeOrchestrator, probeMcp, probeMcpIdentity, runtimeIdentityMatches, recoveryLayerFor,
-  compactSchemaIdentity, schemaIdentityChanged, activeSchemaRefreshNotice, recordSchemaDiscovery,
+  compactSchemaIdentity, schemaIdentityChanged, activeSchemaRefreshNotice, recordSchemaDiscovery, currentSchemaIdentity,
   waitForPortRelease, switchMcpWorkspace, waitForMcpWorkspace, switchMcpWorkspaceConfirmed,
   setMcpAuthorizedRoots };
 

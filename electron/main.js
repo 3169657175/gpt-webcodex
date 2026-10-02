@@ -197,7 +197,7 @@ function createChatWindow() {
     window: chatWindow,
     log,
     settings,
-    toolbarHeight: 164,
+    toolbarHeight: 154,
     nativeLoginRoot: path.join(dataRoot(), 'native-login'),
     onState: (payload) => {
       if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('chat:state', payload);
@@ -287,7 +287,7 @@ function openWorkspaceWindow() {
     }
   });
   workspaceWindow.removeMenu();
-  const initialTheme = settings.load().theme === 'light' ? 'light' : 'dark';
+  const initialTheme = ['light', 'dark', 'system'].includes(settings.load().theme) ? settings.load().theme : 'light';
   workspaceWindow.loadFile(path.join(__dirname, '..', 'renderer', 'workspace.html'), { query: { theme: initialTheme } });
   workspaceWindow.once('ready-to-show', () => workspaceWindow.show());
   workspaceWindow.on('close', (event) => {
@@ -503,7 +503,7 @@ function openManagerWindow() {
     }
   });
   managerWindow.removeMenu();
-  const initialTheme = settings.load().theme === 'light' ? 'light' : 'dark';
+  const initialTheme = ['light', 'dark', 'system'].includes(settings.load().theme) ? settings.load().theme : 'light';
   managerWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { query: { theme: initialTheme } });
   managerWindow.once('ready-to-show', () => managerWindow.show());
   managerWindow.on('close', (event) => {
@@ -846,6 +846,7 @@ function registerIpc() {
     return candidate;
   }));
   secureHandle('chat:status', () => invokeSafely(async () => chatController?.getState() || null));
+  secureHandle('chat:toolbar-height', (_event, height) => invokeSafely(async () => chatController?.setToolbarHeight(height)));
   secureHandle('chat:login-open', () => invokeSafely(async () => {
     if (!chatController) throw new Error('聊天窗口尚未初始化。');
     chatController.offerLogin('entry', chatController.activeContents(), true);

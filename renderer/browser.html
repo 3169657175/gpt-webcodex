@@ -22,7 +22,7 @@
         <button id="openDownloadButton" class="download-action" type="button" hidden>打开附件</button>
         <span id="mcpState" title="Coding Tools MCP 本地服务状态"><i></i>本地工具</span>
         <span id="tunnelState" title="OpenAI Tunnel 连接状态"><i></i><em id="connectionStateLabel">连接通道</em></span>
-        <span id="schemaRefreshHint" hidden>工具已升级 · 建议新聊天</span>
+        <button id="schemaRefreshHint" class="schema-refresh-hint" type="button" hidden title="当前聊天仍使用旧版工具定义；点击可暂时关闭此提示">工具已更新 · 建议新建聊天 ×</button>
         <button id="nativeLoginButton" class="login-action login-entry" type="button" title="打开登录中心：优先在应用内登录，成功后自动返回">登录 / 登录帮助</button>
         <button id="managerButton" class="manager-button">设置</button>
       </div>
@@ -43,7 +43,12 @@
         <button id="stopTask" type="button" hidden>停止</button>
       </div>
       <div class="workspace-picker" id="workspacePicker">
-        <button id="workspacePickerButton" class="workspace-select" type="button" aria-expanded="false" title="打开独立工作区中心">全部工作区</button>
+        <button id="workspacePickerButton" class="workspace-select" type="button" aria-expanded="false" title="快速切换工作区">全部工作区</button>
+        <div class="workspace-quick-menu" id="workspaceQuickMenu" hidden>
+          <div class="workspace-quick-head"><b>快速切换</b><span>最近使用的工作区</span></div>
+          <div class="workspace-quick-list" id="workspaceQuickList"></div>
+          <button class="workspace-quick-center" id="workspaceQuickCenter" type="button">打开工作区中心…</button>
+        </div>
       </div>
       <div id="switchState" class="switch-state"></div>
       <button id="addAuthorizedRootQuick" class="add-workspace secondary-action" title="授权一个额外目录，无需切换主工作区">＋ 授权目录</button>

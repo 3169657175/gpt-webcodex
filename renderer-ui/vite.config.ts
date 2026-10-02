@@ -5,6 +5,9 @@ import { resolve } from 'node:path';
 const root = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production')
+  },
   build: {
     outDir: resolve(root, '../renderer/react-dist'),
     emptyOutDir: true,

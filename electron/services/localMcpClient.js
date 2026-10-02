@@ -37,6 +37,10 @@ function parseSseEventBlock(block) {
   };
 }
 
+function isSessionTerminationMessage(value) {
+  return /(session\s+(?:terminated|expired|not\s+found|invalid)|invalid\s+mcp\s+session)/i.test(String(value || ''));
+}
+
 class LocalMcpClient {
   constructor({ port, token, log = null }) {
     this.port = Number(port);
@@ -106,11 +110,22 @@ class LocalMcpClient {
           catch (error) { reject(error); return; }
           if ((response.statusCode || 500) >= 400) {
             const message = parsed?.error?.message || `本地 MCP 请求失败（HTTP ${response.statusCode}）`;
-            reject(new Error(message));
+            const error = new Error(message);
+            if (isSessionTerminationMessage(message)) {
+              this.resetDiscoveryState();
+              error.code = 'MCP_SESSION_TERMINATED';
+            }
+            reject(error);
             return;
           }
           if (parsed?.error) {
-            reject(new Error(parsed.error.message || '本地 MCP 工具调用失败。'));
+            const message = parsed.error.message || '本地 MCP 工具调用失败。';
+            const error = new Error(message);
+            if (isSessionTerminationMessage(message)) {
+              this.resetDiscoveryState();
+              error.code = 'MCP_SESSION_TERMINATED';
+            }
+            reject(error);
             return;
           }
           resolve(parsed?.result ?? parsed ?? null);
@@ -371,4 +386,4 @@ class LocalMcpClient {
   }
 }
 
-module.exports = { LocalMcpClient, parseRpcPayload, parseSseEventBlock };
+module.exports = { LocalMcpClient, parseRpcPayload, parseSseEventBlock, isSessionTerminationMessage };

@@ -25,6 +25,20 @@ function readLocalJson(port, requestPath, timeoutMs = 900) {
   });
 }
 
+function tunnelAdminState(status, expectedTunnelId = '') {
+  const main = Array.isArray(status?.channels)
+    ? status.channels.find((item) => item?.name === 'main')
+    : null;
+  const reportedTunnelId = String(status?.control_plane_tunnel_id || status?.tunnel_metadata?.ID || '');
+  const expected = String(expectedTunnelId || '');
+  return {
+    adminReady: Boolean(status),
+    mainChannelReady: String(main?.probe_status || '') === 'ok',
+    controlPlaneReady: Boolean(status) && (!expected || !reportedTunnelId || reportedTunnelId === expected),
+    reportedTunnelId
+  };
+}
+
 class TunnelService {
   constructor(log) {
     this.log = log;
@@ -134,9 +148,19 @@ class TunnelService {
   async connectionStatus(settings, options = {}) {
     const state = readJson(stateFile(), {});
     const localReady = isAlive(state.tunnelPid) && await canConnect('127.0.0.1', settings.healthPort, 400);
-    if (!localReady) return { localReady: false, upstreamReachable: false };
-    const upstreamReachable = await this.routeHealthy(state, options).catch(() => false);
-    return { localReady: true, upstreamReachable };
+    if (!localReady) {
+      return { localReady: false, upstreamReachable: false, adminReady: false, mainChannelReady: false, controlPlaneReady: false };
+    }
+    const [routeReachable, adminStatus] = await Promise.all([
+      this.routeHealthy(state, options).catch(() => false),
+      readLocalJson(settings.healthPort, '/api/status').catch(() => null)
+    ]);
+    const admin = tunnelAdminState(adminStatus, settings.tunnelId);
+    return {
+      localReady: true,
+      upstreamReachable: Boolean(routeReachable && admin.adminReady && admin.mainChannelReady && admin.controlPlaneReady),
+      ...admin
+    };
   }
 
   async inspect(settings) {
@@ -169,4 +193,4 @@ class TunnelService {
   }
 }
 
-module.exports = { TunnelService };
+module.exports = { TunnelService, tunnelAdminState };

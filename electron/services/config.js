@@ -102,7 +102,7 @@ function normalize(input = {}) {
   merged.workspace = normalizeWorkspacePath(merged.workspace);
   merged.tunnelId = String(merged.tunnelId || '').trim();
   if (sourceVersion < 5 && merged.theme === 'dark') merged.theme = 'light';
-  merged.theme = merged.theme === 'dark' ? 'dark' : 'light';
+  merged.theme = ['light', 'dark', 'system'].includes(merged.theme) ? merged.theme : 'light';
 
   // These are product defaults now, not user-facing knobs.
   merged.progressReportSeconds = 30;
