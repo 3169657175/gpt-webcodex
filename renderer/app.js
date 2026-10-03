@@ -254,6 +254,7 @@ function populateForms(snapshot, force = false) {
   $('#taskNotificationsToggle').checked = settings.taskNotifications !== false;
   $('#taskNotificationSoundToggle').checked = settings.taskNotificationSound !== false;
   $('#tunnelIdInput').value = settings.tunnelId || '';
+  $('#publicMcpBaseUrlInput').value = settings.publicMcpBaseUrl || '';
   if ($('#setupTunnelIdInput')) {
     $('#setupTunnelIdInput').value = '';
     $('#setupTunnelIdInput').placeholder = settings.tunnelId
@@ -392,6 +393,15 @@ function renderSnapshot(snapshot, forceForms = false) {
   state.snapshot = snapshot;
   publishManagerState();
   populateForms(snapshot, forceForms);
+
+  const publicMcp = snapshot.publicMcpGateway || {};
+  if ($('#publicMcpUrlOutput')) $('#publicMcpUrlOutput').value = publicMcp.url || '';
+  if ($('#publicMcpGatewayState')) {
+    $('#publicMcpGatewayState').textContent = publicMcp.running
+      ? (publicMcp.url ? 'Gateway 已就绪，可直接复制到 ChatGPT 的“服务器 URL”' : 'Gateway 已就绪；填写公网基础地址后生成完整 URL')
+      : 'Gateway 当前未运行';
+  }
+  if ($('#copyPublicMcpUrl')) $('#copyPublicMcpUrl').disabled = !publicMcp.url;
 
   const appVersion = String(snapshot.appVersion || '').trim();
   const brandVersion = $('#brandVersion');
@@ -900,6 +910,7 @@ async function saveCommonSettings() {
 async function saveConnectionSettings() {
   unwrap(await api.saveSettings({
     tunnelId: $('#tunnelIdInput').value.trim(),
+    publicMcpBaseUrl: $('#publicMcpBaseUrlInput').value.trim(),
     proxyMode: $('#proxyModeSelect').value,
     proxyUrl: $('#proxyUrlInput').value.trim(),
     mcpPort: Number($('#mcpPortInput').value || 18765),
@@ -1399,6 +1410,16 @@ function bindEvents() {
   $('#proxyModeSelect').onchange = () => { $('#manualProxyField').hidden = $('#proxyModeSelect').value !== 'manual'; };
   $('#proxyDetect').onclick = detectProxy;
   $('#saveConnectionSettings').onclick = () => saveConnectionSettings().catch((error) => toast('连接配置保存失败', error.message, 'error'));
+  $('#copyPublicMcpUrl').onclick = async () => {
+    const value = $('#publicMcpUrlOutput').value.trim();
+    if (!value) return toast('暂时没有可复制的服务器 URL', '请先保存公网 MCP 基础地址。', 'error');
+    try {
+      await navigator.clipboard.writeText(value);
+      toast('服务器 URL 已复制', value);
+    } catch {
+      toast('复制失败', '请手动复制服务器 URL。', 'error');
+    }
+  };
   $('#saveRuntimeKey').onclick = async () => {
     const value = $('#runtimeKeyInput').value.trim();
     if (!value) return toast('请先粘贴 Runtime API Key', '', 'error');

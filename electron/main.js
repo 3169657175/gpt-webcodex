@@ -20,6 +20,7 @@ const { ApprovalService } = require('./services/approvalService');
 const { DoctorService } = require('./services/doctorService');
 const { AutoMemoryService } = require('./services/autoMemoryService');
 const { WorkspaceManager } = require('./services/workspaceManager');
+const { PublicMcpGateway } = require('./services/publicMcpGateway');
 const { notificationStateFile, dataRoot } = require('./paths');
 
 let chatWindow;
@@ -40,6 +41,7 @@ let healthService;
 let doctorService;
 let taskNotificationService;
 let autoMemoryService;
+let publicMcpGateway;
 let sharedLocalMcpClient = null;
 let lastDownloadPath = '';
 const settings = new SettingsStore();
@@ -594,7 +596,12 @@ async function controlLocalMemory(payload = {}) {
 function registerIpc() {
   secureHandle('app:snapshot', (_event, options) => invokeSafely(async () => {
     const snapshot = await orchestrator.snapshot(options || {});
-    return { ...snapshot, appVersion: app.getVersion(), chat: chatController?.getState() || null };
+    return {
+      ...snapshot,
+      appVersion: app.getVersion(),
+      chat: chatController?.getState() || null,
+      publicMcpGateway: publicMcpGateway?.connectionInfo(snapshot.settings?.publicMcpBaseUrl || '') || null
+    };
   }));
   secureHandle('app:lightweight-snapshot', () => invokeSafely(() => orchestrator.lightweightSnapshot()));
   secureHandle('workspace:hub', () => invokeSafely(() => workspaceManager.hub()));
@@ -879,7 +886,7 @@ function registerIpc() {
     return result.canceled ? '' : result.filePaths[0];
   }));
   secureHandle('settings:save', (_event, patch) => invokeSafely(async () => {
-    const allowed = ['mcpPort', 'healthPort', 'proxyMode', 'proxyUrl', 'tunnelId', 'tunnelProfile', 'startWithWindows', 'autoStartServices', 'keepRunningOnClose', 'taskNotifications', 'taskNotificationSound', 'theme'];
+    const allowed = ['mcpPort', 'healthPort', 'proxyMode', 'proxyUrl', 'tunnelId', 'tunnelProfile', 'publicMcpBaseUrl', 'startWithWindows', 'autoStartServices', 'keepRunningOnClose', 'taskNotifications', 'taskNotificationSound', 'theme'];
     const clean = Object.fromEntries(Object.entries(patch || {}).filter(([key]) => allowed.includes(key)));
     const previous = settings.load();
     const proxyChanged = (Object.hasOwn(clean, 'proxyMode') && String(clean.proxyMode || '') !== String(previous.proxyMode || 'auto'))
@@ -961,6 +968,11 @@ app.whenReady().then(async () => {
     emitProgress: (payload) => sendManager('runtime:progress', payload),
     emitStatus: (payload) => sendManager('runtime:status-changed', payload)
   });
+  await orchestrator.ensureToken();
+  publicMcpGateway = new PublicMcpGateway({ settings, secrets, log });
+  publicMcpGateway.start().catch((error) => {
+    log.warn('Public MCP Gateway 启动失败；不影响本地 Runtime 与 Tunnel', { error: error.message });
+  });
   buildVerification = new BuildVerificationService(log, (payload) => sendManager('build:progress', payload));
   healthService = new HealthService({ settings, secrets, environment, orchestrator });
   doctorService = new DoctorService({
@@ -1020,6 +1032,7 @@ let loginQuitPending = false;
 app.on('before-quit', (event) => {
   forceQuit = true;
   taskNotificationService?.stop();
+  publicMcpGateway?.stop().catch(() => {});
   if (chatController?.nativeLogin?.run) {
     event.preventDefault();
     if (loginQuitPending) return;
