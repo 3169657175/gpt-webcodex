@@ -439,7 +439,14 @@ class ChatViewController {
   }
 
   activeContents() {
-    return !this.login.returning && this.authViews.at(-1)?.webContents || this.view?.webContents;
+    const authViews = this.liveAuthViews();
+    return !this.login.returning && authViews.at(-1)?.webContents || this.view?.webContents;
+  }
+
+  liveAuthViews() {
+    const live = this.authViews.filter((view) => view?.webContents && !view.webContents.isDestroyed());
+    if (live.length !== this.authViews.length) this.authViews = live;
+    return live;
   }
 
   setLogin(patch) {
@@ -449,9 +456,13 @@ class ChatViewController {
   }
 
   syncLoginVisibility() {
-    const covered = this.login.prompt || this.authViews.length > 0 && !this.login.returning;
-    if (this.view && !this.view.webContents.isDestroyed()) this.view.setVisible(!covered);
-    for (const view of this.authViews) if (!view.webContents.isDestroyed()) view.setVisible(!this.login.prompt && !this.login.returning && view === this.authViews.at(-1));
+    const authViews = this.liveAuthViews();
+    // Embedded auth views are native child views layered above the primary ChatGPT view.
+    // Keep ChatGPT visible underneath them so a transient/blank/destroyed OAuth child can
+    // never expose the shell's startup placeholder. Only the shell DOM login prompt needs
+    // the primary native view hidden so that the dialog can render above it.
+    if (this.view && !this.view.webContents.isDestroyed()) this.view.setVisible(!this.login.prompt);
+    for (const view of authViews) view.setVisible(!this.login.prompt && !this.login.returning && view === authViews.at(-1));
   }
 
   offerLogin(kind = 'entry', contents = this.activeContents(), force = false) {
@@ -994,14 +1005,6 @@ class ChatViewController {
       height: Math.max(0, height - this.toolbarHeight)
     });
     for (const authView of this.authViews) authView.setBounds({ x: 0, y: this.toolbarHeight, width: Math.max(0, width), height: Math.max(0, height - this.toolbarHeight) });
-  }
-
-  setToolbarHeight(value) {
-    const next = Math.max(140, Math.min(190, Math.round(Number(value) || 0)));
-    if (!next || next === this.toolbarHeight) return this.toolbarHeight;
-    this.toolbarHeight = next;
-    this.resize();
-    return this.toolbarHeight;
   }
 
   emitState() {

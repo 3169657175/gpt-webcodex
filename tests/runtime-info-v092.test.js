@@ -2,15 +2,18 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
-test('0.9.2 browser chrome supports real compact and expanded toolbar heights', () => {
+test('0.9.2 keeps ChatGPT native view geometry fixed while compacting only shell content', () => {
   const main = fs.readFileSync('electron/main.js', 'utf8');
   const preload = fs.readFileSync('electron/browserPreload.js', 'utf8');
   const browser = fs.readFileSync('renderer/browser.js', 'utf8');
   const css = fs.readFileSync('renderer/browser.css', 'utf8');
-  assert.match(main, /toolbarHeight:\s*154/);
-  assert.match(main, /chat:toolbar-height/);
-  assert.match(preload, /setToolbarHeight/);
-  assert.match(browser, /expanded \? 169 : 154/);
+  const controller = fs.readFileSync('electron/chatViewController.js', 'utf8');
+  assert.match(main, /toolbarHeight:\s*164/);
+  assert.doesNotMatch(main, /chat:toolbar-height/);
+  assert.doesNotMatch(preload, /setToolbarHeight/);
+  assert.doesNotMatch(controller, /setToolbarHeight\s*\(/);
+  assert.doesNotMatch(browser, /setProperty\([^\n]*--toolbar-height|setToolbarHeight/);
+  assert.match(css, /--toolbar-height:164px/);
   assert.match(css, /\.progress-band\.compact/);
 });
 

@@ -91,6 +91,26 @@ test('OAuth child is adopted intact and nested popups retain their opener instea
   assert.equal(child.popup({ url: 'https://evil.test/' }).action, 'deny');
 });
 
+test('embedded auth overlays ChatGPT without exposing the shell loading placeholder', (t) => {
+  const f = fixture(t), mainView = f.controller.view;
+  const child = new Contents('https://auth.openai.com/login');
+  const authView = f.controller.createEmbeddedAuthView({ webContents: child });
+  assert.equal(mainView.visible, true);
+  assert.equal(authView.visible, true);
+  assert.equal(f.controller.activeContents(), child);
+});
+
+test('destroyed stale auth views cannot hide ChatGPT or become the active contents', (t) => {
+  const f = fixture(t), mainView = f.controller.view;
+  const child = new Contents('https://auth.openai.com/login');
+  const authView = f.controller.createEmbeddedAuthView({ webContents: child });
+  child.destroyed = true;
+  f.controller.syncLoginVisibility();
+  assert.equal(f.controller.authViews.includes(authView), false);
+  assert.equal(mainView.visible, true);
+  assert.equal(f.controller.activeContents(), mainView.webContents);
+});
+
 test('callback URL alone never closes the OAuth child or claims login success', async (t) => {
   const f = fixture(t), child = new Contents('https://chatgpt.com/api/auth/callback/google?code=synthetic');
   child.ui.composer = false;

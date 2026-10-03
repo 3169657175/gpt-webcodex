@@ -20,18 +20,11 @@ let activityCloseTimer = null;
 let currentConversationKey = '';
 let currentChatSchemaIdentity = '';
 let dismissedSchemaMismatch = '';
-let lastToolbarHeight = 0;
 
 function syncToolbarDensity(view, forceExpanded = false) {
   const expandedStates = new Set(['local_running', 'testing', 'building', 'planning', 'recovering', 'quiet', 'suspected_stall', 'stalled', 'failed', 'waiting_user', 'generating']);
   const expanded = forceExpanded || expandedStates.has(String(view?.userState || view?.key || ''));
-  const height = expanded ? 169 : 154;
   $('#progressBand')?.classList.toggle('compact', !expanded);
-  document.documentElement.style.setProperty('--toolbar-height', `${height}px`);
-  if (height !== lastToolbarHeight) {
-    lastToolbarHeight = height;
-    void api.setToolbarHeight?.(height);
-  }
 }
 
 function schemaIdentityKey(identity = {}) {

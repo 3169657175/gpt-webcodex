@@ -197,7 +197,7 @@ function createChatWindow() {
     window: chatWindow,
     log,
     settings,
-    toolbarHeight: 154,
+    toolbarHeight: 164,
     nativeLoginRoot: path.join(dataRoot(), 'native-login'),
     onState: (payload) => {
       if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send('chat:state', payload);
@@ -846,7 +846,6 @@ function registerIpc() {
     return candidate;
   }));
   secureHandle('chat:status', () => invokeSafely(async () => chatController?.getState() || null));
-  secureHandle('chat:toolbar-height', (_event, height) => invokeSafely(async () => chatController?.setToolbarHeight(height)));
   secureHandle('chat:login-open', () => invokeSafely(async () => {
     if (!chatController) throw new Error('聊天窗口尚未初始化。');
     chatController.offerLogin('entry', chatController.activeContents(), true);
