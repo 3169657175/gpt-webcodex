@@ -36,11 +36,6 @@
 - Workspace Center 负责快速切换、新增、删除、清理失效工作区，以及授权目录查看和维护。
 - 工作区切换成功使用短时局部反馈，失败直接显示在操作位置附近。
 
-### Public MCP Gateway
-- 新增服务器 URL 接入方式，但不再启动独立公网 Runtime：Gateway 直接代理 RuntimeOrchestrator 正在管理的真实 Coding Tools Runtime。
-- 因此服务器 URL 与 Tunnel 共用当前工作区、完整 10 工具 Schema、任务状态/历史、授权目录和长任务恢复；切换工作区无需重新创建插件。
-- 本地 Runtime 继续使用 Bearer Token；公网只接受由该 Token 派生的高强度随机路径，ChatGPT 侧可选择“无需身份验证”，不需要 OAuth 或密码跳转。
-
 ### 发布验证
 - 增加真实 Electron Renderer smoke：使用正式 preload、`renderer/index.html` 和 production React bundle 启动隐藏 BrowserWindow。
 - 分别验证浅色和深色主题、`booting` 退出、4 个 React portal 挂载、横向溢出、console / preload / render 错误，并生成截图。

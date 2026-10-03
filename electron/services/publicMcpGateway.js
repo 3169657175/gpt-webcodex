@@ -25,12 +25,6 @@ function publicMcpAccessPath(token) {
   return accessKey ? `/mcp/${accessKey}` : '';
 }
 
-function publicMcpUrl(baseUrl, token) {
-  const base = String(baseUrl || '').trim().replace(/\/+$/, '');
-  const accessPath = publicMcpAccessPath(token);
-  return base && accessPath ? `${base}${accessPath}` : '';
-}
-
 function requestHeadersForUpstream(headers, token, port) {
   const forwarded = {};
   for (const [name, value] of Object.entries(headers || {})) {
@@ -71,19 +65,6 @@ class PublicMcpGateway {
     return bound && typeof bound === 'object'
       ? { host: this.host, port: Number(bound.port), path: this.accessPath() }
       : { host: this.host, port: this.port, path: this.accessPath() };
-  }
-
-  connectionInfo(baseUrl = '') {
-    const token = this.secrets.get('mcpAuthToken');
-    const address = this.address();
-    return {
-      running: Boolean(this.server),
-      host: address.host,
-      port: address.port,
-      path: address.path,
-      url: publicMcpUrl(baseUrl, token),
-      localUrl: address.path ? `http://${address.host}:${address.port}${address.path}` : ''
-    };
   }
 
   async start() {
@@ -175,6 +156,5 @@ module.exports = {
   PublicMcpGateway,
   DEFAULT_PUBLIC_MCP_GATEWAY_PORT,
   derivePublicMcpAccessKey,
-  publicMcpAccessPath,
-  publicMcpUrl
+  publicMcpAccessPath
 };

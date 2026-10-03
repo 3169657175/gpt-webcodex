@@ -22,7 +22,6 @@ const DEFAULTS = Object.freeze({
   proxyUrl: '',
   tunnelId: '',
   tunnelProfile: 'coding-tools',
-  publicMcpBaseUrl: '',
   startWithWindows: false,
   autoStartServices: false,
   keepRunningOnClose: true,
@@ -102,7 +101,6 @@ function normalize(input = {}) {
   merged.proxyUrl = String(merged.proxyUrl || '').trim();
   merged.workspace = normalizeWorkspacePath(merged.workspace);
   merged.tunnelId = String(merged.tunnelId || '').trim();
-  merged.publicMcpBaseUrl = String(merged.publicMcpBaseUrl || '').trim().replace(/\/+$/, '');
   if (sourceVersion < 5 && merged.theme === 'dark') merged.theme = 'light';
   merged.theme = ['light', 'dark', 'system'].includes(merged.theme) ? merged.theme : 'light';
 

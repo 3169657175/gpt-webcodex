@@ -3,14 +3,13 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const {
   PublicMcpGateway,
-  publicMcpAccessPath,
-  publicMcpUrl
+  publicMcpAccessPath
 } = require('../electron/services/publicMcpGateway');
 
-test('public gateway builds a stable HTTPS server URL without exposing the Runtime token', () => {
-  const url = publicMcpUrl('https://mcp.example.com/', 'runtime-token');
-  assert.match(url, /^https:\/\/mcp\.example\.com\/mcp\/[A-Za-z0-9_-]{40,}$/);
-  assert.doesNotMatch(url, /runtime-token/);
+test('private gateway derives a stable opaque path without exposing the Runtime token', () => {
+  const path = publicMcpAccessPath('runtime-token');
+  assert.match(path, /^\/mcp\/[A-Za-z0-9_-]{40,}$/);
+  assert.doesNotMatch(path, /runtime-token/);
 });
 
 function listen(server) {

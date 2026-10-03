@@ -40,7 +40,6 @@
 - **长期上下文闭环**：增加“有效 / 候选 / 已归档”三视图，归档原因与时间可见，并支持恢复为有效和永久删除。
 - **浅色主题**：保留现有深色主题，新增纯白浅色与“跟随系统”，统一青绿色主操作色、按钮层级、字号和 semantic tokens。
 - **工作区中心**：ChatGPT 顶部“全部工作区”直接打开完整 Workspace Center，可快速切换工作区、清理失效目录并统一查看和管理授权目录。
-- **服务器 URL 与 Tunnel 同后端**：新增 Public MCP Gateway；服务器 URL 连接不再启动第二套 Runtime，而是代理小助手正在使用的同一个 Coding Tools Runtime，因此工作区切换、10 个工具、任务状态/历史、授权目录和长任务恢复与 Tunnel 保持一致。公网入口使用自动生成的高强度随机路径，ChatGPT 侧无需 OAuth 或密码弹窗。
 - **真实 Renderer 验证**：发布链新增 production Electron BrowserWindow smoke，真实加载 preload + React bundle，分别验证浅/深主题、React portal、横向溢出和截图，避免“Vite 构建通过但真实窗口失败”的假绿。
 
 详细变化见 [v0.9.2 发布说明](docs/RELEASE_NOTES_0.9.2.md)。
